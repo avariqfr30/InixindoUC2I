@@ -1,55 +1,78 @@
 """
 config.py
 ---------
-Holds all environmental variables, constants, and LLM prompt structures.
-Managerial edits to prompts or model settings should happen here.
+Contains environment variables, application settings, and LLM prompt templates.
+The prompts are engineered to force the LLM into a highly critical, deeply analytical, 
+and verbose diagnostic mode, while using nested lists for readability.
 """
 
-OLLAMA_HOST = "http://127.0.0.1:11434"
-LLM_MODEL = "gpt-oss:120b-cloud"
-EMBED_MODEL = "bge-m3:latest"
-DB_FILE = "data/db.csv"
-COMPANY_NAME = "Inixindo Jogja"
+OLLAMA_URL = "http://127.0.0.1:11434"
+AI_MODEL = "gpt-oss:120b-cloud"
+EMBEDDING_MODEL = "bge-m3:latest"
+DATA_SOURCE = "data/db.csv"
+ORG_NAME = "Inixindo Jogja"
 
-REPORT_STRUCTURE = [
+REPORT_SECTIONS = [
     {
-        "id": "chap_1", 
-        "title": "BAB I - RINGKASAN EKSEKUTIF & SENTIMEN",
+        "id": "nlp_classification", 
+        "title": "BAB I - KLASIFIKASI NLP & DIAGNOSA SENTIMEN KRITIS",
         "instructions": """
-        Summarize the overall sentiment based on the feedback provided. 
-        Is the sentiment predominantly positive, negative, or neutral? 
-        Provide a brief, professional executive summary of the relationship and recent performance.
-        Do not use markdown headers for this section, just plain paragraphs.
+        Anda adalah Auditor Internal dan HR Diagnostician senior yang kejam dan sangat teliti untuk perusahaan.
+        Tugas Anda adalah menginterogasi data yang diberikan tanpa basa-basi atau kalimat bersayap.
+        
+        1. Lakukan klasifikasi NLP mendalam. Berikan persentase absolut untuk sentimen (Keluhan Kritis, Keluhan Ringan, Netral, Positif).
+        2. Tulis evaluasi eksekutif sepanjang 3-4 paragraf yang sangat kritis. Jangan hanya merangkum; carilah kegagalan sistemik dari data tersebut.
+        3. Jika ada sentimen positif, catat secara singkat. Jika ada sentimen negatif, bongkar habis-habisan.
+        
+        ATURAN KETAT:
+        - Gunakan sub-bullet point bersarang (nested list) untuk merinci poin-poin yang padat agar mudah dibaca.
+        - DILARANG KERAS menggunakan kata-kata yang memperhalus keadaan.
+        - DILARANG KERAS menggunakan EMOJI (seperti grafik, roket, tanda seru, dll) atau simbol informal.
+        - Jangan gunakan format heading markdown (###) di bagian ini.
         """,
-        "visual_intent": "sentiment_chart" 
+        "include_trend_chart": True 
     },
     {
-        "id": "chap_2", 
-        "title": "BAB II - ANALISIS AKAR MASALAH (ROOT CAUSE)",
+        "id": "pattern_analysis", 
+        "title": "BAB II - ANALISIS POLA & INVESTIGASI AKAR MASALAH (ROOT CAUSE)",
         "instructions": """
-        Identify the top 2-3 main issues or pain points explicitly mentioned in the feedback.
-        For each issue, provide a deep analysis using exactly this markdown format:
+        Bedah dataset ini untuk menemukan anomali dan pola kegagalan yang berulang. Anda harus menemukan minimal 3 pola dominan.
         
-        ### [Nama Isu/Masalah]
-        * **Konteks:** (Jelaskan masalah secara objektif berdasarkan feedback)
-        * **Analisis Akar Masalah:** (Mengapa ini terjadi? Deduksi akar masalah teknis/operasional)
-        * **Dampak Bisnis:** (Apa risiko jika masalah ini dibiarkan? misal: reputasi, efisiensi)
+        ATURAN KETAT: 
+        - DILARANG KERAS menggunakan EMOJI atau simbol informal.
+        - Gunakan sub-bullet point untuk memecah informasi kompleks.
+        
+        Untuk SETIAP pola, gunakan framework investigasi mendalam dengan format markdown berikut persis:
+        
+        ### [Nama Kategori Kegagalan / Pola Kritis]
+        * **Bukti Empiris:** * (Kutip sentimen atau keluhan spesifik dari data)
+          * (Sebutkan frekuensi atau pola kemunculannya)
+        * **Investigasi Akar Masalah:** * (Gunakan prinsip 'Five Whys' menggunakan sub-bullet)
+          * (Cari tahu di mana SOP internal atau sistem gagal)
+        * **Risiko Fatal (Dampak Bisnis):** * (Jelaskan konsekuensi terburuk jika dibiarkan)
         """
     },
     {
-        "id": "chap_3", 
-        "title": "BAB III - REKOMENDASI STRATEGIS & TAKTIS",
+        "id": "hr_recommendations", 
+        "title": "BAB III - INTERVENSI MANAJEMEN & REKOMENDASI TAKTIS",
         "instructions": """
-        Based on the identified issues, provide highly specific, actionable solutions. 
-        Do not give generic advice. Use exactly this markdown format to structure your response:
+        Berdasarkan investigasi di Bab II, susun rencana intervensi untuk HR dan Top Management. 
+        DILARANG memberikan saran umum. Anda harus memberikan instruksi operasional yang spesifik, terukur, dan menuntut akuntabilitas.
         
-        ### Solusi Taktis (Jangka Pendek - < 3 Bulan)
-        * **Tindakan:** [Tindakan spesifik yang harus segera dilakukan]
-        * **Target:** [Apa yang ingin dicapai dari tindakan ini]
+        ATURAN KETAT: 
+        - DILARANG KERAS menggunakan EMOJI.
+        - Gunakan hierarki sub-bullet untuk merinci langkah-langkah spesifik.
         
-        ### Solusi Strategis (Jangka Panjang - > 6 Bulan)
-        * **Inisiatif:** [Perubahan sistemik atau perombakan proses]
-        * **Pencegahan:** [Bagaimana inisiatif ini mencegah masalah terulang di masa depan]
+        Gunakan format markdown berikut persis:
+        
+        ### Intervensi Krisis (Tindakan < 30 Hari)
+        * **Instruksi Operasional:** * [Langkah spesifik 1]
+          * [Langkah spesifik 2]
+        * **Akuntabilitas & Tenggat Waktu:** [Siapa divisi yang harus disalahkan jika ini tidak selesai, dan apa matriks keberhasilannya?]
+        
+        ### Restrukturisasi & Perbaikan Sistemik (Tindakan 3-6 Bulan)
+        * **Perubahan SOP / Kurikulum / Infrastruktur:** [Desain ulang sistem apa yang diperlukan?]
+        * **KPI Pencegahan:** [Metrik kuantitatif spesifik apa yang harus dipantau?]
         """
     }
 ]

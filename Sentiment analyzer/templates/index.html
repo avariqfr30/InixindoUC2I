@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sistem Analisis Sentimen</title>
+    <title>Sistem Analisis Sentimen HR</title>
     <style>
         /* Base Styling */
         body { 
@@ -86,86 +86,67 @@
 <body>
     <div class="card">
         <h2>📊 AI Sentiment Analyzer</h2>
-        <p>Ekstrak <i>insight</i> mendalam, temukan akar masalah, dan dapatkan rekomendasi strategis secara otomatis dari data survei Anda.</p>
+        <p>Ekstrak <i>insight</i> mendalam, temukan pola masalah, dan dapatkan tindakan preventif berdasarkan rentang waktu evaluasi.</p>
         
-        <select id="client-select" aria-label="Pilih Klien untuk Laporan" title="Pilih Klien">
-            <option disabled selected>Memuat database klien...</option>
+        <select id="duration-select" aria-label="Pilih Rentang Waktu" title="Pilih Rentang Waktu">
+            <option disabled selected>Pilih Rentang Waktu Analisis...</option>
+            <option value="1w">1 Minggu Terakhir</option>
+            <option value="1m">1 Bulan Terakhir</option>
+            <option value="3m">3 Bulan Terakhir</option>
+            <option value="6m">6 Bulan Terakhir</option>
+            <option value="1y">1 Tahun Terakhir</option>
         </select>
         
         <button id="btn-generate" disabled>Buat Laporan Insight <div id="spin" class="spinner hidden"></div></button>
     </div>
 
     <script>
-        // DOM Elements
-        const clientSelector = document.getElementById('client-select');
-        const generateBtn = document.getElementById('btn-generate');
-        const loadingSpinner = document.getElementById('spin');
+        const durationMenu = document.getElementById('duration-select');
+        const submitButton = document.getElementById('btn-generate');
+        const loader = document.getElementById('spin');
 
-        // Fetch client list from the Python backend on page load
-        fetch('/get-clients')
-            .then(response => response.json())
-            .then(data => {
-                clientSelector.innerHTML = '<option disabled selected>Pilih Klien atau Analisis Keseluruhan...</option>';
-                
-                // Populate the dropdown menu
-                data.clients.forEach(client => { 
-                    let label = client === "ALL_OVERALL" ? "🌟 Laporan Makro (Keseluruhan Data)" : "🏢 " + client;
-                    clientSelector.add(new Option(label, client)); 
-                });
-            })
-            .catch(error => console.error("Error loading clients:", error));
-
-        // Enable the generate button only after a selection is made
-        clientSelector.addEventListener('change', () => {
-            generateBtn.disabled = false;
+        durationMenu.addEventListener('change', () => {
+            submitButton.disabled = false;
         });
 
-        // Handle the report generation process
-        generateBtn.addEventListener('click', () => {
-            const selectedClient = clientSelector.value;
+        submitButton.addEventListener('click', () => {
+            const code = durationMenu.value;
+            const label = durationMenu.options[durationMenu.selectedIndex].text;
             
-            // Set UI to loading state
-            generateBtn.disabled = true;
-            loadingSpinner.classList.remove('hidden');
-            generateBtn.childNodes[0].nodeValue = "Menganalisis & Menulis Laporan... ";
+            submitButton.disabled = true;
+            loader.classList.remove('hidden');
+            submitButton.childNodes[0].nodeValue = "Menganalisis Pola HR... ";
             
-            // Send request to backend
-            fetch('/generate-report', {
+            fetch('/api/build-report', {
                 method: 'POST', 
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({client: selectedClient})
+                body: JSON.stringify({ duration: code, duration_label: label })
             })
             .then(response => {
-                if (!response.ok) throw new Error("Server failed to generate report.");
+                if (!response.ok) throw new Error("Gagal menyusun dokumen.");
                 return response.blob();
             })
             .then(blob => {
-                // Create a temporary link to force the browser to download the file
-                const downloadUrl = window.URL.createObjectURL(blob);
-                const downloadLink = document.createElement('a');
-                downloadLink.href = downloadUrl;
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `Laporan_Pola_HR_${code}.docx`;
+                a.click();
                 
-                // Set the filename based on the report type
-                const isOverall = (selectedClient === "ALL_OVERALL");
-                downloadLink.download = isOverall ? 'Laporan_Sentimen_Keseluruhan.docx' : `Laporan_Insight_${selectedClient}.docx`;
-                
-                downloadLink.click();
-                
-                // Reset UI to normal state
-                generateBtn.disabled = false;
-                loadingSpinner.classList.add('hidden');
-                generateBtn.childNodes[0].nodeValue = "Buat Laporan Insight ";
+                resetUI();
             })
-            .catch(error => {
-                alert("Terjadi kesalahan saat membuat laporan. Pastikan server Ollama menyala.");
-                console.error(error);
-                
-                // Reset UI on error
-                generateBtn.disabled = false;
-                loadingSpinner.classList.add('hidden');
-                generateBtn.childNodes[0].nodeValue = "Buat Laporan Insight ";
+            .catch(err => {
+                alert("Terjadi kesalahan. Pastikan backend Flask dan Ollama berjalan.");
+                console.error(err);
+                resetUI();
             });
         });
+
+        function resetUI() {
+            submitButton.disabled = false;
+            loader.classList.add('hidden');
+            submitButton.childNodes[0].nodeValue = "Buat Laporan Insight ";
+        }
     </script>
 </body>
 </html>
