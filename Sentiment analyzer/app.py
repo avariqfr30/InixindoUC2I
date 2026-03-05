@@ -1,8 +1,7 @@
 """
 app.py
 ------
-Main Application Entry Point.
-Initializes Flask, binds routes to services, and runs the server.
+Flask server entry point. Connects the web interface to the reporting pipeline.
 """
 
 import io
@@ -10,56 +9,47 @@ import logging
 from flask import Flask, send_file, request, jsonify, render_template
 from flask_cors import CORS
 
-# Import the core classes directly from core.py
-from core import FeedbackDatabase, ReportGenerator
+from core import SurveyData, HRReportBuilder
 
-# Setup logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(module)s - %(message)s')
+# Configure basic logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-app = Flask(__name__)
-CORS(app)
+server = Flask(__name__)
+CORS(server)
 
-# Initialize core services
-db = FeedbackDatabase()
-generator = ReportGenerator(db)
+# Boot up the core systems
+survey_db = SurveyData()
+report_builder = HRReportBuilder(survey_db)
 
-@app.route('/')
-def home(): 
-    """Serves the main web interface from templates/index.html."""
+@server.route('/')
+def render_ui(): 
+    """Serves the main HTML dashboard."""
     return render_template('index.html')
 
-@app.route('/get-clients')
-def get_clients():
-    """API endpoint: Returns a list of clients available in the database."""
-    if db.df is None: 
-        return jsonify({"error": "Database belum dimuat"}), 500
+@server.route('/api/build-report', methods=['POST'])
+def handle_report_request():
+    """Receives the requested timeframe and returns the generated Word doc."""
+    payload = request.json
+    duration_code = payload.get('duration')
+    duration_label = payload.get('duration_label')
     
-    clients = ["ALL_OVERALL"] + sorted(db.df['Client/Partner'].unique().tolist())
-    return jsonify({"clients": clients})
-
-@app.route('/generate-report', methods=['POST'])
-def generate_doc():
-    """API endpoint: Accepts a client name and returns the generated Word document."""
-    data = request.json
-    client_name = data.get('client')
-    
-    if not client_name:
-        return jsonify({"error": "Nama klien tidak diberikan"}), 400
+    if not duration_code:
+        return jsonify({"error": "Rentang waktu analisis tidak valid."}), 400
         
-    doc, file_name = generator.generate(client_name)
+    doc_object, file_name = report_builder.compile_report(duration_code, duration_label)
     
-    out = io.BytesIO()
-    doc.save(out)
-    out.seek(0)
+    memory_file = io.BytesIO()
+    doc_object.save(memory_file)
+    memory_file.seek(0)
     
     return send_file(
-        out, 
+        memory_file, 
         as_attachment=True, 
         download_name=f"{file_name}.docx", 
         mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     )
 
 if __name__ == '__main__':
-    logger.info("Starting AI Sentiment Analyzer Server...")
-    app.run(port=5000, debug=True, threaded=True)
+    logger.info("Initiating HR Sentiment Analyzer backend...")
+    server.run(port=5000, debug=True, threaded=True)
