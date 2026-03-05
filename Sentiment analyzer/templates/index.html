@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistem Analisis Sentimen</title>
+    <style>
+        /* Base Styling */
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            background: #f8fafc; 
+            display: flex; 
+            align-items: center; 
+            justify-content: center; 
+            height: 100vh; 
+            margin: 0; 
+            color: #1e293b; 
+        }
+        
+        /* Main Application Card */
+        .card { 
+            background: white; 
+            padding: 40px; 
+            border-radius: 12px; 
+            box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); 
+            width: 450px; 
+            text-align: center; 
+            border: 1px solid #e2e8f0; 
+        }
+        
+        /* Typography */
+        h2 { margin: 0 0 5px 0; color: #0f172a; font-size: 1.6rem; }
+        p { color: #64748b; margin-bottom: 25px; font-size: 0.95rem; line-height: 1.5; }
+        
+        /* Form Elements */
+        select { 
+            width: 100%; 
+            padding: 12px; 
+            margin-bottom: 20px; 
+            border-radius: 6px; 
+            border: 1px solid #cbd5e1; 
+            font-size: 1rem; 
+            background-color: #f8fafc; 
+            color: #334155; 
+            font-weight: 500;
+        }
+        select:focus { 
+            border-color: #3b82f6; 
+            outline: none; 
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1); 
+        }
+        button { 
+            width: 100%; 
+            background: #10b981; 
+            color: white; 
+            border: none; 
+            padding: 14px; 
+            border-radius: 6px; 
+            font-weight: bold; 
+            cursor: pointer; 
+            font-size: 1rem; 
+            transition: background 0.2s ease; 
+        }
+        button:hover { background: #059669; }
+        button:disabled { background: #94a3b8; cursor: not-allowed; }
+        
+        /* Loading Animation */
+        .spinner { 
+            width: 18px; 
+            height: 18px; 
+            border: 2px solid white; 
+            border-top-color: transparent; 
+            border-radius: 50%; 
+            animation: spin 1s linear infinite; 
+            display: inline-block; 
+            vertical-align: middle; 
+            margin-left: 8px; 
+        }
+        .hidden { display: none !important; }
+        
+        @keyframes spin { 
+            100% { transform: rotate(360deg); } 
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>📊 AI Sentiment Analyzer</h2>
+        <p>Ekstrak <i>insight</i> mendalam, temukan akar masalah, dan dapatkan rekomendasi strategis secara otomatis dari data survei Anda.</p>
+        
+        <select id="client-select" aria-label="Pilih Klien untuk Laporan" title="Pilih Klien">
+            <option disabled selected>Memuat database klien...</option>
+        </select>
+        
+        <button id="btn-generate" disabled>Buat Laporan Insight <div id="spin" class="spinner hidden"></div></button>
+    </div>
+
+    <script>
+        // DOM Elements
+        const clientSelector = document.getElementById('client-select');
+        const generateBtn = document.getElementById('btn-generate');
+        const loadingSpinner = document.getElementById('spin');
+
+        // Fetch client list from the Python backend on page load
+        fetch('/get-clients')
+            .then(response => response.json())
+            .then(data => {
+                clientSelector.innerHTML = '<option disabled selected>Pilih Klien atau Analisis Keseluruhan...</option>';
+                
+                // Populate the dropdown menu
+                data.clients.forEach(client => { 
+                    let label = client === "ALL_OVERALL" ? "🌟 Laporan Makro (Keseluruhan Data)" : "🏢 " + client;
+                    clientSelector.add(new Option(label, client)); 
+                });
+            })
+            .catch(error => console.error("Error loading clients:", error));
+
+        // Enable the generate button only after a selection is made
+        clientSelector.addEventListener('change', () => {
+            generateBtn.disabled = false;
+        });
+
+        // Handle the report generation process
+        generateBtn.addEventListener('click', () => {
+            const selectedClient = clientSelector.value;
+            
+            // Set UI to loading state
+            generateBtn.disabled = true;
+            loadingSpinner.classList.remove('hidden');
+            generateBtn.childNodes[0].nodeValue = "Menganalisis & Menulis Laporan... ";
+            
+            // Send request to backend
+            fetch('/generate-report', {
+                method: 'POST', 
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({client: selectedClient})
+            })
+            .then(response => {
+                if (!response.ok) throw new Error("Server failed to generate report.");
+                return response.blob();
+            })
+            .then(blob => {
+                // Create a temporary link to force the browser to download the file
+                const downloadUrl = window.URL.createObjectURL(blob);
+                const downloadLink = document.createElement('a');
+                downloadLink.href = downloadUrl;
+                
+                // Set the filename based on the report type
+                const isOverall = (selectedClient === "ALL_OVERALL");
+                downloadLink.download = isOverall ? 'Laporan_Sentimen_Keseluruhan.docx' : `Laporan_Insight_${selectedClient}.docx`;
+                
+                downloadLink.click();
+                
+                // Reset UI to normal state
+                generateBtn.disabled = false;
+                loadingSpinner.classList.add('hidden');
+                generateBtn.childNodes[0].nodeValue = "Buat Laporan Insight ";
+            })
+            .catch(error => {
+                alert("Terjadi kesalahan saat membuat laporan. Pastikan server Ollama menyala.");
+                console.error(error);
+                
+                // Reset UI on error
+                generateBtn.disabled = false;
+                loadingSpinner.classList.add('hidden');
+                generateBtn.childNodes[0].nodeValue = "Buat Laporan Insight ";
+            });
+        });
+    </script>
+</body>
+</html>

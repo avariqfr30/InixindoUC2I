@@ -1,0 +1,9 @@
+Flask
+Flask-Cors
+pandas
+chromadb
+matplotlib
+Markdown
+beautifulsoup4
+python-docx
+ollama
