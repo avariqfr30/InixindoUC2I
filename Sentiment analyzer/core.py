@@ -1,430 +1,279 @@
-"""
-core.py
--------
-Handles database ingestion, data visualization, markdown parsing, 
-and the LLM pipeline for generating the Word document.
-Includes advanced docx formatting, native table rendering, 
-recursive sub-bullet handling, and strict emoji sanitization.
-"""
-
 import os
 import io
 import re
 import logging
-import datetime
+import requests
 import pandas as pd
 import chromadb
-import markdown
+from chromadb.config import Settings
+import concurrent.futures
 import matplotlib
-import matplotlib.dates as mdates
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-
+import matplotlib.patches as patches
+import textwrap
+from PIL import Image, ImageStat
+from sqlalchemy import create_engine
+import markdown
 from bs4 import BeautifulSoup
 from docx import Document
-from docx.shared import Pt, Inches, RGBColor
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.enum.style import WD_STYLE_TYPE
-from docx.oxml.shared import OxmlElement
+from docx.shared import Pt, RGBColor, Inches, Cm
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
 from docx.oxml.ns import qn
+from docx.oxml import OxmlElement
 from ollama import Client 
 from chromadb.utils import embedding_functions
 
-from config import OLLAMA_URL, AI_MODEL, EMBEDDING_MODEL, DATA_SOURCE, ORG_NAME, REPORT_SECTIONS
+from config import (
+    GOOGLE_API_KEY, GOOGLE_CX_ID, OLLAMA_HOST, LLM_MODEL, EMBED_MODEL, DB_URI,
+    WRITER_FIRM_NAME, DEFAULT_COLOR, CX_SENTIMENT_STRUCTURE, 
+    PERSONAS, CX_ANALYSIS_SYSTEM_PROMPT, DATA_MAPPING, DEMO_MODE
+)
 
 logger = logging.getLogger(__name__)
 
-class WordFormatter:
-    """Helper class to convert raw Markdown into highly formatted Word document styling."""
-    
-    @staticmethod
-    def apply_markdown(document, md_text):
-        md_text = re.sub(r'[\U00010000-\U0010ffff]', '', md_text)
-        md_text = re.sub(r'^(#{1,6})([^ #\n])', r'\1 \2', md_text, flags=re.MULTILINE)
-        
-        html_content = markdown.markdown(md_text, extensions=['tables'])
-        parsed_html = BeautifulSoup(html_content, 'html.parser')
-        
-        for tag in parsed_html.children:
-            if tag.name is None: 
-                continue
-            
-            if tag.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
-                heading_level = min(int(tag.name[1]) + 1, 9) 
-                clean_text = re.sub(r'^#+\s*', '', tag.get_text().strip())
-                heading = document.add_heading(clean_text, level=heading_level)
-                heading.paragraph_format.space_before = Pt(18)
-                heading.paragraph_format.space_after = Pt(6)
-                heading.paragraph_format.keep_with_next = True
-                
-            elif tag.name == 'p':
-                text_content = tag.get_text().strip()
-                if not text_content: 
-                    continue
-                
-                rogue_heading_match = re.match(r'^(#{1,6})\s*(.*)', text_content)
-                if rogue_heading_match:
-                    hashes = rogue_heading_match.group(1)
-                    clean_text = rogue_heading_match.group(2).strip()
-                    heading_level = min(len(hashes) + 1, 9)
-                    heading = document.add_heading(clean_text, level=heading_level)
-                    heading.paragraph_format.space_before = Pt(18)
-                    heading.paragraph_format.space_after = Pt(6)
-                    heading.paragraph_format.keep_with_next = True
-                    continue 
-                    
-                paragraph = document.add_paragraph()
-                paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-                paragraph.paragraph_format.space_after = Pt(10)
-                WordFormatter._style_inline_text(paragraph, tag)
-                
-            elif tag.name in ['ul', 'ol']:
-                # Pass the list to our new recursive processor
-                WordFormatter._process_list(document, tag, level=0)
-                    
-            elif tag.name == 'table':
-                first_row = tag.find('tr')
-                if not first_row:
-                    continue
-                num_cols = len(first_row.find_all(['th', 'td']))
-                
-                word_table = document.add_table(rows=0, cols=num_cols)
-                word_table.style = 'Table Grid'
-                word_table.autofit = True
-                
-                for tr in tag.find_all('tr'):
-                    row_cells = word_table.add_row().cells
-                    col_idx = 0
-                    for cell in tr.find_all(['th', 'td']):
-                        if col_idx < num_cols:
-                            cell_paragraph = row_cells[col_idx].paragraphs[0]
-                            WordFormatter._style_inline_text(cell_paragraph, cell)
-                            
-                            if cell.name == 'th':
-                                cell_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                                for run in cell_paragraph.runs:
-                                    run.bold = True
-                        col_idx += 1
-                
-                document.add_paragraph().paragraph_format.space_after = Pt(12)
-
-    @staticmethod
-    def _process_list(document, list_tag, level=0):
-        """Recursively parses nested lists and applies dynamic indentation/styles."""
-        is_ul = list_tag.name == 'ul'
-        base_style = 'List Bullet' if is_ul else 'List Number'
-        
-        # Word supports native nested list styles like 'List Bullet 2', 'List Bullet 3'
-        style_name = base_style if level == 0 else f'{base_style} {min(level + 1, 5)}'
-        
-        for li in list_tag.children:
-            if li.name != 'li': 
-                continue
-                
-            try:
-                paragraph = document.add_paragraph(style=style_name)
-            except KeyError:
-                # Fallback if the default Word template is missing the nested style
-                paragraph = document.add_paragraph(style=base_style)
-            
-            paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-            # Push the text further right for each level of nesting
-            paragraph.paragraph_format.left_indent = Inches(0.25 + (level * 0.35))
-            paragraph.paragraph_format.space_after = Pt(4)
-            
-            for child in li.children:
-                if child.name in ['ul', 'ol']:
-                    # Sub-bullet found! Recurse deeper.
-                    WordFormatter._process_list(document, child, level + 1)
-                else:
-                    WordFormatter._style_single_node(paragraph, child)
-
-    @staticmethod
-    def _style_inline_text(paragraph, html_element):
-        for child in html_element.children:
-            if child.name in ['ul', 'ol']: 
-                continue # Nested lists inside paragraphs are skipped here to prevent duplication
-            WordFormatter._style_single_node(paragraph, child)
-
-    @staticmethod
-    def _style_single_node(paragraph, child):
-        if child.name in ['strong', 'b']:
-            clean_text = child.get_text().replace('*', '').strip()
-            run = paragraph.add_run(clean_text)
-            run.bold = True
-            if child.next_sibling and isinstance(child.next_sibling, str) and not child.next_sibling.startswith((' ', '.', ',')):
-                paragraph.add_run(' ')
-        elif child.name in ['em', 'i']:
-            clean_text = child.get_text().replace('_', '').strip()
-            run = paragraph.add_run(clean_text)
-            run.italic = True
-        elif child.name is None:
-            clean_text = str(child).replace('\n', ' ').replace('**', '').replace('__', '')
-            paragraph.add_run(clean_text)
-        else:
-            for subchild in child.children:
-                WordFormatter._style_single_node(paragraph, subchild)
-
-
-class GraphMaker:
-    """Creates visual representations of the survey data."""
-    
-    @staticmethod
-    def build_nps_pie_chart(dataframe):
-        try:
-            scores = pd.to_numeric(dataframe['NPS'], errors='coerce').dropna()
-            
-            promoters = len(scores[scores >= 9])
-            passives = len(scores[(scores >= 7) & (scores <= 8)])
-            detractors = len(scores[scores <= 6])
-            
-            categories = [promoters, passives, detractors]
-            labels = ['Promoters (9-10)', 'Passives (7-8)', 'Detractors (0-6)']
-            colors = ['#10b981', '#fbbf24', '#ef4444'] 
-            
-            if sum(categories) == 0: 
-                return None
-            
-            plt.figure(figsize=(5, 5))
-            plt.pie(categories, labels=labels, colors=colors, autopct='%1.1f%%', startangle=140, textprops={'fontsize': 10})
-            plt.title("Distribusi Skor NPS", fontsize=12, fontweight='bold', pad=15)
-            
-            image_stream = io.BytesIO()
-            plt.savefig(image_stream, format='png', bbox_inches='tight', dpi=200)
-            plt.close()
-            image_stream.seek(0)
-            return image_stream
-            
-        except Exception as err: 
-            logger.error(f"Failed to build NPS pie chart: {err}")
-            return None
-
-    @staticmethod
-    def build_trend_line_chart(dataframe):
-        try:
-            df = dataframe.copy()
-            df['CSAT_Val'] = df['CSAT Score'].astype(str).str.split('/').str[0].astype(float)
-            df['Survey Date'] = pd.to_datetime(df['Survey Date'])
-            
-            trend_data = df.groupby('Survey Date')['CSAT_Val'].mean().reset_index()
-            trend_data = trend_data.sort_values('Survey Date')
-            
-            if trend_data.empty: return None
-
-            plt.figure(figsize=(7, 3.5))
-            plt.plot(trend_data['Survey Date'], trend_data['CSAT_Val'], marker='o', linestyle='-', color='#1e3a8a', linewidth=2.5)
-            
-            plt.ylim(0, 5.5)
-            plt.title("Tren Kepuasan (CSAT) Seiring Waktu", fontsize=12, fontweight='bold', pad=15)
-            plt.ylabel("Rata-rata CSAT (Skala 5)", fontsize=10)
-            plt.grid(True, linestyle='--', alpha=0.5)
-            
-            plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%d %b %Y'))
-            plt.gcf().autofmt_xdate() 
-            
-            plt.gca().spines['top'].set_visible(False)
-            plt.gca().spines['right'].set_visible(False)
-            
-            image_stream = io.BytesIO()
-            plt.savefig(image_stream, format='png', bbox_inches='tight', dpi=200)
-            plt.close()
-            image_stream.seek(0)
-            return image_stream
-            
-        except Exception as err:
-            logger.error(f"Failed to build trend chart: {err}")
-            return None
-
-
-class SurveyData:
-    """Manages the CSV data and ChromaDB vector store synchronization."""
-    
-    def __init__(self):
-        logger.info("Connecting to local database...")
-        self.chroma_client = chromadb.Client()
-        self.embedder = embedding_functions.OllamaEmbeddingFunction(
-            url=f"{OLLAMA_URL}/api/embeddings", 
-            model_name=EMBEDDING_MODEL
+class KnowledgeBase:
+    def __init__(self, db_uri):
+        self.engine = create_engine(db_uri)
+        self.chroma = chromadb.Client(Settings(anonymized_telemetry=False))
+        self.embed_fn = embedding_functions.OllamaEmbeddingFunction(
+            url=f"{OLLAMA_HOST}/api/embeddings", model_name=EMBED_MODEL
         )
-        self.db_collection = self.chroma_client.get_or_create_collection(
-            name="survey_records", 
-            embedding_function=self.embedder
+        self.collection = self.chroma.get_or_create_collection(
+            name="cx_db", embedding_function=self.embed_fn
         )
-        self.raw_data = None
-        self.active_filtered_data = None
-        self.load_csv()
+        self.df = None
+        self.refresh_data()
 
-    def load_csv(self):
-        if not os.path.exists(DATA_SOURCE):
-            logger.warning(f"Could not find data file at {DATA_SOURCE}.")
-            return False
+    def refresh_data(self):
+        try: self.df = pd.read_sql("SELECT * FROM feedback", self.engine)
+        except Exception:
+            if os.path.exists("db.csv"):
+                raw_df = pd.read_csv("db.csv")
+                raw_df.columns = [c.strip() for c in raw_df.columns]
+                rename_dict = {v: k for k, v in DATA_MAPPING.items()}
+                raw_df.rename(columns=rename_dict, inplace=True)
+                raw_df.to_sql("feedback", self.engine, index=False, if_exists='replace')
+                self.df = raw_df
+            else: return False
             
+        existing = self.collection.get()['ids']
+        if existing: self.collection.delete(existing)
+        
+        ids, docs, metas = [], [], []
+        for idx, row in self.df.iterrows():
+            text_rep = " | ".join([f"{col}: {val}" for col, val in row.items()])
+            ids.append(str(idx))
+            docs.append(text_rep)
+            metas.append(row.astype(str).to_dict())
+            
+        if ids: self.collection.add(documents=docs, metadatas=metas, ids=ids)
+        return True
+
+    def query(self, stakeholder, service, timeframe, context_keywords=None):
         try:
-            self.raw_data = pd.read_csv(DATA_SOURCE)
-            self.raw_data['Survey Date'] = pd.to_datetime(self.raw_data['Survey Date'])
-            
-            existing_records = self.db_collection.get()['ids']
-            if existing_records: 
-                self.db_collection.delete(existing_records)
-            
-            record_ids, documents, metadata = [], [], []
-            
-            for index, row in self.raw_data.iterrows():
-                partner = row.get('Client/Partner', 'Unknown')
-                text_content = row.get('Raw Feedback Text', '')
-                document_string = f"Client: {partner} | Feedback: {text_content}"
-                
-                record_ids.append(str(index))
-                documents.append(document_string)
-                metadata.append({k: str(v) for k, v in row.to_dict().items()})
-                
-            if record_ids: 
-                self.db_collection.add(documents=documents, metadatas=metadata, ids=record_ids)
-                
-            logger.info(f"Loaded {len(record_ids)} records into ChromaDB.")
-            return True
-            
-        except Exception as err: 
-            logger.error(f"Database ingestion failed: {err}", exc_info=True)
-            return False
+            query_str = f"Feedback from {stakeholder} regarding {service} during {timeframe}. {context_keywords or ''}"
+            res = self.collection.query(query_texts=[query_str], n_results=10)
+            if res['documents'] and len(res['documents'][0]) > 0: return "\n---\n".join(res['documents'][0])
+        except Exception: return "Tidak ada data feedback untuk kriteria ini."
 
-    def filter_by_timeframe(self, duration_code):
-        if self.raw_data is None or self.raw_data.empty: 
-            return "DATABASE KOSONG."
+class Researcher:
+    @staticmethod
+    def get_industry_trends(service):
+        if "YOUR_GOOGLE" in GOOGLE_API_KEY: return "Tidak ada tren."
+        try:
+            params = {'q': f"{service} customer satisfaction trends training consulting indonesia", 'key': GOOGLE_API_KEY, 'cx': GOOGLE_CX_ID, 'num': 2}
+            res = requests.get("https://www.googleapis.com/customsearch/v1", params=params, timeout=5).json()
+            return "\n".join([i.get('snippet', '') for i in res.get('items', [])])
+        except Exception: return "Tidak ada tren spesifik."
+
+class StyleEngine:
+    @staticmethod
+    def apply_document_styles(doc):
+        style = doc.styles['Normal']
+        style.font.name = 'Calibri'
+        style.font.size = Pt(11)
+        pf = style.paragraph_format
+        pf.line_spacing_rule = WD_LINE_SPACING.MULTIPLE
+        pf.line_spacing = 1.15
+        pf.space_after = Pt(8) 
+        for section in doc.sections:
+            section.top_margin = Cm(2.54)
+            section.bottom_margin = Cm(2.54)
+            section.left_margin = Cm(2.54)
+            section.right_margin = Cm(2.54)
+
+class ChartEngine:
+    @staticmethod
+    def _get_plt_color(theme_color): return tuple(c/255 for c in theme_color)
+
+    @staticmethod
+    def create_bar_chart(data_str, theme_color):
+        try:
+            parts = data_str.split('|')
+            title_str, ylabel_str, raw_data = parts[0].strip(), parts[1].strip(), parts[2].strip() if len(parts) == 3 else ("Sentimen", "Persentase", data_str)
+            labels, values = [], []
+            for p in raw_data.split(';'):
+                if ',' in p:
+                    l, v = p.split(',', 1)
+                    labels.append(l.strip())
+                    values.append(float(re.sub(r'[^\d.]', '', v)))
+            if not labels: return None
+            fig, ax = plt.subplots(figsize=(7, 4.5))
+            ax.bar(labels, values, color=ChartEngine._get_plt_color(theme_color), alpha=0.9, width=0.5)
+            ax.set_title(title_str, fontsize=12, fontweight='bold', pad=20)
+            ax.set_ylabel(ylabel_str, fontsize=10)
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            img = io.BytesIO()
+            plt.savefig(img, format='png', bbox_inches='tight', dpi=150)
+            plt.close()
+            img.seek(0)
+            return img
+        except Exception: return None
+
+    @staticmethod
+    def create_flowchart(data_str, theme_color):
+        try:
+            steps = ["\n".join(textwrap.wrap(s.strip(), width=18)) for s in data_str.split('->')]
+            if len(steps) < 2: return None
+            fig, ax = plt.subplots(figsize=(8, 3))
+            ax.axis('off')
+            x_pos = [i * 2.5 for i in range(len(steps))]
+            for i in range(len(steps) - 1):
+                ax.annotate("", xy=(x_pos[i+1]-1.0, 0.5), xytext=(x_pos[i]+1.0, 0.5), arrowprops=dict(arrowstyle="-|>", lw=1.5))
+            for i, step in enumerate(steps):
+                box = patches.FancyBboxPatch((x_pos[i]-1.0, 0.1), 2.0, 0.8, boxstyle="round,pad=0.1", fc=ChartEngine._get_plt_color(theme_color), alpha=0.9)
+                ax.add_patch(box)
+                ax.text(x_pos[i], 0.5, step, ha="center", va="center", size=9, color="white", fontweight='bold')
+            ax.set_xlim(-1.2, (len(steps)-1)*2.5 + 1.2)
+            ax.set_ylim(0, 1)
+            img = io.BytesIO()
+            plt.savefig(img, format='png', bbox_inches='tight', dpi=200, transparent=True)
+            plt.close()
+            img.seek(0)
+            return img
+        except Exception: return None
+
+class DocumentBuilder:
+    @staticmethod
+    def parse_html_to_docx(doc, html_content, theme_color):
+        soup = BeautifulSoup(html_content, 'html.parser')
+        for element in soup.children:
+            if element.name is None: continue
+            if element.name in ['h1', 'h2', 'h3']:
+                p = doc.add_heading(element.get_text().strip(), level=int(element.name[1]))
+                for run in p.runs: run.font.color.rgb = RGBColor(*theme_color)
+            elif element.name == 'p':
+                p = doc.add_paragraph()
+                for child in element.children:
+                    if child.name in ['strong', 'b']: p.add_run(child.get_text()).bold = True
+                    elif child.name in ['em', 'i']: p.add_run(child.get_text()).italic = True
+                    elif child.name is None: p.add_run(str(child))
+            elif element.name in ['ul', 'ol']:
+                style = 'List Bullet' if element.name == 'ul' else 'List Number'
+                for li in element.find_all('li'):
+                    doc.add_paragraph(li.get_text(), style=style)
+
+    @staticmethod
+    def process_content(doc, raw_text, theme_color=DEFAULT_COLOR):
+        clean_lines = []
+        for line in raw_text.split('\n'):
+            line = line.strip()
+            if line.startswith('[[CHART:') and line.endswith(']]'):
+                img = ChartEngine.create_bar_chart(line.replace('[[CHART:', '').replace(']]', '').strip(), theme_color)
+                if img: doc.add_paragraph().add_run().add_picture(img, width=Inches(5.5))
+                continue
+            if line.startswith('[[FLOW:') and line.endswith(']]'):
+                img = ChartEngine.create_flowchart(line.replace('[[FLOW:', '').replace(']]', '').strip(), theme_color)
+                if img: doc.add_paragraph().add_run().add_picture(img, width=Inches(6.5))
+                continue
+            clean_lines.append(line)
+        html = markdown.markdown("\n".join(clean_lines), extensions=['tables'])
+        DocumentBuilder.parse_html_to_docx(doc, html, theme_color)
+
+    @staticmethod
+    def create_cover(doc, stakeholder, service, timeframe, theme_color=DEFAULT_COLOR):
+        StyleEngine.apply_document_styles(doc)
+        for _ in range(4): doc.add_paragraph()
+        t = doc.add_paragraph("LAPORAN KUALITAS LAYANAN & CX")
+        t.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        t.runs[0].font.size = Pt(18)
         
-        latest_record_date = self.raw_data['Survey Date'].max()
+        c = doc.add_paragraph(stakeholder.upper())
+        c.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        c.runs[0].bold = True
+        c.runs[0].font.size = Pt(28)
+        c.runs[0].font.color.rgb = RGBColor(*theme_color)
         
-        time_offsets = {
-            '1w': pd.Timedelta(weeks=1),
-            '1m': pd.DateOffset(months=1),
-            '3m': pd.DateOffset(months=3),
-            '6m': pd.DateOffset(months=6),
-            '1y': pd.DateOffset(years=1)
+        p_name = doc.add_paragraph(f"Layanan: {service} | Periode: {timeframe}")
+        p_name.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p_name.runs[0].font.size = Pt(14)
+        p_name.runs[0].italic = True
+        
+        for _ in range(4): doc.add_paragraph()
+        s = doc.add_paragraph(f"Generated for Management by:\n{WRITER_FIRM_NAME}")
+        s.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        doc.add_page_break()
+
+class ReportGenerator:
+    def __init__(self, kb_instance):
+        self.ollama = Client(host=OLLAMA_HOST)
+        self.kb = kb_instance
+        self.io_pool = concurrent.futures.ThreadPoolExecutor(max_workers=5)
+
+    def _fetch_chapter_context(self, chap, stakeholder, service, timeframe, notes, research_futures):
+        try:
+            try: industry_trends = research_futures['trends'].result(timeout=5)
+            except Exception: industry_trends = "Tidak ada tren."
+
+            rag_data = self.kb.query(stakeholder, service, timeframe, chap['keywords'])
+            persona = PERSONAS.get('default')
+            subs = "\n".join([f"- {s}" for s in chap['subs']])
+            
+            visual_prompt = "Do not force visuals."
+            if "visual_intent" in chap:
+                if chap['visual_intent'] == "bar_chart": visual_prompt = "Mandatory Visual: [[CHART: Sentimen Layanan | Persentase | Positif,60; Netral,20; Negatif,20]]"
+                elif chap['visual_intent'] == "flowchart": visual_prompt = "Action Plan Visual: [[FLOW: Identifikasi Keluhan -> Evaluasi Fasilitas/Sistem -> Implementasi Solusi]]."
+
+            prompt = CX_ANALYSIS_SYSTEM_PROMPT.format(
+                persona=persona, timeframe=timeframe, industry_trends=industry_trends,
+                rag_data=rag_data, visual_prompt=visual_prompt,
+                chapter_title=chap['title'], sub_chapters=subs
+            )
+            return {"prompt": prompt, "success": True}
+        except Exception as e:
+            return {"prompt": "", "success": False, "error": str(e)}
+
+    def run(self, stakeholder, service, timeframe, goal="Evaluasi Layanan", notes=""):
+        logger.info(f"Starting CX Generation: {stakeholder} | {service}")
+        
+        research_futures = {
+            'trends': self.io_pool.submit(Researcher.get_industry_trends, service)
         }
         
-        start_date = latest_record_date - time_offsets.get(duration_code, pd.DateOffset(years=10))
-        
-        mask = (self.raw_data['Survey Date'] >= start_date) & (self.raw_data['Survey Date'] <= latest_record_date)
-        filtered_df = self.raw_data.loc[mask]
-        
-        self.active_filtered_data = filtered_df 
-        
-        if filtered_df.empty: 
-            return "TIDAK ADA DATA PADA PERIODE INI."
-        
-        compiled_text = []
-        for _, row in filtered_df.iterrows():
-            date_str = row['Survey Date'].strftime('%Y-%m-%d')
-            compiled_text.append(
-                f"Date: {date_str} | Source: {row.get('Feedback Source')} | "
-                f"CSAT: {row.get('CSAT Score')} | Text: {row.get('Raw Feedback Text')}"
+        context_futures = {}
+        for chap in CX_SENTIMENT_STRUCTURE:
+            context_futures[chap['id']] = self.io_pool.submit(
+                self._fetch_chapter_context, chap, stakeholder, service, timeframe, notes, research_futures
             )
-            
-        return "\n".join(compiled_text)
 
+        doc = Document()
+        DocumentBuilder.create_cover(doc, stakeholder, service, timeframe, DEFAULT_COLOR)
+        
+        for i, chap in enumerate(CX_SENTIMENT_STRUCTURE):
+            ctx = context_futures[chap['id']].result()
+            if ctx['success']:
+                try:
+                    res = self.ollama.chat(
+                        model=LLM_MODEL, 
+                        messages=[{'role': 'system', 'content': ctx['prompt']}, {'role': 'user', 'content': f"Write content for {chap['title']}."}],
+                        options={'num_ctx': 4096}  
+                    )
+                    h = doc.add_heading(chap['title'], level=1)
+                    h.runs[0].font.color.rgb = RGBColor(*DEFAULT_COLOR)
+                    DocumentBuilder.process_content(doc, res['message']['content'], DEFAULT_COLOR)
+                    if i < len(CX_SENTIMENT_STRUCTURE) - 1: doc.add_page_break()
+                except Exception as e: logger.error(f"Error {chap['title']}: {e}")
 
-class HRReportBuilder:
-    """Coordinates data fetching, LLM generation, and Word doc compilation."""
-    
-    def __init__(self, database):
-        self.llm_client = Client(host=OLLAMA_URL)
-        self.database = database
-
-    def _setup_document_styles(self, document):
-        """Configures the foundational typography for the report."""
-        normal_style = document.styles['Normal']
-        normal_style.font.name = 'Arial'
-        normal_style.font.size = Pt(11)
-        normal_style.font.color.rgb = RGBColor(30, 41, 59) 
-        
-        for i in range(1, 5):
-            try:
-                heading_style = document.styles[f'Heading {i}']
-                heading_style.font.name = 'Arial'
-                heading_style.font.bold = True
-                heading_style.font.color.rgb = RGBColor(15, 23, 42)
-            except KeyError:
-                pass 
-
-    def compile_report(self, duration_code, duration_label):
-        logger.info(f"Generating HR insight report for timeframe: {duration_code}")
-        document = Document()
-        self._setup_document_styles(document)
-        
-        dataset_context = self.database.filter_by_timeframe(duration_code)
-        
-        document.add_paragraph() 
-        document.add_paragraph()
-        
-        title_para = document.add_paragraph()
-        title_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        title_run = title_para.add_run("LAPORAN AUDIT SENTIMEN & KELUHAN")
-        title_run.font.size = Pt(22)
-        title_run.bold = True
-        
-        subtitle_para = document.add_paragraph()
-        subtitle_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        subtitle_run = subtitle_para.add_run(f"Periode Analisis: {duration_label}")
-        subtitle_run.font.size = Pt(14)
-        subtitle_run.italic = True
-        
-        document.add_paragraph()
-        meta_para = document.add_paragraph()
-        meta_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        meta_run = meta_para.add_run(f"Disusun secara otomatis untuk HR & Manajemen Eksekutif\n{ORG_NAME}\nTanggal Terbit: {datetime.datetime.now().strftime('%d %B %Y')}")
-        meta_run.font.size = Pt(11)
-        meta_run.font.color.rgb = RGBColor(100, 116, 139)
-
-        document.add_page_break()
-        
-        file_name = f"HR_Audit_Report_{duration_code}"
-        
-        for section in REPORT_SECTIONS:
-            logger.info(f"Writing chapter: {section['title']}")
-            
-            prompt_context = f"""
-            You are a highly critical Data Analyst and HR Diagnostician for {ORG_NAME}.
-            Analyze the following feedback dataset collected over the period: {duration_label}.
-            
-            RAW DATA: 
-            {dataset_context}
-            
-            TASK: {section['instructions']}
-            """
-            
-            try:
-                response = self.llm_client.chat(
-                    model=AI_MODEL, 
-                    messages=[{'role':'user', 'content': prompt_context}],
-                    options={'temperature': 0.1} 
-                )
-                generated_text = response['message']['content']
-                
-                heading = document.add_heading(section['title'], level=1)
-                heading.alignment = WD_ALIGN_PARAGRAPH.LEFT
-                
-                if section.get("include_trend_chart") and self.database.active_filtered_data is not None:
-                    
-                    trend_chart = GraphMaker.build_trend_line_chart(self.database.active_filtered_data)
-                    if trend_chart: 
-                        para = document.add_paragraph()
-                        para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                        para.add_run().add_picture(trend_chart, width=Inches(6.0))
-                        
-                    pie_chart = GraphMaker.build_nps_pie_chart(self.database.active_filtered_data)
-                    if pie_chart: 
-                        para = document.add_paragraph()
-                        para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                        para.add_run().add_picture(pie_chart, width=Inches(4.5))
-                
-                WordFormatter.apply_markdown(document, generated_text)
-                
-                if section != REPORT_SECTIONS[-1]:
-                    document.add_page_break()
-                
-            except Exception as err:
-                logger.error(f"Failed writing section '{section['title']}': {err}", exc_info=True)
-                document.add_paragraph("[Sistem gagal menghasilkan analisis untuk bagian ini.]")
-
-        logger.info("Report assembly finished successfully.")
-        return document, file_name
+        return doc, f"CX_Report_{stakeholder}_{timeframe}".replace(" ", "_")
