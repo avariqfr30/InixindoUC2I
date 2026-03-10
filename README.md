@@ -1,10 +1,10 @@
-# Inixindo CX & Service Quality Analyzer 📊🏢
+# Sentiment and Feedback Analyzer (AI-powered)
 
 Aplikasi ini adalah sistem *enterprise* berbasis web yang dirancang khusus untuk divisi Quality Assurance (QA) dan Manajemen Inixindo Jogja. Sistem ini memanfaatkan kecerdasan buatan (*Large Language Models* via **Ollama**) dan *Vector Database* (**ChromaDB**) untuk membaca, mengklasifikasikan, dan menganalisis ribuan masukan (keluhan dan apresiasi) dari klien maupun siswa secara otomatis.
 
 Alih-alih membaca *feedback* secara manual, sistem ini akan mengekstrak *insight* menggunakan *Natural Language Processing* (NLP) dan merangkumnya menjadi dokumen laporan komprehensif berformat Microsoft Word, lengkap dengan visualisasi data dan rekomendasi mitigasi.
 
-## ✨ Fitur Utama
+## Fitur Utama
 
 * **Time-Bound RAG Analytics**: Mampu memfilter dan menganalisis sentimen berdasarkan rentang waktu spesifik (Mingguan, Bulanan, Semesteran, Tahunan).
 * **Smart Root-Cause Analysis**: Mengelompokkan masukan tidak terstruktur menjadi *Pain Points* yang jelas (misal: isu fasilitas, kompetensi instruktur, atau jaringan infrastruktur).
@@ -12,14 +12,14 @@ Alih-alih membaca *feedback* secara manual, sistem ini akan mengekstrak *insight
 * **Evidence-Based Reporting**: Setiap klaim analisis di dalam laporan akan divalidasi dengan kutipan langsung (*verbatim*) dari teks keluhan/pujian *stakeholder* untuk menjaga objektivitas.
 * **Enterprise OSINT**: Menarik tren kepuasan pelanggan secara *real-time* dari internet untuk *benchmarking* standar layanan IT di Indonesia.
 
-## 📋 Prasyarat Sistem
+## Prasyarat Sistem
 
 * **Python 3.9+** (Untuk pengembangan lokal tanpa Docker).
 * **Ollama**: Menjalankan *local daemon* di port `11434` (atau *Ollama Cloud Endpoint*).
 * **Google Custom Search API**: Membutuhkan `API_KEY` dan `CX_ID` untuk mengaktifkan modul OSINT.
 * **Docker & Docker Compose** (Untuk *deployment* ke server *cloud* seperti AWS).
 
-## 🚀 Instalasi Lokal (Development)
+## Instalasi Lokal (Development)
 
 ### 1. Persiapan Lingkungan Virtual
 Sangat disarankan menggunakan *virtual environment* agar dependensi aplikasi terisolasi.
@@ -76,7 +76,7 @@ Akses UI *Analyzer* melalui browser di `http://127.0.0.1:5000`.
 
 ---
 
-## ☁️ Deployment ke Production (AWS / Cloud)
+## Deployment ke Production (AWS / Cloud)
 
 Aplikasi ini sepenuhnya *Dockerized* dan siap untuk metode *Lift and Shift* ke server produksi (misal: AWS EC2).
 
