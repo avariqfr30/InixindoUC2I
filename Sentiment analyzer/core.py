@@ -12,6 +12,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import textwrap
+from datetime import datetime
 from PIL import Image, ImageStat
 from sqlalchemy import create_engine
 import markdown
@@ -65,7 +66,6 @@ class KnowledgeBase:
         
         ids, docs, metas = [], [], []
         for idx, row in self.df.iterrows():
-            # Combine everything into a massive string for context
             text_rep = " | ".join([f"{col}: {val}" for col, val in row.items()])
             ids.append(str(idx))
             docs.append(text_rep)
@@ -83,10 +83,7 @@ class KnowledgeBase:
 
     def query(self, timeframe, context_keywords=None):
         try:
-            # Broad query to grab holistic feedback
             query_str = f"General feedback, complaints, praise, and operational issues. {context_keywords or ''}"
-            
-            # FILTER HANYA BERDASARKAN RENTANG WAKTU (Semua Stakeholder & Layanan masuk)
             res = self.collection.query(
                 query_texts=[query_str], 
                 n_results=25, 
@@ -111,17 +108,60 @@ class Researcher:
 
 class StyleEngine:
     @staticmethod
-    def apply_document_styles(doc):
-        style = doc.styles['Normal']
-        style.font.name = 'Calibri'
-        style.font.size = Pt(11)
-        pf = style.paragraph_format
+    def apply_document_styles(doc, theme_color):
+        # 1. Setup Margin Profesional
+        for section in doc.sections:
+            section.top_margin = Cm(2.54)
+            section.bottom_margin = Cm(2.54)
+            section.left_margin = Cm(2.54)
+            section.right_margin = Cm(2.54)
+            
+            # Tambahkan Footer Rahasia Eksekutif
+            footer = section.footer
+            footer_para = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
+            footer_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            run = footer_para.add_run("STRICTLY CONFIDENTIAL | Inixindo Jogja Executive Report")
+            run.font.name = 'Calibri'
+            run.font.size = Pt(9)
+            run.font.color.rgb = RGBColor(128, 128, 128)
+
+        # 2. Setup Teks Paragraf Normal (Justified, Clean)
+        style_normal = doc.styles['Normal']
+        style_normal.font.name = 'Calibri'
+        style_normal.font.size = Pt(11)
+        style_normal.font.color.rgb = RGBColor(33, 37, 41)
+        pf = style_normal.paragraph_format
+        pf.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
         pf.line_spacing_rule = WD_LINE_SPACING.MULTIPLE
         pf.line_spacing = 1.15
-        pf.space_after = Pt(8) 
-        for section in doc.sections:
-            section.top_margin = Cm(2.54); section.bottom_margin = Cm(2.54)
-            section.left_margin = Cm(2.54); section.right_margin = Cm(2.54)
+        pf.space_after = Pt(10) 
+
+        # 3. Setup Heading 1 (Bab Utama)
+        style_h1 = doc.styles['Heading 1']
+        style_h1.font.name = 'Arial'
+        style_h1.font.size = Pt(16)
+        style_h1.font.bold = True
+        style_h1.font.color.rgb = RGBColor(*theme_color)
+        style_h1.paragraph_format.space_before = Pt(24)
+        style_h1.paragraph_format.space_after = Pt(12)
+
+        # 4. Setup Heading 2 (Sub-bab tingkat 1)
+        style_h2 = doc.styles['Heading 2']
+        style_h2.font.name = 'Arial'
+        style_h2.font.size = Pt(14)
+        style_h2.font.bold = True
+        style_h2.font.color.rgb = RGBColor(0, 0, 0)
+        style_h2.paragraph_format.space_before = Pt(18)
+        style_h2.paragraph_format.space_after = Pt(6)
+
+        # 5. Setup Heading 3 (Sub-bab tingkat 2)
+        style_h3 = doc.styles['Heading 3']
+        style_h3.font.name = 'Calibri'
+        style_h3.font.size = Pt(12)
+        style_h3.font.bold = True
+        style_h3.font.color.rgb = RGBColor(64, 64, 64)
+        style_h3.paragraph_format.space_before = Pt(12)
+        style_h3.paragraph_format.space_after = Pt(6)
 
 class ChartEngine:
     @staticmethod
@@ -181,21 +221,25 @@ class DocumentBuilder:
         soup = BeautifulSoup(html_content, 'html.parser')
         for element in soup.children:
             if element.name is None: continue
+            
+            # Mapping Heading Markdown ke Style Word
             if element.name in ['h1', 'h2', 'h3']:
                 level = int(element.name[1])
-                p = doc.add_heading(element.get_text().strip(), level=level)
-                if level == 1: 
-                    for run in p.runs: run.font.color.rgb = RGBColor(*theme_color)
+                doc.add_heading(element.get_text().strip(), level=level)
+                
             elif element.name == 'p':
                 p = doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY # Pastikan teks rata kanan-kiri
                 for child in element.children:
                     if child.name in ['strong', 'b']: p.add_run(child.get_text()).bold = True
                     elif child.name in ['em', 'i']: p.add_run(child.get_text()).italic = True
                     elif child.name is None: p.add_run(str(child))
+                    
             elif element.name in ['ul', 'ol']:
                 style = 'List Bullet' if element.name == 'ul' else 'List Number'
                 for li in element.find_all('li'):
-                    doc.add_paragraph(li.get_text(), style=style)
+                    p = doc.add_paragraph(li.get_text(), style=style)
+                    p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
 
     @staticmethod
     def process_content(doc, raw_text, theme_color=DEFAULT_COLOR):
@@ -211,31 +255,59 @@ class DocumentBuilder:
                 if img: doc.add_paragraph().add_run().add_picture(img, width=Inches(6.5))
                 continue
             clean_lines.append(line)
+            
         html = markdown.markdown("\n".join(clean_lines), extensions=['tables'])
         DocumentBuilder.parse_html_to_docx(doc, html, theme_color)
 
     @staticmethod
     def create_cover(doc, timeframe, theme_color=DEFAULT_COLOR):
-        StyleEngine.apply_document_styles(doc)
-        for _ in range(4): doc.add_paragraph()
+        StyleEngine.apply_document_styles(doc, theme_color)
+        
+        # Penyeimbangan Spasi Kosong Atas
+        for _ in range(5): doc.add_paragraph()
+        
+        # Label Kerahasiaan
+        conf = doc.add_paragraph("S T R I C T L Y   C O N F I D E N T I A L")
+        conf.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        conf.runs[0].font.size = Pt(10)
+        conf.runs[0].font.color.rgb = RGBColor(128, 128, 128)
+        conf.runs[0].font.bold = True
+        
+        doc.add_paragraph() # Spacing
+        
+        # Judul Utama
         t = doc.add_paragraph("HOLISTIC CUSTOMER EXPERIENCE REPORT")
         t.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        t.runs[0].font.size = Pt(18)
+        t.runs[0].font.name = 'Arial'
+        t.runs[0].font.size = Pt(20)
         
         c = doc.add_paragraph("INIXINDO JOGJA")
         c.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        c.runs[0].font.name = 'Arial'
         c.runs[0].bold = True
-        c.runs[0].font.size = Pt(32)
+        c.runs[0].font.size = Pt(36)
         c.runs[0].font.color.rgb = RGBColor(*theme_color)
         
-        p_name = doc.add_paragraph(f"Periode Analisis: {timeframe}")
+        doc.add_paragraph() # Spacing
+        
+        # Meta Data Laporan
+        p_name = doc.add_paragraph(f"Periode Evaluasi Laporan: {timeframe}")
         p_name.alignment = WD_ALIGN_PARAGRAPH.CENTER
         p_name.runs[0].font.size = Pt(14)
-        p_name.runs[0].italic = True
         
-        for _ in range(4): doc.add_paragraph()
-        s = doc.add_paragraph(f"Generated for Executive Board by:\n{WRITER_FIRM_NAME}")
+        current_date = datetime.now().strftime("%d %B %Y")
+        p_date = doc.add_paragraph(f"Tanggal Generasi AI: {current_date}")
+        p_date.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p_date.runs[0].font.size = Pt(12)
+        p_date.runs[0].font.color.rgb = RGBColor(128, 128, 128)
+        
+        # Mendorong Footer ke Bawah
+        for _ in range(8): doc.add_paragraph()
+        
+        s = doc.add_paragraph(f"Prepared for Executive Board by:\n{WRITER_FIRM_NAME}")
         s.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        s.runs[0].font.bold = True
+        
         doc.add_page_break()
 
 class ReportGenerator:
@@ -249,7 +321,6 @@ class ReportGenerator:
             try: industry_trends = research_futures['trends'].result(timeout=5)
             except Exception: industry_trends = "Tidak ada tren eksternal."
 
-            # Query database purely based on timeframe
             rag_data = self.kb.query(timeframe, chap['keywords'] + " " + notes)
             persona = PERSONAS.get('default')
             
@@ -272,7 +343,6 @@ class ReportGenerator:
     def run(self, timeframe, notes=""):
         logger.info(f"Starting Holistic CX Generation for Timeframe: {timeframe}")
         
-        # Broad OSINT search
         research_futures = {
             'trends': self.io_pool.submit(Researcher.get_macro_trends)
         }
@@ -295,8 +365,8 @@ class ReportGenerator:
                         messages=[{'role': 'system', 'content': ctx['prompt']}, {'role': 'user', 'content': f"Write content for {chap['title']}. Remember: Use '###' for EVERY sub-chapter header and compare demographics holistically."}],
                         options={'num_ctx': 4096}  
                     )
-                    h = doc.add_heading(chap['title'], level=1)
-                    h.runs[0].font.color.rgb = RGBColor(*DEFAULT_COLOR)
+                    # Menggunakan style bawaan yang sudah di-custom di StyleEngine
+                    doc.add_heading(chap['title'], level=1)
                     DocumentBuilder.process_content(doc, res['message']['content'], DEFAULT_COLOR)
                     if i < len(CX_SENTIMENT_STRUCTURE) - 1: doc.add_page_break()
                 except Exception as e: logger.error(f"Error {chap['title']}: {e}")
