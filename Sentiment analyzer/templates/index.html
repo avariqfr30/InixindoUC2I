@@ -3,150 +3,200 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sistem Analisis Sentimen HR</title>
+    <title>Inixindo Holistic CX Analyzer</title>
     <style>
-        /* Base Styling */
-        body { 
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
-            background: #f8fafc; 
-            display: flex; 
-            align-items: center; 
-            justify-content: center; 
-            height: 100vh; 
-            margin: 0; 
-            color: #1e293b; 
-        }
-        
-        /* Main Application Card */
-        .card { 
-            background: white; 
-            padding: 40px; 
-            border-radius: 12px; 
-            box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); 
-            width: 450px; 
-            text-align: center; 
-            border: 1px solid #e2e8f0; 
-        }
-        
-        /* Typography */
-        h2 { margin: 0 0 5px 0; color: #0f172a; font-size: 1.6rem; }
-        p { color: #64748b; margin-bottom: 25px; font-size: 0.95rem; line-height: 1.5; }
-        
-        /* Form Elements */
-        select { 
-            width: 100%; 
-            padding: 12px; 
-            margin-bottom: 20px; 
-            border-radius: 6px; 
-            border: 1px solid #cbd5e1; 
-            font-size: 1rem; 
-            background-color: #f8fafc; 
-            color: #334155; 
-            font-weight: 500;
-        }
-        select:focus { 
-            border-color: #3b82f6; 
-            outline: none; 
-            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1); 
-        }
-        button { 
-            width: 100%; 
-            background: #10b981; 
-            color: white; 
-            border: none; 
-            padding: 14px; 
-            border-radius: 6px; 
-            font-weight: bold; 
-            cursor: pointer; 
-            font-size: 1rem; 
-            transition: background 0.2s ease; 
-        }
-        button:hover { background: #059669; }
+        body { font-family: 'Segoe UI', sans-serif; background: #f8fafc; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; color: #334155; }
+        .card { background: white; padding: 40px; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.08); width: 680px; max-height: 95vh; overflow-y: auto;}
+        .hidden { display: none; }
+        h2 { color: #0f172a; margin: 0 0 10px 0; font-size: 1.8rem; }
+        p.sub { color: #64748b; margin: 0 0 25px 0; font-size: 1rem; line-height: 1.4; }
+        label { display: block; font-weight: 600; margin-bottom: 8px; font-size: 0.95rem; }
+        select, textarea, button { width: 100%; padding: 12px; margin-bottom: 15px; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 1rem; background: white; box-sizing: border-box; font-family: 'Segoe UI', sans-serif;}
+        select:focus, textarea:focus { border-color: #cc0000; outline: none; }
+        button { background: #cc0000; color: white; border: none; font-weight: bold; cursor: pointer; transition: 0.2s; margin-top: 10px; }
+        button:hover { background: #990000; }
         button:disabled { background: #94a3b8; cursor: not-allowed; }
+        button.secondary { background: white; color: #475569; border: 1px solid #cbd5e1; }
+        button.secondary:hover { background: #f8fafc; }
+        .review-box { background: #f8fafc; padding: 25px; border-radius: 12px; margin-bottom: 25px; border: 1px solid #e2e8f0; font-size: 0.95rem; }
+        .review-row { display: flex; justify-content: space-between; margin-bottom: 10px; border-bottom: 1px dashed #e2e8f0; padding-bottom: 5px;}
+        .review-row span:last-child { font-weight: 600; color: #0f172a; text-align: right;}
+        .spinner { width: 20px; height: 20px; border: 3px solid rgba(255,255,255,0.3); border-top-color: white; border-radius: 50%; animation: spin 1s linear infinite; display: none; vertical-align: middle; margin-left: 10px; }
+        .spinner.active { display: inline-block; }
+        textarea { resize: vertical; min-height: 90px; margin-bottom: 8px; }
         
-        /* Loading Animation */
-        .spinner { 
-            width: 18px; 
-            height: 18px; 
-            border: 2px solid white; 
-            border-top-color: transparent; 
-            border-radius: 50%; 
-            animation: spin 1s linear infinite; 
-            display: inline-block; 
-            vertical-align: middle; 
-            margin-left: 8px; 
-        }
-        .hidden { display: none !important; }
+        /* CSS UNTUK SUGGESTION CHIPS */
+        .chip-container { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+        .chip { background: #e2e8f0; color: #475569; padding: 6px 12px; border-radius: 16px; font-size: 0.85rem; cursor: pointer; transition: 0.2s; border: 1px solid transparent; }
+        .chip:hover { background: #f1f5f9; border-color: #cc0000; color: #cc0000; }
         
-        @keyframes spin { 
-            100% { transform: rotate(360deg); } 
-        }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
     <div class="card">
-        <h2>📊 AI Sentiment Analyzer</h2>
-        <p>Ekstrak <i>insight</i> mendalam, temukan pola masalah, dan dapatkan tindakan preventif berdasarkan rentang waktu evaluasi.</p>
-        
-        <select id="duration-select" aria-label="Pilih Rentang Waktu" title="Pilih Rentang Waktu">
-            <option disabled selected>Pilih Rentang Waktu Analisis...</option>
-            <option value="1w">1 Minggu Terakhir</option>
-            <option value="1m">1 Bulan Terakhir</option>
-            <option value="3m">3 Bulan Terakhir</option>
-            <option value="6m">6 Bulan Terakhir</option>
-            <option value="1y">1 Tahun Terakhir</option>
-        </select>
-        
-        <button id="btn-generate" disabled>Buat Laporan Insight <div id="spin" class="spinner hidden"></div></button>
+        <div id="loader" style="text-align:center; padding: 40px;">
+            <div style="border:4px solid #e2e8f0; border-top:4px solid #cc0000; border-radius:50%; width:40px; height:40px; animation: spin 1s linear infinite; margin: 0 auto 20px auto;"></div>
+            <p id="loader-text">Memuat Database Enterprise Inixindo...</p>
+        </div>
+
+        <div id="step-config" class="hidden">
+            <h2>Holistic CX Analyzer</h2>
+            <p class="sub">AI akan menarik semua masukan dari berbagai demografi (Pemerintah, BUMN, Mahasiswa) lintas layanan untuk mensintesis laporan performa perusahaan secara makro.</p>
+            
+            <label for="select-timeframe">Periode Analisis Evaluasi</label>
+            <select id="select-timeframe">
+                <option value="" disabled selected>Pilih Rentang Waktu...</option>
+            </select>
+            
+            <div id="container-discovery" class="hidden" style="margin-top: 15px; padding-top: 20px; border-top: 1px solid #e2e8f0;">
+                <label for="input-notes">Instruksi Spesifik untuk AI (Opsional)</label>
+                <textarea id="input-notes" placeholder="Atau klik rekomendasi instruksi di bawah ini..."></textarea>
+                
+                <div id="suggestion-container" class="chip-container"></div>
+            </div>
+            
+            <button type="button" id="btn-review" disabled>Tinjau Parameter Laporan</button>
+            <button type="button" id="btn-refresh" class="secondary" style="font-size:0.9rem; padding:10px;">🔄 Sync Corporate Database</button>
+        </div>
+
+        <div id="step-review" class="hidden">
+            <h2>Konfirmasi Laporan Eksekutif</h2>
+            <div class="review-box" id="review-text"></div>
+            <div style="display:flex; gap:15px;">
+                <button type="button" id="btn-back" class="secondary" style="width:35%">Kembali</button>
+                <button type="button" id="btn-generate" style="width:65%">Generate Report <span id="spinner" class="spinner"></span></button>
+            </div>
+        </div>
+
+        <div id="step-success" class="hidden" style="text-align:center; padding: 20px;">
+            <div style="font-size: 60px; margin-bottom: 20px;">✅</div>
+            <h2>Selesai!</h2>
+            <p class="sub">Laporan Holistic Customer Experience (CX) telah diunduh.</p>
+            <button type="button" onclick="location.reload()" class="secondary">Buat Laporan Baru</button>
+        </div>
     </div>
 
     <script>
-        const durationMenu = document.getElementById('duration-select');
-        const submitButton = document.getElementById('btn-generate');
-        const loader = document.getElementById('spin');
-
-        durationMenu.addEventListener('change', () => {
-            submitButton.disabled = false;
-        });
-
-        submitButton.addEventListener('click', () => {
-            const code = durationMenu.value;
-            const label = durationMenu.options[durationMenu.selectedIndex].text;
+        const ui = {
+            loader: document.getElementById('loader'),
+            loaderText: document.getElementById('loader-text'),
+            configStep: document.getElementById('step-config'),
+            reviewStep: document.getElementById('step-review'),
+            successStep: document.getElementById('step-success'),
             
-            submitButton.disabled = true;
-            loader.classList.remove('hidden');
-            submitButton.childNodes[0].nodeValue = "Menganalisis Pola HR... ";
+            selectTimeframe: document.getElementById('select-timeframe'),
+            inputNotes: document.getElementById('input-notes'),
+            suggestionContainer: document.getElementById('suggestion-container'),
+            containerDiscovery: document.getElementById('container-discovery'),
+            reviewText: document.getElementById('review-text'),
             
-            fetch('/api/build-report', {
-                method: 'POST', 
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ duration: code, duration_label: label })
-            })
+            btnReview: document.getElementById('btn-review'),
+            btnGenerate: document.getElementById('btn-generate'),
+            btnBack: document.getElementById('btn-back')
+        };
+        
+        function renderSuggestions(suggestionsList) {
+            ui.suggestionContainer.innerHTML = ''; 
+            if (suggestionsList) {
+                suggestionsList.forEach(text => {
+                    let chip = document.createElement('span');
+                    chip.className = 'chip';
+                    chip.innerText = "+ " + text;
+                    chip.onclick = () => {
+                        let currentText = ui.inputNotes.value.trim();
+                        if (currentText && !currentText.endsWith('.')) currentText += '. ';
+                        else if (currentText) currentText += ' ';
+                        ui.inputNotes.value = currentText + text;
+                        ui.inputNotes.focus();
+                    };
+                    ui.suggestionContainer.appendChild(chip);
+                });
+            }
+        }
+
+        function loadConfig() {
+            fetch('/get-config')
+                .then(response => {
+                    if (!response.ok && response.status !== 500) throw new Error("Flask mati. Pastikan server berjalan.");
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.error) throw new Error(data.error);
+                    
+                    data.timeframes.forEach(tf => {
+                        let option = document.createElement('option');
+                        option.value = tf; option.text = tf;
+                        ui.selectTimeframe.add(option);
+                    });
+                    
+                    renderSuggestions(data.suggestions);
+                    
+                    ui.loader.classList.add('hidden'); 
+                    ui.configStep.classList.remove('hidden');
+                })
+                .catch(err => {
+                    if (err.message.includes("Failed to fetch")) {
+                        ui.loaderText.innerHTML = `<span style="color: #cc0000; font-weight: bold;">Error: Jangan klik ganda file HTML! Buka http://127.0.0.1:5000</span>`;
+                    } else {
+                        ui.loaderText.innerHTML = `<span style="color: #cc0000; font-weight: bold;">Error: ${err.message}</span>`;
+                    }
+                });
+        }
+        
+        loadConfig();
+
+        ui.selectTimeframe.onchange = () => {
+            ui.containerDiscovery.classList.remove('hidden');
+            ui.btnReview.disabled = false;
+        };
+        
+        ui.btnReview.onclick = () => { 
+            let html = `
+                <div class="review-row"><span>Cakupan Data</span><span>Semua Stakeholder & Layanan</span></div>
+                <div class="review-row"><span>Periode Analisis</span><span>${ui.selectTimeframe.value}</span></div>
+            `;
+            ui.reviewText.innerHTML = html; 
+            ui.configStep.classList.add('hidden'); 
+            ui.reviewStep.classList.remove('hidden'); 
+        };
+        
+        ui.btnBack.onclick = () => { 
+            ui.reviewStep.classList.add('hidden'); 
+            ui.configStep.classList.remove('hidden'); 
+        };
+        
+        ui.btnGenerate.onclick = () => {
+            ui.btnGenerate.disabled = true; 
+            document.getElementById('spinner').classList.add('active');
+            
+            const payload = {
+                timeframe: ui.selectTimeframe.value,
+                notes: ui.inputNotes.value
+            };
+
+            fetch('/generate', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) })
             .then(response => {
-                if (!response.ok) throw new Error("Gagal menyusun dokumen.");
+                if (!response.ok) throw new Error("Gagal generate dokumen. Pastikan Ollama menyala.");
                 return response.blob();
             })
             .then(blob => {
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `Laporan_Pola_HR_${code}.docx`;
+                let url = window.URL.createObjectURL(blob);
+                let a = document.createElement('a'); a.href = url; 
+                a.download = `Holistic_CX_Report_${ui.selectTimeframe.value.replace(/\s+/g, '_').substring(0,6)}.docx`; 
                 a.click();
-                
-                resetUI();
+                ui.reviewStep.classList.add('hidden'); ui.successStep.classList.remove('hidden');
             })
             .catch(err => {
-                alert("Terjadi kesalahan. Pastikan backend Flask dan Ollama berjalan.");
-                console.error(err);
-                resetUI();
+                alert(err.message);
+                ui.btnGenerate.disabled = false;
+                document.getElementById('spinner').classList.remove('active');
             });
-        });
-
-        function resetUI() {
-            submitButton.disabled = false;
-            loader.classList.add('hidden');
-            submitButton.childNodes[0].nodeValue = "Buat Laporan Insight ";
-        }
+        };
+        
+        document.getElementById('btn-refresh').onclick = () => {
+            fetch('/refresh-knowledge', {method: 'POST'}).then(() => location.reload());
+        };
     </script>
 </body>
 </html>

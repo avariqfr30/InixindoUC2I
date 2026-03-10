@@ -2,81 +2,94 @@
 import os
 
 DEMO_MODE = True 
-CX_API_URL = "https://api.inixindo.id/cx-v1" 
-API_AUTH_TOKEN = "isi_token_disini_nanti"
 
 GOOGLE_API_KEY = "API_KEY"
 GOOGLE_CX_ID = "CX_ID"
-OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
+
+OLLAMA_HOST = "http://127.0.0.1:11434"
 
 LLM_MODEL = "gpt-oss:120b-cloud" 
 EMBED_MODEL = "bge-m3:latest"
-DB_URI = "sqlite:///cx_feedback.db" 
+DB_URI = "sqlite:///data/cx_feedback.db" 
 
 WRITER_FIRM_NAME = "Inixindo Jogja - Quality Assurance & CX Division" 
 DEFAULT_COLOR = (204, 0, 0) # Inixindo Jogja Red
 
-DATA_MAPPING = {
-    "entity": "Tipe Stakeholder",
-    "topic": "Layanan",
-    "budget": "Rentang Waktu" 
-}
+# --- SMART SUGGESTIONS (Holistic / Macro Level) ---
+SMART_SUGGESTIONS = [
+    "Tolong bandingkan ekspektasi klien BUMN/Corporate dengan peserta Mahasiswa/Personal.",
+    "Fokuskan analisis pada keluhan terkait infrastruktur fisik dan jaringan secara keseluruhan.",
+    "Berikan analisis mendalam mengenai performa instruktur dan konsultan di semua layanan.",
+    "Bandingkan sentimen klien Pemerintahan (Gov) terhadap layanan pelatihan vs layanan audit/konsultasi."
+]
 
 CX_ANALYSIS_SYSTEM_PROMPT = """
-You are an expert Customer Experience (CX) Data Scientist and Service Quality Analyst for Inixindo Jogja.
+You are the Chief Customer Experience (CX) Officer for Inixindo Jogja.
 ROLE: {persona}.
 
-=== FILTERED CLIENT/STUDENT FEEDBACK (TIMEFRAME: {timeframe}) ===
+=== HOLISTIC COMPANY FEEDBACK (TIMEFRAME: {timeframe}) ===
 {rag_data}
 
-=== EXTERNAL BENCHMARK (OSINT) ===
-IT Service & Training Trends: {industry_trends}
+=== EXTERNAL OSINT BENCHMARKS (MACRO TRENDS) ===
+Demographic & IT Education Trends in Indonesia: {industry_trends}
 
 MANDATORY RULES:
-1. STRICT LANGUAGE ENFORCEMENT: YOU MUST WRITE THE ENTIRE RESPONSE STRICTLY IN BAHASA INDONESIA.
-2. DO NOT repeat the Chapter Title in your output.
-3. GROUNDING: Base your analysis STRICTLY on the provided filtered feedback. Do not invent complaints or praise.
-4. EVIDENCE: Whenever you make a claim about client satisfaction or complaints, QUOTE an anonymized excerpt from the data to prove it.
-5. OBJECTIVITY: Maintain a highly analytical, professional, and constructive tone. Focus on Inixindo Jogja's service delivery.
+1. STRICT LANGUAGE: Write the entire response strictly in professional Bahasa Indonesia.
+2. HOLISTIC SYNTHESIS: You are analyzing the ENTIRE company's performance. You MUST compare different demographics (e.g., Gov vs Corporate vs Students) and different services (e.g., Training vs Consulting). 
+3. STRICT SUB-CHAPTER ENFORCEMENT: You MUST use Markdown Headers (###) for EVERY single sub-chapter listed below. You are FORBIDDEN from leaving any sub-chapter empty. Write at least 150 words per sub-chapter.
+4. EVIDENCE: Quote anonymized excerpts from the internal feedback data to prove your points.
+5. NO TITLE REPETITION: Do NOT write '{chapter_title}' at the start of your response.
 6. {visual_prompt}
 
-WRITE CONTENT FOR '{chapter_title}' covering:
+WRITE DETAILED CONTENT FOR THE FOLLOWING SUB-CHAPTERS:
 {sub_chapters}
 """
 
 CX_SENTIMENT_STRUCTURE = [
     {
-        "id": "cx_chap_1", "title": "BAB I – EXECUTIVE SERVICE QUALITY SUMMARY",
-        "subs": ["1.1 Kondisi Kepuasan Klien/Siswa Secara Umum", "1.2 Perbandingan Sentimen (Positif, Negatif, Netral)", "1.3 Kesimpulan Utama Kualitas Layanan"],
-        "keywords": "overall sentiment satisfaction summary rating",
-        "visual_intent": "bar_chart",
-        "length_intent": "Highly concise, data-driven executive summary. (Target: 250 words)."
-    },
-    {
-        "id": "cx_chap_2", "title": "BAB II – KEKUATAN & APRESIASI KLIEN (PRAISE)",
-        "subs": ["2.1 Aspek Layanan yang Paling Diapresiasi (Instruktur, Fasilitas, Materi, dll)", "2.2 Kutipan Langsung dari Klien/Siswa (Evidence)"],
-        "keywords": "praise positive feedback happy strength competent facility good",
-        "length_intent": "Detailed and encouraging. Quote the data explicitly. (Target: 300 words)."
-    },
-    {
-        "id": "cx_chap_3", "title": "BAB III – KELUHAN & SERVICE GAPS (CONCERNS)",
-        "subs": ["3.1 Pain Points & Keluhan Utama Klien", "3.2 Analisis Akar Masalah (Fasilitas, Komunikasi, Jadwal, dll)", "3.3 Kutipan Langsung dari Klien/Siswa (Evidence)"],
-        "keywords": "complaint negative issue concern bad slow facility schedule",
-        "length_intent": "Objective, highly analytical, and constructive. (Target: 400 words)."
-    },
-    {
-        "id": "cx_chap_4", "title": "BAB IV – REKOMENDASI PERBAIKAN & MITIGASI",
+        "id": "cx_chap_1", "title": "BAB I – MACRO CX & SERVICE QUALITY SUMMARY",
         "subs": [
-            "4.1 What to Improve (Area layanan/fasilitas yang butuh intervensi segera)", 
-            "4.2 What to Keep (Standar Inixindo Jogja yang sudah memuaskan klien)", 
-            "4.3 What to Prevent (Risiko operasional yang harus dimitigasi ke depannya)"
+            "1.1 Kondisi Kepuasan Pelanggan Inixindo Jogja Secara Keseluruhan", 
+            "1.2 Perbandingan Sentimen Antar Demografi (Pemerintah vs BUMN vs Mahasiswa/Personal)", 
+            "1.3 Layanan dengan Performa Terbaik & Terburuk Periode Ini"
         ],
-        "keywords": "recommendation improve keep prevent mitigate action plan",
+        "keywords": "overall sentiment satisfaction summary rating compare demographic service",
+        "visual_intent": "bar_chart",
+        "length_intent": "Highly concise, data-driven executive summary."
+    },
+    {
+        "id": "cx_chap_2", "title": "BAB II – APRESIASI & KEKUATAN LINTAS LAYANAN",
+        "subs": [
+            "2.1 Puncak Apresiasi Klien (Instruktur, Materi, atau Layanan Administratif)", 
+            "2.2 Testimoni Positif Berdasarkan Segmen Klien",
+            "2.3 Kutipan Langsung dari Klien/Siswa (Evidence)"
+        ],
+        "keywords": "praise positive feedback happy strength competent facility good across services",
+        "length_intent": "Detailed and encouraging. Quote the data explicitly."
+    },
+    {
+        "id": "cx_chap_3", "title": "BAB III – ANALISIS KESENJANGAN & KELUHAN SISTEMIK",
+        "subs": [
+            "3.1 Pain Points Utama Lintas Layanan (Fasilitas, Komunikasi, Timeline)", 
+            "3.2 Analisis Kesenjangan Ekspektasi Berdasarkan Demografi (Misal: Ekspektasi Senior vs Pemula)", 
+            "3.3 Kutipan Langsung dari Klien/Siswa (Evidence)"
+        ],
+        "keywords": "complaint negative issue concern bad slow facility schedule expectation gap",
+        "length_intent": "Objective, highly analytical, and constructive."
+    },
+    {
+        "id": "cx_chap_4", "title": "BAB IV – REKOMENDASI STRATEGIS & MITIGASI RISIKO",
+        "subs": [
+            "4.1 Intervensi Segera (Area kritis yang berdampak pada banyak demografi)", 
+            "4.2 Penyesuaian Strategi Layanan Berdasarkan Tren OSINT & Perilaku Konsumen Terkini", 
+            "4.3 Langkah Preventif Operasional Ke Depan"
+        ],
+        "keywords": "recommendation improve keep prevent mitigate action plan demographic behavior trend future",
         "visual_intent": "flowchart",
-        "length_intent": "Actionable, clear, and structured using bullet points. (Target: 400 words)."
+        "length_intent": "Actionable, clear, and structured using bullet points."
     }
 ]
 
 PERSONAS = {
-    "default": "Lead Customer Experience (CX) Analyst (Objective, Analytical, Solution-Oriented)"
+    "default": "Chief CX Officer (Visionary, Analytical, Highly Objective, Strategic)"
 }
