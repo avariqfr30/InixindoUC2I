@@ -3,12 +3,29 @@ import os
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 
+SUPPORTED_APP_MODES = {"demo", "hybrid"}
+APP_MODE = os.getenv("APP_MODE", "demo").strip().lower()
+if APP_MODE not in SUPPORTED_APP_MODES:
+    APP_MODE = "demo"
+
+DEMO_MODE = APP_MODE == "demo"
+INTERNAL_DATA_MODE = "csv" if DEMO_MODE else "api"
+EXTERNAL_DATA_MODE = "osint"
+
 SERPER_API_KEY = os.getenv("SERPER_API_KEY", "YOUR_SERPER_API_KEY")
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
 LLM_MODEL = os.getenv("LLM_MODEL", "gpt-oss:120b-cloud")
 EMBED_MODEL = os.getenv("EMBED_MODEL", "bge-m3:latest")
 DB_URI = os.getenv("DB_URI", f"sqlite:///{os.path.join(DATA_DIR, 'cx_feedback.db')}")
 CSV_PATH = os.getenv("CSV_PATH", os.path.join(DATA_DIR, "db.csv"))
+
+INTERNAL_API_BASE_URL = os.getenv("INTERNAL_API_BASE_URL", "").rstrip("/")
+INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "")
+INTERNAL_API_FEEDBACK_ENDPOINT = os.getenv(
+    "INTERNAL_API_FEEDBACK_ENDPOINT",
+    "/feedback",
+)
+INTERNAL_API_TIMEOUT_SECONDS = int(os.getenv("INTERNAL_API_TIMEOUT_SECONDS", "20"))
 
 WRITER_FIRM_NAME = "Inixindo Jogja - Quality Assurance & CX Division"
 DEFAULT_COLOR = (204, 0, 0)
@@ -35,6 +52,40 @@ OSINT_TOPIC_QUERY_TEMPLATE = (
     "tren layanan pelatihan dan konsultasi IT Indonesia {timeframe} "
     "{focus_keywords} {notes}"
 )
+
+DATA_ACQUISITION_POLICY = {
+    "demo": {
+        "label": "Demo Mode",
+        "internal_source": "Demo CSV dataset",
+        "external_source": "OSINT",
+        "internal_scope": [
+            "Sample feedback records",
+            "Sample stakeholder segments",
+            "Sample service history",
+        ],
+        "external_scope": [
+            "Market trends",
+            "Public benchmarks",
+            "Public sentiment",
+        ],
+    },
+    "hybrid": {
+        "label": "Hybrid Mode",
+        "internal_source": "Company internal API",
+        "external_source": "OSINT",
+        "internal_scope": [
+            "Customer feedback",
+            "Operational service records",
+            "Customer segmentation",
+            "Performance and service outcomes",
+        ],
+        "external_scope": [
+            "Market trends",
+            "Competitor benchmarks",
+            "Public reviews and media signals",
+        ],
+    },
+}
 
 CX_ANALYSIS_SYSTEM_PROMPT = """
 You are the Chief Customer Experience (CX) Officer for Inixindo Jogja.

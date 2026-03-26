@@ -3,7 +3,7 @@ import logging
 from flask import Flask, jsonify, render_template, request, send_file
 from flask_cors import CORS
 
-from config import DB_URI, SMART_SUGGESTIONS
+from config import APP_MODE, DB_URI, SMART_SUGGESTIONS
 from core import KnowledgeBase, ReportGenerator
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
@@ -14,6 +14,7 @@ CORS(app)
 
 kb = KnowledgeBase(DB_URI)
 generator = ReportGenerator(kb)
+logger.info("Application started in %s mode.", APP_MODE)
 
 @app.route("/")
 def home():
@@ -26,18 +27,20 @@ def get_config():
         return jsonify(
             {
                 "error": (
-                    "Data feedback belum tersedia. "
-                    "Pastikan file db.csv ada di folder data aplikasi."
+                    "Internal data is not available. "
+                    "Check the server-side data source configuration."
                 )
             }
         )
 
     timeframes = sorted(kb.df["Rentang Waktu"].dropna().unique().tolist())
 
-    return jsonify({
-        "timeframes": timeframes,
-        "suggestions": SMART_SUGGESTIONS
-    })
+    return jsonify(
+        {
+            "timeframes": timeframes,
+            "suggestions": SMART_SUGGESTIONS,
+        }
+    )
 
 
 @app.route("/generate", methods=["POST"])

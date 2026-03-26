@@ -36,7 +36,7 @@
     <div class="card">
         <div id="loader" style="text-align:center; padding: 40px;">
             <div style="border:4px solid #e2e8f0; border-top:4px solid #cc0000; border-radius:50%; width:40px; height:40px; animation: spin 1s linear infinite; margin: 0 auto 20px auto;"></div>
-            <p id="loader-text">Memuat Database Enterprise Inixindo...</p>
+            <p id="loader-text">Memuat data analisis Inixindo...</p>
         </div>
 
         <div id="step-config" class="hidden">
@@ -56,7 +56,7 @@
             </div>
             
             <button type="button" id="btn-review" disabled>Tinjau Parameter Laporan</button>
-            <button type="button" id="btn-refresh" class="secondary" style="font-size:0.9rem; padding:10px;">🔄 Sync Corporate Database</button>
+            <button type="button" id="btn-refresh" class="secondary" style="font-size:0.9rem; padding:10px;">🔄 Sync Data</button>
         </div>
 
         <div id="step-review" class="hidden">
@@ -92,7 +92,8 @@
             
             btnReview: document.getElementById('btn-review'),
             btnGenerate: document.getElementById('btn-generate'),
-            btnBack: document.getElementById('btn-back')
+            btnBack: document.getElementById('btn-back'),
+            btnRefresh: document.getElementById('btn-refresh')
         };
         
         function renderSuggestions(suggestionsList) {
@@ -193,7 +194,7 @@
             });
         };
         
-        document.getElementById('btn-refresh').onclick = () => {
+        ui.btnRefresh.onclick = () => {
             fetch('/refresh-knowledge', {method: 'POST'}).then(() => location.reload());
         };
     </script>
