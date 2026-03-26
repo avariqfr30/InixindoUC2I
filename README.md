@@ -16,7 +16,7 @@ Alih-alih membaca *feedback* secara manual, sistem ini akan mengekstrak *insight
 
 * **Python 3.9+** (Untuk pengembangan lokal tanpa Docker).
 * **Ollama**: Menjalankan *local daemon* di port `11434` (atau *Ollama Cloud Endpoint*).
-* **Google Custom Search API**: Membutuhkan `API_KEY` dan `CX_ID` untuk mengaktifkan modul OSINT.
+* **Serper API**: Membutuhkan `SERPER_API_KEY` untuk mengaktifkan modul OSINT.
 * **Docker & Docker Compose** (Untuk *deployment* ke server *cloud* seperti AWS).
 
 ## Instalasi Lokal (Development)
@@ -41,11 +41,27 @@ Instal seluruh *library* yang dibutuhkan dengan perintah berikut:
 pip install flask flask-cors pandas chromadb ollama matplotlib python-docx markdown beautifulsoup4 requests Pillow sqlalchemy gunicorn
 ```
 
-### 3. Konfigurasi Sistem (`config.py`)
-Buka file `config.py` dan sesuaikan parameter berikut:
+### 3. Konfigurasi Sistem
+Atur *environment variable* sesuai mode yang ingin dijalankan:
 
-* **Kredensial API**: Masukkan `GOOGLE_API_KEY` dan `GOOGLE_CX_ID`.
-* **Routing AI**: Pastikan variabel `OLLAMA_HOST` mengarah ke *endpoint* lokal (`http://127.0.0.1:11434`) atau URL Ollama Cloud Anda.
+* **Demo mode**: `APP_MODE=demo`
+* **Hybrid mode**: `APP_MODE=hybrid`
+* **Routing AI**: Pastikan `OLLAMA_HOST` mengarah ke endpoint Ollama yang aktif.
+* **OSINT**: Isi `SERPER_API_KEY` jika ingin mengaktifkan benchmark eksternal.
+* **Internal API**: Untuk `APP_MODE=hybrid`, isi `INTERNAL_API_BASE_URL`, dan jika perlu `INTERNAL_API_KEY` serta `INTERNAL_API_FEEDBACK_ENDPOINT`.
+
+Contoh menjalankan aplikasi dari command line:
+
+```bash
+# Demo mode: data internal dari CSV lokal, OSINT tetap aktif jika SERPER_API_KEY diisi
+APP_MODE=demo python app.py
+
+# Hybrid mode: data internal dari API perusahaan, benchmark eksternal tetap lewat OSINT
+APP_MODE=hybrid \
+INTERNAL_API_BASE_URL=https://internal.example.com \
+INTERNAL_API_KEY=your_api_key \
+python app.py
+```
 
 ### 4. Menyiapkan Model AI (Ollama)
 **Langkah ini krusial.** RAG dan NLP Analyzer tidak akan berjalan tanpa model ini:
@@ -58,15 +74,22 @@ ollama pull bge-m3:latest
 ollama pull gpt-oss:120b-cloud
 ```
 
-### 5. Struktur Database (`db.csv`)
-Letakkan file masukan pelanggan Anda dalam format `db.csv` di *root directory*. Sistem menggunakan *mapping* dinamis, namun untuk hasil terbaik, pastikan strukturnya seperti ini:
+### 5. Sumber Data Internal
+Pada `APP_MODE=demo`, letakkan file `db.csv` di folder `Sentiment analyzer/data/`. Sistem menggunakan *mapping* dinamis, namun untuk hasil terbaik, pastikan strukturnya seperti ini:
 * `Tipe Stakeholder` (Contoh: Instansi Pemerintah, BUMN, Personal)
 * `Layanan` (Contoh: Pelatihan IT Security, Konsultasi Masterplan)
 * `Rentang Waktu` (Contoh: 1 Bulan Terakhir (Monthly))
 * `Rating` (1-5)
 * `Komentar` (Teks masukan bebas)
 
-Saat pertama kali dijalankan, sistem akan memigrasikan data ini ke `cx_feedback.db` (SQLite) dan memproses vektornya ke ChromaDB.
+Pada `APP_MODE=hybrid`, aplikasi akan mengambil data internal dari API perusahaan. Endpoint tersebut minimal perlu mengembalikan data feedback dalam format JSON yang memuat padanan untuk kolom berikut:
+* `Tipe Stakeholder`
+* `Layanan`
+* `Rentang Waktu` atau tanggal feedback
+* `Rating`
+* `Komentar`
+
+Data internal yang berhasil diambil akan disalin ke `cx_feedback.db` (SQLite) sebagai cache lokal, lalu diproses ke ChromaDB.
 
 ### 6. Menjalankan Aplikasi
 ```bash

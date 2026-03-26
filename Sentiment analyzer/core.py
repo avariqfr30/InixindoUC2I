@@ -26,12 +26,19 @@ from ollama import Client
 from sqlalchemy import create_engine
 
 from config import (
+    APP_MODE,
     CX_ANALYSIS_SYSTEM_PROMPT,
     CX_SENTIMENT_STRUCTURE,
     CSV_PATH,
     DATA_DIR,
     DEFAULT_COLOR,
     EMBED_MODEL,
+    EXTERNAL_DATA_MODE,
+    INTERNAL_API_BASE_URL,
+    INTERNAL_API_FEEDBACK_ENDPOINT,
+    INTERNAL_API_KEY,
+    INTERNAL_API_TIMEOUT_SECONDS,
+    INTERNAL_DATA_MODE,
     LLM_MODEL,
     OLLAMA_HOST,
     OSINT_BASE_QUERIES,
@@ -49,6 +56,66 @@ from config import (
 matplotlib.use("Agg")
 
 logger = logging.getLogger(__name__)
+
+CANONICAL_INTERNAL_COLUMNS = (
+    "Tipe Stakeholder",
+    "Layanan",
+    "Rentang Waktu",
+    "Rating",
+    "Komentar",
+)
+
+COLUMN_ALIASES = {
+    "Tipe Stakeholder": (
+        "tipe stakeholder",
+        "stakeholder_type",
+        "stakeholder",
+        "customer_segment",
+        "customer_type",
+        "segment",
+        "segmen",
+    ),
+    "Layanan": (
+        "layanan",
+        "service",
+        "service_name",
+        "product",
+        "offering",
+        "service_type",
+    ),
+    "Rentang Waktu": (
+        "rentang waktu",
+        "timeframe",
+        "periode",
+        "period",
+        "reporting_period",
+    ),
+    "Rating": (
+        "rating",
+        "score",
+        "csat",
+        "sentiment_score",
+        "nilai",
+    ),
+    "Komentar": (
+        "komentar",
+        "comment",
+        "feedback",
+        "feedback_text",
+        "review",
+        "notes",
+        "complaint_text",
+        "customer_comment",
+    ),
+}
+
+DATE_COLUMN_ALIASES = (
+    "tanggal",
+    "date",
+    "created_at",
+    "submitted_at",
+    "feedback_date",
+)
 
 
 def append_field(paragraph, instruction):
@@ -70,10 +137,138 @@ def append_field(paragraph, instruction):
     run._r.extend([field_begin, field_instruction, field_separator, field_end])
 
 
+class InternalDataProvider:
+    source_name = "internal"
+
+    @staticmethod
+    def _normalize_token(value):
+        return re.sub(r"[^a-z0-9]+", "_", str(value).strip().lower()).strip("_")
+
+    @classmethod
+    def normalize_dataframe(cls, raw_df):
+        if raw_df is None:
+            return pd.DataFrame(columns=list(CANONICAL_INTERNAL_COLUMNS))
+
+        dataframe = raw_df.copy()
+        dataframe.columns = [str(column).strip() for column in dataframe.columns]
+        normalized_lookup = {
+            cls._normalize_token(column): column for column in dataframe.columns
+        }
+
+        rename_map = {}
+        for canonical_name, aliases in COLUMN_ALIASES.items():
+            if canonical_name in dataframe.columns:
+                continue
+            for alias in aliases:
+                matched_column = normalized_lookup.get(cls._normalize_token(alias))
+                if matched_column:
+                    rename_map[matched_column] = canonical_name
+                    break
+
+        dataframe = dataframe.rename(columns=rename_map)
+
+        if "Rentang Waktu" not in dataframe.columns:
+            for alias in DATE_COLUMN_ALIASES:
+                matched_column = normalized_lookup.get(cls._normalize_token(alias))
+                if not matched_column:
+                    continue
+                parsed_dates = pd.to_datetime(
+                    dataframe[matched_column],
+                    errors="coerce",
+                )
+                if parsed_dates.notna().any():
+                    dataframe["Rentang Waktu"] = parsed_dates.dt.to_period("M").astype(str)
+                    break
+
+        for column_name in CANONICAL_INTERNAL_COLUMNS:
+            if column_name not in dataframe.columns:
+                dataframe[column_name] = pd.NA
+
+        dataframe["Rating"] = pd.to_numeric(dataframe["Rating"], errors="coerce")
+        for column_name in ("Tipe Stakeholder", "Layanan", "Rentang Waktu", "Komentar"):
+            dataframe[column_name] = dataframe[column_name].fillna("").astype(str).str.strip()
+
+        return dataframe
+
+    def load_feedback_data(self):
+        raise NotImplementedError
+
+
+class DemoCsvProvider(InternalDataProvider):
+    source_name = "demo_csv"
+
+    def load_feedback_data(self):
+        if not os.path.exists(CSV_PATH):
+            raise FileNotFoundError(f"CSV file not found: {CSV_PATH}")
+        raw_df = pd.read_csv(CSV_PATH)
+        return self.normalize_dataframe(raw_df)
+
+
+class InternalApiProvider(InternalDataProvider):
+    source_name = "company_api"
+
+    def __init__(self):
+        self.base_url = INTERNAL_API_BASE_URL
+        self.feedback_endpoint = INTERNAL_API_FEEDBACK_ENDPOINT
+        self.timeout_seconds = INTERNAL_API_TIMEOUT_SECONDS
+        self.api_key = INTERNAL_API_KEY
+
+    def _headers(self):
+        headers = {"Accept": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+            headers["X-API-Key"] = self.api_key
+        return headers
+
+    def _extract_records(self, payload):
+        if isinstance(payload, list):
+            return payload
+        if not isinstance(payload, dict):
+            return None
+
+        for key in ("items", "data", "results", "records", "feedback"):
+            value = payload.get(key)
+            records = self._extract_records(value)
+            if records is not None:
+                return records
+
+        return None
+
+    def load_feedback_data(self):
+        if not self.base_url:
+            raise RuntimeError("INTERNAL_API_BASE_URL is not configured.")
+
+        endpoint = self.feedback_endpoint
+        if not endpoint.startswith("/"):
+            endpoint = f"/{endpoint}"
+
+        response = requests.get(
+            f"{self.base_url}{endpoint}",
+            headers=self._headers(),
+            timeout=self.timeout_seconds,
+        )
+        response.raise_for_status()
+
+        payload = response.json()
+        records = self._extract_records(payload)
+        if records is None:
+            raise ValueError("Unsupported internal API payload format.")
+
+        raw_df = pd.DataFrame(records)
+        if raw_df.empty:
+            raise ValueError("Internal API returned no feedback records.")
+
+        return self.normalize_dataframe(raw_df)
+
+
 class KnowledgeBase:
     def __init__(self, db_uri):
         os.makedirs(DATA_DIR, exist_ok=True)
         self.engine = create_engine(db_uri)
+        self.app_mode = APP_MODE
+        self.internal_data_mode = INTERNAL_DATA_MODE
+        self.external_data_mode = EXTERNAL_DATA_MODE
+        self.provider = self._build_provider()
         self.chroma = chromadb.Client(Settings(anonymized_telemetry=False))
         self.embed_fn = embedding_functions.OllamaEmbeddingFunction(
             url=f"{OLLAMA_HOST}/api/embeddings",
@@ -86,45 +281,77 @@ class KnowledgeBase:
         self.df = None
         self.refresh_data()
 
-    def refresh_data(self):
+    def _build_provider(self):
+        if self.internal_data_mode == "api":
+            return InternalApiProvider()
+        return DemoCsvProvider()
+
+    def _load_cached_dataframe(self):
         try:
-            self.df = pd.read_sql("SELECT * FROM feedback", self.engine)
-        except Exception:
-            if not os.path.exists(CSV_PATH):
-                logger.error("Gagal memuat data: file %s tidak ditemukan.", CSV_PATH)
-                return False
-
-            raw_df = pd.read_csv(CSV_PATH)
-            raw_df.columns = [column.strip() for column in raw_df.columns]
-            raw_df.to_sql("feedback", self.engine, index=False, if_exists="replace")
-            self.df = raw_df
-
-        try:
-            existing_ids = self.collection.get().get("ids", [])
-            if existing_ids:
-                self.collection.delete(existing_ids)
-
-            ids, documents, metadata = [], [], []
-            for index, row in self.df.iterrows():
-                text_representation = " | ".join(
-                    f"{column}: {value}" for column, value in row.items()
-                )
-                ids.append(str(index))
-                documents.append(text_representation)
-                metadata.append(row.astype(str).to_dict())
-
-            if ids:
-                logger.info(
-                    "Mengirim %s feedback ke endpoint embedding Ollama (%s).",
-                    len(ids),
-                    OLLAMA_HOST,
-                )
-                self.collection.add(documents=documents, metadatas=metadata, ids=ids)
+            cached_df = pd.read_sql("SELECT * FROM feedback", self.engine)
+            if cached_df is not None and not cached_df.empty:
+                logger.warning("Using cached internal data from SQLite.")
+                return cached_df
         except Exception as exc:
-            logger.error("Gagal memperbarui vector store: %s", exc)
+            logger.warning("No cached internal dataset available: %s", exc)
+        return None
+
+    def _rebuild_vector_store(self):
+        if self.df is None or self.df.empty:
             return False
 
+        existing_ids = self.collection.get().get("ids", [])
+        if existing_ids:
+            self.collection.delete(existing_ids)
+
+        ids, documents, metadata = [], [], []
+        for index, row in self.df.iterrows():
+            text_representation = " | ".join(
+                f"{column}: {value}" for column, value in row.items()
+            )
+            ids.append(str(index))
+            documents.append(text_representation)
+            metadata.append(row.astype(str).to_dict())
+
+        if not ids:
+            return False
+
+        logger.info(
+            "Sending %s feedback records to Ollama embeddings (%s).",
+            len(ids),
+            OLLAMA_HOST,
+        )
+        self.collection.add(documents=documents, metadatas=metadata, ids=ids)
         return True
+
+    def get_runtime_summary(self):
+        return {
+            "app_mode": self.app_mode,
+            "internal_data_mode": self.internal_data_mode,
+            "external_data_mode": self.external_data_mode,
+            "internal_source": self.provider.source_name,
+        }
+
+    def refresh_data(self):
+        try:
+            latest_df = self.provider.load_feedback_data()
+            latest_df.to_sql("feedback", self.engine, index=False, if_exists="replace")
+            self.df = latest_df
+        except Exception as exc:
+            logger.error(
+                "Failed to load internal data from %s: %s",
+                self.provider.source_name,
+                exc,
+            )
+            self.df = self._load_cached_dataframe()
+            if self.df is None or self.df.empty:
+                return False
+
+        try:
+            return self._rebuild_vector_store()
+        except Exception as exc:
+            logger.error("Failed to rebuild vector store: %s", exc)
+            return False
 
     def query(self, timeframe, context_keywords=""):
         query_text = (
