@@ -809,6 +809,134 @@ class FeedbackAnalyticsEngine:
             "channel_count": channel_count,
         }
 
+    @staticmethod
+    def _rating_assessment(avg_rating):
+        if pd.isna(avg_rating):
+            return "belum dapat dinilai secara memadai"
+        if avg_rating >= 4.3:
+            return "sangat baik dan relatif konsisten"
+        if avg_rating >= 3.75:
+            return "baik, tetapi masih menyisakan beberapa titik perbaikan"
+        if avg_rating >= 3.0:
+            return "cukup, namun belum cukup stabil untuk dianggap kuat"
+        return "masih lemah dan memerlukan perhatian manajemen segera"
+
+    @staticmethod
+    def _negative_share_assessment(negative_share):
+        if negative_share >= 35:
+            return "cukup tinggi dan berpotensi mengganggu persepsi layanan jika tidak segera ditangani"
+        if negative_share >= 20:
+            return "perlu diawasi karena dapat berkembang menjadi isu yang lebih luas"
+        if negative_share > 0:
+            return "masih dalam batas terkendali, namun tetap membutuhkan pemantauan"
+        return "belum menunjukkan sinyal keluhan yang berarti"
+
+    @staticmethod
+    def _risk_severity(risk_score):
+        if risk_score >= 55:
+            return "tinggi"
+        if risk_score >= 40:
+            return "menengah"
+        return "terkendali"
+
+    @staticmethod
+    def _primary_label(series_counts, fallback):
+        return series_counts.index[0] if not series_counts.empty else fallback
+
+    @staticmethod
+    def _format_count_summary(series_counts, unit="feedback", limit=3):
+        if series_counts.empty:
+            return "belum terpetakan"
+        return ", ".join(
+            f"{label} ({count} {unit})"
+            for label, count in series_counts.head(limit).items()
+        )
+
+    @staticmethod
+    def _escape_table_cell(value):
+        return str(value).replace("|", "\\|").replace("\n", " ").strip()
+
+    @classmethod
+    def _markdown_table(cls, headers, rows):
+        if not rows:
+            return ""
+
+        header_line = "| " + " | ".join(cls._escape_table_cell(item) for item in headers) + " |"
+        separator_line = "| " + " | ".join("---" for _ in headers) + " |"
+        row_lines = [
+            "| " + " | ".join(cls._escape_table_cell(cell) for cell in row) + " |"
+            for row in rows
+        ]
+        return "\n".join([header_line, separator_line, *row_lines])
+
+    def _distribution_rows(self, series_counts, total_rows, limit=5):
+        rows = []
+        for label, count in series_counts.head(limit).items():
+            rows.append([label, count, f"{self._safe_percentage(count, total_rows)}%"])
+        return rows
+
+    def _extract_osint_signals(self, macro_trends, limit=3):
+        signals = []
+        for line in str(macro_trends).splitlines():
+            cleaned = line.strip()
+            if not re.match(r"^\d+\.", cleaned):
+                continue
+
+            cleaned = re.sub(r"^\d+\.\s*", "", cleaned)
+            parts = [part.strip() for part in cleaned.split(" | ") if part.strip()]
+            if not parts:
+                continue
+
+            title = parts[0]
+            snippet = parts[1] if len(parts) > 1 else ""
+            source = "Tidak diketahui"
+            date = "-"
+
+            for part in parts[2:]:
+                if part.startswith("sumber="):
+                    source = part.split("=", maxsplit=1)[1] or source
+                elif part.startswith("tanggal="):
+                    date = part.split("=", maxsplit=1)[1] or date
+
+            signals.append(
+                {
+                    "title": title,
+                    "snippet": snippet,
+                    "source": source,
+                    "date": date,
+                }
+            )
+            if len(signals) >= limit:
+                break
+
+        return signals
+
+    @staticmethod
+    def _theme_owner(theme_id):
+        owner_map = {
+            "responsiveness": "Customer Service / Account Management",
+            "schedule": "Operations / Delivery Management",
+            "facility": "Operations / General Affairs",
+            "instructor": "Academic Lead / Service Quality",
+            "material": "Academic Lead / Product Owner",
+            "communication": "Customer Service / Project Coordinator",
+            "outcome": "Service Owner / Quality Assurance",
+        }
+        return owner_map.get(theme_id, "Service Owner")
+
+    @staticmethod
+    def _theme_outcome(theme_id):
+        outcome_map = {
+            "responsiveness": "Waktu respons lebih konsisten dan penutupan isu lebih cepat.",
+            "schedule": "Pengalaman delivery lebih tertata dan beban sesi lebih seimbang.",
+            "facility": "Gangguan operasional di kelas atau sesi layanan dapat ditekan.",
+            "instructor": "Konsistensi kualitas fasilitator meningkat di berbagai layanan.",
+            "material": "Materi lebih relevan dengan kebutuhan peserta dan konteks klien.",
+            "communication": "Ekspektasi stakeholder lebih selaras sejak pra-delivery hingga pasca-delivery.",
+            "outcome": "Nilai manfaat layanan lebih mudah dirasakan dan dibuktikan.",
+        }
+        return outcome_map.get(theme_id, "Persepsi kualitas layanan membaik secara terukur.")
+
     def _descriptive_markdown(self, timeframe_df, timeframe, notes):
         governance = self._governance_summary(timeframe_df)
         total_rows = governance["total_rows"]
@@ -828,58 +956,124 @@ class FeedbackAnalyticsEngine:
         source_counts = self._series_counts(timeframe_df["Sumber Feedback"])
         channel_counts = self._series_counts(timeframe_df["Kanal Feedback"])
 
-        top_sources = source_counts.index.tolist() if not source_counts.empty else ["Sumber internal terstandar"]
-        top_channels = channel_counts.index.tolist() if not channel_counts.empty else ["Belum terpetakan"]
+        top_sources = source_counts.index.tolist() if not source_counts.empty else [
+            "Sumber internal terstandar"
+        ]
+        top_channels = channel_counts.index.tolist() if not channel_counts.empty else [
+            "Belum terpetakan"
+        ]
+        positive_share = self._safe_percentage(positive_count, total_rows)
+        neutral_share = self._safe_percentage(neutral_count, total_rows)
+        negative_share = self._safe_percentage(negative_count, total_rows)
 
-        note_line = (
-            f"- Fokus pengguna untuk periode ini: {notes.strip()}"
+        cleaned_notes = notes.strip().rstrip(".!?")
+        focus_line = (
+            f"Fokus tambahan dari pengguna pada periode ini adalah: {cleaned_notes}."
             if notes and notes.strip()
-            else "- Tidak ada fokus tambahan dari pengguna; analisis menggunakan seluruh sinyal yang tersedia."
+            else "Tidak ada fokus tambahan dari pengguna, sehingga analisis dilakukan terhadap seluruh sinyal yang tersedia."
+        )
+        governance_note = (
+            "Cakupan sumber sudah mulai terpetakan, tetapi pemetaan kanal masih perlu diperkuat."
+            if governance["channel_count"] == 0
+            else "Pemetaan sumber dan kanal sudah tersedia sehingga jalur asal feedback lebih mudah diaudit."
+        )
+        descriptive_intro = (
+            f"Bagian ini menjelaskan kualitas dasar portofolio feedback yang menjadi fondasi laporan. "
+            f"Pada periode {timeframe}, sistem memproses {total_rows} feedback tervalidasi dengan "
+            f"rata-rata rating {round(avg_rating, 2) if pd.notna(avg_rating) else 0.0} dari 5, yang menunjukkan kinerja "
+            f"layanan berada pada kategori {self._rating_assessment(avg_rating)}. "
+            f"Komposisi sentimen memperlihatkan {positive_share}% sinyal positif, {neutral_share}% sinyal netral, "
+            f"dan {negative_share}% sinyal negatif."
+        )
+        governance_intro = (
+            f"Dari sisi tata kelola, kelengkapan field inti mencapai {governance['completeness_pct']}%. "
+            f"Data berasal dari {governance['source_count']} sumber feedback dan {governance['channel_count']} kanal yang terpetakan. "
+            f"{governance_note} {focus_line}"
+        )
+        indicator_table = self._markdown_table(
+            ["Indikator", "Nilai"],
+            [
+                ["Periode analisis", timeframe],
+                ["Total feedback tervalidasi", f"{total_rows} record"],
+                ["Rata-rata rating", f"{round(avg_rating, 2) if pd.notna(avg_rating) else 0.0} dari 5"],
+                ["Kelengkapan field inti", f"{governance['completeness_pct']}%"],
+                ["Jumlah sumber feedback", governance["source_count"]],
+                ["Jumlah kanal feedback", governance["channel_count"]],
+            ],
         )
 
         chart_line = (
             "[[CHART: Distribusi Sentimen Feedback | Persentase | "
-            f"Positif,{self._safe_percentage(positive_count, total_rows)}; "
-            f"Netral,{self._safe_percentage(neutral_count, total_rows)}; "
-            f"Negatif,{self._safe_percentage(negative_count, total_rows)}]]"
+            f"Positif,{positive_share}; "
+            f"Netral,{neutral_share}; "
+            f"Negatif,{negative_share}]]"
         )
-
-        stakeholder_lines = [
-            f"- {label}: {count} feedback"
-            for label, count in stakeholder_counts.items()
-        ] or ["- Belum ada distribusi stakeholder yang dapat dihitung."]
-        service_lines = [
-            f"- {label}: {count} feedback"
-            for label, count in service_counts.items()
-        ] or ["- Belum ada distribusi layanan yang dapat dihitung."]
+        sentiment_table = self._markdown_table(
+            ["Kategori Sentimen", "Jumlah", "Persentase"],
+            [
+                ["Positif", positive_count, f"{positive_share}%"],
+                ["Netral", neutral_count, f"{neutral_share}%"],
+                ["Negatif", negative_count, f"{negative_share}%"],
+            ],
+        )
+        stakeholder_table = self._markdown_table(
+            ["Segmen Stakeholder", "Jumlah Feedback", "Persentase"],
+            self._distribution_rows(stakeholder_counts, total_rows, limit=5),
+        )
+        service_table = self._markdown_table(
+            ["Layanan", "Jumlah Feedback", "Persentase"],
+            self._distribution_rows(service_counts, total_rows, limit=5),
+        )
         source_lines = [
             f"- Sumber utama: {', '.join(top_sources[:3])}"
         ]
         source_lines.append(f"- Kanal utama: {', '.join(top_channels[:3])}")
+        distribution_paragraph = (
+            f"Sebaran volume feedback menunjukkan bahwa konsentrasi terbesar berasal dari segmen "
+            f"{self._format_count_summary(stakeholder_counts, limit=3)}. Dari sisi layanan, perhatian pengguna paling banyak "
+            f"tercurah pada {self._format_count_summary(service_counts, limit=3)}. Pola ini penting untuk dibaca secara hati-hati, "
+            f"karena volume tinggi belum otomatis berarti performa buruk, tetapi menandakan area yang paling banyak terekspos kepada pelanggan."
+        )
+        source_paragraph = (
+            f"Dari sisi asal data, sumber yang paling dominan saat ini adalah {', '.join(top_sources[:3])}. "
+            f"Pada saat yang sama, kanal yang tercatat masih didominasi oleh {', '.join(top_channels[:3])}. "
+            f"Informasi ini perlu dibaca sebagai indikator awal representativitas data: semakin luas sumber dan kanal, "
+            f"semakin kuat dasar analisis untuk pengambilan keputusan lintas fungsi."
+        )
 
         return "\n".join(
             [
                 "## 1.1 Ringkasan Cakupan Feedback dan Tata Kelola",
-                f"- Periode analisis: {timeframe}",
-                f"- Total feedback tervalidasi: {total_rows} record",
-                f"- Kelengkapan field inti: {governance['completeness_pct']}%",
-                f"- Jumlah sumber feedback terpetakan: {governance['source_count']}",
-                f"- Jumlah kanal feedback terpetakan: {governance['channel_count']}",
-                note_line,
+                descriptive_intro,
+                "",
+                governance_intro,
+                "",
+                indicator_table,
                 "",
                 "## 1.2 Distribusi Sentimen, Rating, dan Volume",
-                f"- Rata-rata rating periode ini: {round(avg_rating, 2) if pd.notna(avg_rating) else 0.0} dari 5",
-                f"- Sentimen positif: {positive_count} feedback ({self._safe_percentage(positive_count, total_rows)}%)",
-                f"- Sentimen netral: {neutral_count} feedback ({self._safe_percentage(neutral_count, total_rows)}%)",
-                f"- Sentimen negatif: {negative_count} feedback ({self._safe_percentage(negative_count, total_rows)}%)",
+                (
+                    f"Distribusi sentimen menunjukkan bahwa proporsi sentimen negatif sebesar {negative_share}% "
+                    f"{self._negative_share_assessment(negative_share)}. Sentimen positif tetap menjadi penopang utama "
+                    f"pengalaman pelanggan, tetapi keberadaan sentimen netral yang cukup material mengindikasikan masih ada "
+                    f"ruang untuk memperkuat pengalaman agar tidak berhenti pada persepsi 'cukup'."
+                ),
+                "",
+                sentiment_table,
+                "",
                 chart_line,
                 "",
                 "## 1.3 Distribusi Stakeholder, Layanan, dan Kanal/Sumber",
+                distribution_paragraph,
+                "",
                 "### Stakeholder dengan volume feedback terbesar",
-                *stakeholder_lines,
+                stakeholder_table,
+                "",
                 "### Layanan dengan volume feedback terbesar",
-                *service_lines,
+                service_table,
+                "",
                 "### Cakupan sumber dan kanal",
+                source_paragraph,
+                "",
                 *source_lines,
             ]
         )
@@ -927,27 +1121,133 @@ class FeedbackAnalyticsEngine:
         negative_quotes = self._quote_lines(timeframe_df[timeframe_df["Sentiment Label"] == "negative"], limit=3)
         positive_quotes = self._quote_lines(timeframe_df[timeframe_df["Sentiment Label"] == "positive"], limit=2)
 
-        service_risks = self._group_risk(timeframe_df, "Layanan", limit=3)
+        service_risks = self._group_risk(timeframe_df, "Layanan", limit=5)
         process_gap_lines = [
             f"- {item['label']}: rata-rata rating {item['average_rating']}, "
             f"proporsi negatif {item['negative_ratio']}%, volume {item['volume']}."
             for item in service_risks
         ] or ["- Belum ada gap proses yang dapat dipetakan."]
+        top_issue = negative_themes[0] if negative_themes else None
+        top_strength = next(
+            (
+                theme
+                for theme in positive_themes
+                if theme["positive_hits"] > 0
+                and (not top_issue or theme["id"] != top_issue["id"])
+            ),
+            None,
+        )
+        if not top_strength:
+            top_strength = next(
+                (theme for theme in positive_themes if theme["positive_hits"] > 0),
+                None,
+            )
+
+        if top_issue and top_strength and top_issue["id"] == top_strength["id"]:
+            strength_context = (
+                f"Menariknya, tema {top_strength['label']} muncul sebagai area yang terpolarisasi: "
+                "sebagian pelanggan menilai sangat baik, sementara sebagian lain masih mengalami hambatan."
+            )
+        elif top_strength:
+            strength_context = (
+                f"Di sisi lain, kekuatan yang paling konsisten terlihat pada {top_strength['label']}."
+            )
+        else:
+            strength_context = (
+                "Kekuatan layanan belum muncul secara cukup konsisten untuk dijadikan diferensiasi yang kuat."
+            )
+
+        diagnostic_intro = (
+            f"Analisis diagnostik bertujuan menjawab mengapa pola feedback pada periode ini muncul. "
+            f"{'Tema keluhan paling dominan saat ini adalah ' + top_issue['label'] + ', yang berulang pada beberapa komentar pelanggan.' if top_issue else 'Belum ada tema keluhan yang sangat dominan, sehingga pola masalah masih relatif tersebar.'} "
+            f"{strength_context}"
+        )
+        root_cause_table_rows = []
+        for theme in negative_themes:
+            impacted_services = self._series_counts(theme["matched_df"]["Layanan"], limit=2)
+            impacted_segments = self._series_counts(theme["matched_df"]["Tipe Stakeholder"], limit=2)
+            root_cause_table_rows.append(
+                [
+                    theme["label"],
+                    theme["negative_hits"],
+                    ", ".join(impacted_services.index.tolist()) or "Belum terpetakan",
+                    ", ".join(impacted_segments.index.tolist()) or "Belum terpetakan",
+                ]
+            )
+        root_cause_table = self._markdown_table(
+            ["Tema Prioritas", "Sinyal Negatif", "Layanan Dominan", "Segmen Dominan"],
+            root_cause_table_rows,
+        )
+        strength_table_rows = []
+        for theme in positive_themes:
+            if theme["positive_hits"] <= 0:
+                continue
+            strongest_services = self._series_counts(theme["matched_df"]["Layanan"], limit=2)
+            strength_table_rows.append(
+                [
+                    theme["label"],
+                    theme["positive_hits"],
+                    ", ".join(strongest_services.index.tolist()) or "Belum terpetakan",
+                ]
+            )
+        strength_table = self._markdown_table(
+            ["Kekuatan", "Sinyal Positif", "Layanan Dominan"],
+            strength_table_rows,
+        )
+        service_risk_table = self._markdown_table(
+            ["Layanan", "Rata-rata Rating", "Proporsi Negatif", "Volume", "Skor Risiko"],
+            [
+                [
+                    item["label"],
+                    item["average_rating"],
+                    f"{item['negative_ratio']}%",
+                    item["volume"],
+                    item["risk_score"],
+                ]
+                for item in service_risks
+            ],
+        )
 
         return "\n".join(
             [
                 "## 2.1 Akar Masalah Utama dan Pain Point Dominan",
+                diagnostic_intro,
+                "",
+                (
+                    "Pembacaan akar masalah dilakukan dengan melihat pengulangan tema, dampaknya pada layanan, "
+                    "dan segmen pelanggan yang paling sering menyinggung isu serupa. Dengan pendekatan ini, "
+                    "tim manajemen dapat membedakan antara keluhan yang bersifat insidental dan keluhan yang "
+                    "sudah layak dibaca sebagai pola struktural."
+                ),
+                "",
+                root_cause_table,
+                "",
                 *negative_lines,
                 "",
                 "## 2.2 Kekuatan yang Konsisten dan Area yang Perlu Dijaga",
+                (
+                    "Selain keluhan, periode ini juga memperlihatkan area yang secara berulang diapresiasi oleh pelanggan. "
+                    "Bagian ini penting karena kekuatan yang konsisten dapat dijadikan acuan untuk standardisasi layanan, "
+                    "replikasi praktik baik, dan bahan komunikasi nilai kepada klien."
+                ),
+                "",
+                strength_table,
+                "",
                 *positive_lines,
                 "",
                 "## 2.3 Bukti Verbatim, Kesenjangan Proses, dan Segmentasi Masalah",
+                (
+                    "Bukti verbatim di bawah ini digunakan untuk menjaga agar interpretasi manajerial tetap berpijak pada suara pelanggan. "
+                    "Ringkasan kesenjangan proses membantu menerjemahkan komentar individual ke dalam area operasional yang dapat ditindaklanjuti."
+                ),
+                "",
                 "### Kutipan keluhan representatif",
                 *negative_quotes,
                 "### Kutipan apresiasi representatif",
                 *positive_quotes,
                 "### Kesenjangan proses yang paling terlihat",
+                service_risk_table,
+                "",
                 *process_gap_lines,
             ]
         )
@@ -959,12 +1259,12 @@ class FeedbackAnalyticsEngine:
                 "Tidak ada feedback internal yang tersedia untuk periode ini.\n"
             )
 
-        service_risks = self._group_risk(timeframe_df, "Layanan", limit=3)
-        stakeholder_risks = self._group_risk(timeframe_df, "Tipe Stakeholder", limit=3)
+        service_risks = self._group_risk(timeframe_df, "Layanan", limit=5)
+        stakeholder_risks = self._group_risk(timeframe_df, "Tipe Stakeholder", limit=5)
 
         risk_lines = []
         for item in service_risks:
-            severity = "tinggi" if item["risk_score"] >= 55 else "menengah"
+            severity = self._risk_severity(item["risk_score"])
             risk_lines.append(
                 f"- {item['label']} berisiko {severity} mengalami penurunan kepuasan lanjutan "
                 f"karena proporsi sinyal negatif {item['negative_ratio']}% dengan rata-rata rating {item['average_rating']}."
@@ -981,27 +1281,93 @@ class FeedbackAnalyticsEngine:
         if not segment_lines:
             segment_lines = ["- Tidak ada segmen pelanggan yang cukup dominan untuk diproyeksikan."]
 
+        osint_signals = self._extract_osint_signals(macro_trends, limit=4)
         osint_lines = []
-        for line in str(macro_trends).splitlines():
-            cleaned = line.strip()
-            if not cleaned:
-                continue
-            if re.match(r"^\d+\.", cleaned):
-                osint_lines.append(f"- {cleaned}")
-            elif cleaned.endswith(":"):
-                osint_lines.append(f"- {cleaned}")
+        for signal in osint_signals:
+            osint_lines.append(
+                f"- {signal['title']} ({signal['source']}, {signal['date']}): {signal['snippet']}"
+            )
         if not osint_lines:
-            osint_lines = ["- Tren eksternal belum tersedia; prediksi saat ini sepenuhnya didasarkan pada data internal."]
+            osint_lines = [
+                "- Tren eksternal belum tersedia; prediksi saat ini sepenuhnya didasarkan pada data internal."
+            ]
+
+        top_service_risk = service_risks[0] if service_risks else None
+        top_segment_risk = stakeholder_risks[0] if stakeholder_risks else None
+        predictive_intro = (
+            f"Analisis prediktif membaca risiko yang kemungkinan berkembang apabila pola feedback saat ini berlanjut dalam jangka pendek. "
+            f"{'Layanan yang paling layak diprioritaskan untuk pengawasan adalah ' + top_service_risk['label'] + '.' if top_service_risk else 'Belum ada layanan dengan pola risiko yang cukup kuat untuk diprioritaskan.'} "
+            f"{'Segmen yang paling perlu dipantau adalah ' + top_segment_risk['label'] + '.' if top_segment_risk else 'Belum ada segmen dengan paparan risiko yang dominan.'}"
+        )
+        service_risk_table = self._markdown_table(
+            ["Layanan", "Level Risiko", "Rata-rata Rating", "Proporsi Negatif", "Volume"],
+            [
+                [
+                    item["label"],
+                    self._risk_severity(item["risk_score"]).title(),
+                    item["average_rating"],
+                    f"{item['negative_ratio']}%",
+                    item["volume"],
+                ]
+                for item in service_risks
+            ],
+        )
+        stakeholder_risk_table = self._markdown_table(
+            ["Segmen", "Level Risiko", "Rata-rata Rating", "Proporsi Negatif", "Volume"],
+            [
+                [
+                    item["label"],
+                    self._risk_severity(item["risk_score"]).title(),
+                    item["average_rating"],
+                    f"{item['negative_ratio']}%",
+                    item["volume"],
+                ]
+                for item in stakeholder_risks
+            ],
+        )
+        osint_table = self._markdown_table(
+            ["Sinyal Eksternal", "Sumber", "Tanggal"],
+            [
+                [signal["title"], signal["source"], signal["date"]]
+                for signal in osint_signals
+            ],
+        )
 
         return "\n".join(
             [
                 "## 3.1 Risiko Jangka Pendek Jika Pola Saat Ini Berlanjut",
+                predictive_intro,
+                "",
+                (
+                    "Prediksi pada dokumen ini tidak dimaksudkan sebagai forecast statistik jangka panjang, "
+                    "melainkan sebagai early warning berbasis pola rating, proporsi sentimen negatif, dan konsentrasi volume feedback. "
+                    "Dengan pendekatan ini, manajemen dapat lebih cepat memutuskan layanan mana yang perlu ditangani lebih dahulu."
+                ),
+                "",
+                service_risk_table,
+                "",
                 *risk_lines,
                 "",
                 "## 3.2 Prediksi Segmen dan Layanan yang Paling Rentan",
+                (
+                    "Selain layanan, pemantauan juga perlu diarahkan pada segmen pelanggan yang memperlihatkan kombinasi "
+                    "antara volume feedback tinggi dan kualitas pengalaman yang menurun. Segmen seperti ini biasanya "
+                    "lebih cepat mempengaruhi reputasi, retensi, dan peluang repeat engagement."
+                ),
+                "",
+                stakeholder_risk_table,
+                "",
                 *segment_lines,
                 "",
                 "## 3.3 Tren Eksternal yang Berpotensi Memperbesar Risiko",
+                (
+                    "Sinyal eksternal digunakan sebagai benchmark untuk membaca apakah tantangan yang muncul berasal "
+                    "murni dari kondisi internal atau juga diperkuat oleh perubahan ekspektasi pasar. "
+                    "Bila tren eksternal bergerak ke arah yang sama dengan keluhan pelanggan internal, maka urgensi intervensi meningkat."
+                ),
+                "",
+                osint_table,
+                "",
                 *osint_lines[:6],
             ]
         )
@@ -1015,11 +1381,22 @@ class FeedbackAnalyticsEngine:
 
         theme_hits = self._theme_hits(timeframe_df)
         prioritized_actions = []
+        prioritized_rows = []
         for theme in theme_hits:
             if theme["negative_hits"] <= 0:
                 continue
+            action_index = len(prioritized_actions) + 1
             prioritized_actions.append(
-                f"1. {theme['label']}: {theme['prescription']}"
+                f"{action_index}. {theme['label']}: {theme['prescription']}"
+            )
+            prioritized_rows.append(
+                [
+                    action_index,
+                    theme["label"],
+                    theme["prescription"],
+                    self._theme_owner(theme["id"]),
+                    self._theme_outcome(theme["id"]),
+                ]
             )
             if len(prioritized_actions) >= 4:
                 break
@@ -1027,6 +1404,15 @@ class FeedbackAnalyticsEngine:
         if not prioritized_actions:
             prioritized_actions = [
                 "1. Pertahankan monitoring mingguan karena belum ada pain point dominan yang membutuhkan intervensi besar."
+            ]
+            prioritized_rows = [
+                [
+                    1,
+                    "Monitoring berkala",
+                    "Pertahankan pemantauan mingguan dan lakukan review tren secara berkala.",
+                    "Quality Assurance / CX",
+                    "Risiko laten tetap termonitor meskipun belum ada isu dominan.",
+                ]
             ]
 
         governance_actions = [
@@ -1041,16 +1427,50 @@ class FeedbackAnalyticsEngine:
             "3. Minggu 3-4: evaluasi dampak perbaikan, tutup feedback loop ke stakeholder, dan siapkan iterasi berikutnya.",
             "[[FLOW: Kumpulkan Feedback Multi-Sumber -> Normalisasi dan Audit Data -> Diagnosa Prioritas -> Jalankan Intervensi -> Evaluasi Dampak]]",
         ]
+        action_matrix = self._markdown_table(
+            ["Prioritas", "Fokus", "Tindakan", "Owner Utama", "Hasil yang Diharapkan"],
+            prioritized_rows,
+        )
+        roadmap_table = self._markdown_table(
+            ["Tahap", "Fokus Kerja", "Output yang Diharapkan"],
+            [
+                ["Minggu 1", "Validasi kualitas data dan pemetaan owner layanan", "Daftar isu prioritas dan penanggung jawab yang disepakati."],
+                ["Minggu 2", "Eksekusi quick wins pada layanan berisiko tertinggi", "Perbaikan cepat berjalan dan dashboard monitoring aktif."],
+                ["Minggu 3-4", "Evaluasi dampak, penutupan feedback loop, dan iterasi", "Status dampak awal terdokumentasi dan rencana lanjutan tersusun."],
+            ],
+        )
+        prescriptive_intro = (
+            "Bagian preskriptif menerjemahkan temuan sebelumnya ke dalam tindakan yang dapat dibahas dan diputuskan dalam forum internal. "
+            "Urutan prioritas disusun berdasarkan intensitas sinyal negatif, potensi dampak ke pengalaman pelanggan, dan kebutuhan koordinasi lintas fungsi."
+        )
 
         return "\n".join(
             [
                 "## 4.1 Intervensi Prioritas 30 Hari",
+                prescriptive_intro,
+                "",
+                action_matrix,
+                "",
                 *prioritized_actions,
                 "",
                 "## 4.2 Penguatan Tata Kelola Feedback dan Eskalasi",
+                (
+                    "Selain quick wins layanan, perusahaan juga perlu memperkuat tata kelola feedback agar keputusan perbaikan "
+                    "berikutnya tidak selalu dimulai dari data yang parsial. Penguatan tata kelola akan menentukan kualitas "
+                    "diagnosis, kecepatan eskalasi, dan akuntabilitas tindak lanjut."
+                ),
+                "",
                 *governance_actions,
                 "",
                 "## 4.3 Rencana Tindak Lanjut Lintas Fungsi",
+                (
+                    "Rencana tindak lanjut di bawah ini disusun agar forum internal tidak berhenti pada pembacaan laporan, "
+                    "tetapi langsung bergerak ke tahap eksekusi. Timeline dapat disesuaikan, namun disiplin implementasi "
+                    "antar fungsi tetap menjadi faktor penentu keberhasilan."
+                ),
+                "",
+                roadmap_table,
+                "",
                 *roadmap_actions,
             ]
         )
@@ -1075,7 +1495,7 @@ class FeedbackAnalyticsEngine:
             )
         return sections
 
-    def build_executive_snapshot(self, timeframe):
+    def build_executive_snapshot(self, timeframe, notes=""):
         timeframe_df = self._filter_timeframe(timeframe)
         if timeframe_df.empty:
             return (
@@ -1085,6 +1505,7 @@ class FeedbackAnalyticsEngine:
 
         total_rows = len(timeframe_df)
         avg_rating = timeframe_df["Rating Numeric"].mean()
+        negative_count = int((timeframe_df["Sentiment Label"] == "negative").sum())
         negative_share = self._safe_percentage(
             int((timeframe_df["Sentiment Label"] == "negative").sum()),
             total_rows,
@@ -1092,6 +1513,10 @@ class FeedbackAnalyticsEngine:
         top_service = self._series_counts(timeframe_df["Layanan"], limit=1)
         top_stakeholder = self._series_counts(timeframe_df["Tipe Stakeholder"], limit=1)
         top_risk = self._group_risk(timeframe_df, "Layanan", limit=1)
+        governance = self._governance_summary(timeframe_df)
+        theme_hits = self._theme_hits(timeframe_df)
+        top_issue = next((theme for theme in theme_hits if theme["negative_hits"] > 0), None)
+        focus_text = notes.strip() if notes and notes.strip() else "Tidak ada fokus tambahan dari pengguna."
 
         risk_statement = (
             f"- Risiko teratas saat ini ada pada layanan {top_risk[0]['label']} "
@@ -1099,10 +1524,57 @@ class FeedbackAnalyticsEngine:
             if top_risk
             else "- Belum ada layanan dengan risiko dominan yang teridentifikasi."
         )
+        executive_intro = (
+            f"Laporan ini merangkum kondisi pengalaman pelanggan untuk periode {timeframe} berdasarkan {total_rows} feedback tervalidasi. "
+            f"Secara umum, rata-rata rating berada pada level {round(avg_rating, 2) if pd.notna(avg_rating) else 0.0} dari 5, "
+            f"yang menunjukkan kualitas layanan {self._rating_assessment(avg_rating)}. "
+            f"Proporsi sentimen negatif tercatat sebesar {negative_share}% ({negative_count} feedback), sehingga kondisi ini "
+            f"{self._negative_share_assessment(negative_share)}."
+        )
+        meeting_context = (
+            f"Untuk kebutuhan rapat internal, perhatian utama sebaiknya diarahkan pada layanan "
+            f"{top_risk[0]['label'] if top_risk else self._primary_label(top_service, 'yang memiliki volume feedback terbesar')} "
+            f"serta pada isu {top_issue['label'] if top_issue else 'konsistensi kualitas layanan'}. "
+            f"Fokus tambahan yang diminta pengguna: {focus_text}"
+        )
+        snapshot_table = self._markdown_table(
+            ["Indikator Kunci", "Nilai"],
+            [
+                ["Total feedback dianalisis", f"{total_rows} record"],
+                ["Rata-rata rating", f"{round(avg_rating, 2) if pd.notna(avg_rating) else 0.0} dari 5"],
+                ["Proporsi sentimen negatif", f"{negative_share}%"],
+                ["Layanan dengan volume terbesar", self._primary_label(top_service, "Belum terpetakan")],
+                ["Segmen dengan volume terbesar", self._primary_label(top_stakeholder, "Belum terpetakan")],
+                ["Kelengkapan field inti", f"{governance['completeness_pct']}%"],
+            ],
+        )
+        meeting_agenda = [
+            (
+                f"- Apakah layanan {top_risk[0]['label']} memerlukan intervensi prioritas lintas fungsi pada 30 hari ke depan?"
+                if top_risk
+                else "- Apakah perusahaan perlu memperluas pengumpulan feedback agar risiko layanan lebih mudah dibaca?"
+            ),
+            (
+                f"- Bagaimana tindak lanjut yang paling tepat untuk tema {top_issue['label']} agar tidak berkembang menjadi keluhan berulang?"
+                if top_issue
+                else "- Kekuatan layanan mana yang paling layak distandardisasi dan direplikasi?"
+            ),
+            "- Apakah tata kelola sumber, kanal, dan owner tindak lanjut sudah cukup jelas untuk mendukung evaluasi periodik berikutnya?",
+        ]
 
         return "\n".join(
             [
                 "## Ringkasan Eksekutif",
+                executive_intro,
+                "",
+                meeting_context,
+                "",
+                snapshot_table,
+                "",
+                "### Agenda Diskusi Prioritas",
+                *meeting_agenda,
+                "",
+                "### Poin Utama untuk Pembacaan Cepat",
                 f"- Total feedback yang dianalisis: {total_rows} record.",
                 f"- Rata-rata rating periode ini: {round(avg_rating, 2) if pd.notna(avg_rating) else 0.0} dari 5.",
                 f"- Volume layanan terbesar: {top_service.index[0] if not top_service.empty else 'Belum terpetakan'}.",
@@ -1554,7 +2026,7 @@ class ReportGenerator:
             macro_trends = "Tidak ada tren eksternal yang berhasil dimuat."
 
         analytics = FeedbackAnalyticsEngine(self.kb.df)
-        executive_snapshot = analytics.build_executive_snapshot(timeframe)
+        executive_snapshot = analytics.build_executive_snapshot(timeframe, notes)
         report_sections = analytics.build_report_sections(timeframe, notes, macro_trends)
 
         document = Document()
