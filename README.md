@@ -1,21 +1,21 @@
-# Sentiment and Feedback Analyzer (AI-powered)
+# Feedback Intelligence Analyzer
 
-Aplikasi ini adalah sistem *enterprise* berbasis web yang dirancang khusus untuk divisi Quality Assurance (QA) dan Manajemen Inixindo Jogja. Sistem ini memanfaatkan kecerdasan buatan (*Large Language Models* via **Ollama**) dan *Vector Database* (**ChromaDB**) untuk membaca, mengklasifikasikan, dan menganalisis ribuan masukan (keluhan dan apresiasi) dari klien maupun siswa secara otomatis.
+Aplikasi ini adalah platform *feedback intelligence* berbasis web yang dirancang untuk membantu tata kelola feedback yang handal di Inixindo Jogja. Sistem ini mengolah feedback dari berbagai sumber internal, menambahkan benchmark OSINT untuk konteks eksternal, lalu menyusun laporan yang berfokus pada analisis descriptive, diagnostic, predictive, dan prescriptive.
 
-Alih-alih membaca *feedback* secara manual, sistem ini akan mengekstrak *insight* menggunakan *Natural Language Processing* (NLP) dan merangkumnya menjadi dokumen laporan komprehensif berformat Microsoft Word, lengkap dengan visualisasi data dan rekomendasi mitigasi.
+Alih-alih membaca *feedback* secara manual, sistem ini menormalkan data, menghitung indikator risiko dan kekuatan layanan, merangkum bukti verbatim, dan menghasilkan dokumen Word yang siap dipakai untuk pengambilan keputusan.
 
 ## Fitur Utama
 
-* **Time-Bound RAG Analytics**: Mampu memfilter dan menganalisis sentimen berdasarkan rentang waktu spesifik (Mingguan, Bulanan, Semesteran, Tahunan).
-* **Smart Root-Cause Analysis**: Mengelompokkan masukan tidak terstruktur menjadi *Pain Points* yang jelas (misal: isu fasilitas, kompetensi instruktur, atau jaringan infrastruktur).
-* **Auto-Generated Mitigation Plan**: AI secara otomatis menyusun kerangka perbaikan (*Start, Stop, Continue*) dan memvisualisasikannya ke dalam *Flowchart* tindakan korektif.
-* **Evidence-Based Reporting**: Setiap klaim analisis di dalam laporan akan divalidasi dengan kutipan langsung (*verbatim*) dari teks keluhan/pujian *stakeholder* untuk menjaga objektivitas.
-* **Enterprise OSINT**: Menarik tren kepuasan pelanggan secara *real-time* dari internet untuk *benchmarking* standar layanan IT di Indonesia.
+* **Multi-Source Feedback Governance**: Menormalkan feedback internal dari CSV demo atau API perusahaan ke dalam skema yang konsisten.
+* **4-Layer Analytics**: Setiap laporan menyajikan descriptive, diagnostic, predictive, dan prescriptive analytics.
+* **Evidence-Based Reporting**: Setiap bagian analisis tetap ditopang kutipan verbatim dan distribusi data nyata.
+* **Enterprise OSINT**: Menarik tren pasar dan benchmark publik sebagai konteks eksternal.
+* **Fast Report Pipeline**: Laporan disusun terutama dari analytics terstruktur agar lebih stabil untuk eksekusi paralel banyak pengguna.
 
 ## Prasyarat Sistem
 
 * **Python 3.9+** (Untuk pengembangan lokal tanpa Docker).
-* **Ollama**: Menjalankan *local daemon* di port `11434` (atau *Ollama Cloud Endpoint*).
+* **Ollama**: Opsional, dibutuhkan bila `ENABLE_VECTOR_INDEX=1` dan Anda ingin membangun embedding index lokal.
 * **Serper API**: Membutuhkan `SERPER_API_KEY` untuk mengaktifkan modul OSINT.
 * **Docker & Docker Compose** (Untuk *deployment* ke server *cloud* seperti AWS).
 
@@ -38,7 +38,7 @@ source venv/bin/activate
 Instal seluruh *library* yang dibutuhkan dengan perintah berikut:
 
 ```bash
-pip install flask flask-cors pandas chromadb ollama matplotlib python-docx markdown beautifulsoup4 requests Pillow sqlalchemy gunicorn
+pip install flask flask-cors pandas chromadb ollama matplotlib python-docx markdown beautifulsoup4 requests Pillow sqlalchemy gunicorn waitress
 ```
 
 ### 3. Konfigurasi Sistem
@@ -49,6 +49,7 @@ Atur *environment variable* sesuai mode yang ingin dijalankan:
 * **Routing AI**: Pastikan `OLLAMA_HOST` mengarah ke endpoint Ollama yang aktif.
 * **OSINT**: Isi `SERPER_API_KEY` jika ingin mengaktifkan benchmark eksternal.
 * **Internal API**: Untuk `APP_MODE=hybrid`, isi `INTERNAL_API_BASE_URL`, dan jika perlu `INTERNAL_API_KEY` serta `INTERNAL_API_FEEDBACK_ENDPOINT`.
+* **Vector index opsional**: Set `ENABLE_VECTOR_INDEX=1` bila ingin membangun embedding index. Secara default dimatikan agar startup dan eksekusi laporan lebih cepat dan lebih ringan.
 
 Contoh menjalankan aplikasi dari command line:
 
@@ -63,15 +64,56 @@ INTERNAL_API_KEY=your_api_key \
 python app.py
 ```
 
-### 4. Menyiapkan Model AI (Ollama)
-**Langkah ini krusial.** RAG dan NLP Analyzer tidak akan berjalan tanpa model ini:
+Untuk shared pilot internal, jalankan aplikasi dengan server Waitress bawaan launcher:
+
+```bash
+cd "Sentiment analyzer"
+APP_MODE=demo ./run_pilot.sh
+```
+
+Atau dengan pengaturan yang lebih eksplisit:
+
+```bash
+cd "Sentiment analyzer"
+APP_MODE=hybrid \
+PILOT_SERVER=waitress \
+HOST=0.0.0.0 \
+PORT=8000 \
+PILOT_THREADS=8 \
+PILOT_CONNECTION_LIMIT=100 \
+./run_pilot.sh
+```
+
+Jika nanti ingin mencoba stack Gunicorn pada server Linux yang lebih mirip deployment sesungguhnya, launcher yang sama tetap bisa dipakai:
+
+```bash
+cd "Sentiment analyzer"
+APP_MODE=demo \
+PILOT_SERVER=gunicorn \
+GUNICORN_WORKERS=1 \
+GUNICORN_THREADS=8 \
+./run_pilot.sh
+```
+
+Setelah aktif, karyawan dapat membuka aplikasi dari browser mereka menggunakan:
+
+```text
+http://<IP-atau-host-internal>:8000
+```
+
+Endpoint health check tersedia di:
+
+```text
+http://<IP-atau-host-internal>:8000/health
+```
+
+### 4. Menyiapkan Model Embedding (Opsional)
+Langkah ini hanya diperlukan bila Anda mengaktifkan `ENABLE_VECTOR_INDEX=1`:
 
 ```bash
 # Model embedding untuk mengubah teks feedback menjadi vektor (Wajib untuk ChromaDB)
 ollama pull bge-m3:latest
 
-# Model LLM utama untuk penalaran sentimen (Sesuaikan dengan config.py Anda)
-ollama pull gpt-oss:120b-cloud
 ```
 
 ### 5. Sumber Data Internal
@@ -95,7 +137,7 @@ Data internal yang berhasil diambil akan disalin ke `cx_feedback.db` (SQLite) se
 ```bash
 python app.py
 ```
-Akses UI *Analyzer* melalui browser di `http://127.0.0.1:5000`.
+Akses UI *Analyzer* melalui browser di `http://127.0.0.1:8000`.
 
 ---
 
@@ -111,4 +153,4 @@ Aplikasi ini sepenuhnya *Dockerized* dan siap untuk metode *Lift and Shift* ke s
 docker-compose up -d --build
 ```
 
-Arsitektur Docker ini akan memutar *image* web menggunakan **Gunicorn** (4 *workers* untuk menangani banyak permintaan berbarengan), menghubungkannya ke jaringan Ollama internal, dan menjaga data *feedback* tetap aman menggunakan *persistent volumes*.
+Arsitektur Docker ini dapat memakai **Gunicorn** pada environment deployment yang sesuai. Namun untuk pilot internal yang ringan dan cepat dibagikan, launcher saat ini default ke **Waitress** karena lebih stabil pada runtime pengujian ini sambil tetap mendukung banyak koneksi paralel dari browser karyawan.

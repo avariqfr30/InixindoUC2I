@@ -14,7 +14,6 @@ EXTERNAL_DATA_MODE = "osint"
 
 SERPER_API_KEY = os.getenv("SERPER_API_KEY", "YOUR_SERPER_API_KEY")
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
-LLM_MODEL = os.getenv("LLM_MODEL", "gpt-oss:120b-cloud")
 EMBED_MODEL = os.getenv("EMBED_MODEL", "bge-m3:latest")
 DB_URI = os.getenv("DB_URI", f"sqlite:///{os.path.join(DATA_DIR, 'cx_feedback.db')}")
 CSV_PATH = os.getenv("CSV_PATH", os.path.join(DATA_DIR, "db.csv"))
@@ -26,6 +25,11 @@ INTERNAL_API_FEEDBACK_ENDPOINT = os.getenv(
     "/feedback",
 )
 INTERNAL_API_TIMEOUT_SECONDS = int(os.getenv("INTERNAL_API_TIMEOUT_SECONDS", "20"))
+ENABLE_VECTOR_INDEX = os.getenv("ENABLE_VECTOR_INDEX", "0").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
 
 WRITER_FIRM_NAME = "Inixindo Jogja - Quality Assurance & CX Division"
 DEFAULT_COLOR = (204, 0, 0)
@@ -48,10 +52,6 @@ OSINT_BASE_QUERIES = [
     "tantangan transformasi digital dan peningkatan kompetensi SDM Indonesia",
     "tren kebutuhan sertifikasi cloud cyber security data dan AI di Indonesia",
 ]
-OSINT_TOPIC_QUERY_TEMPLATE = (
-    "tren layanan pelatihan dan konsultasi IT Indonesia {timeframe} "
-    "{focus_keywords} {notes}"
-)
 
 DATA_ACQUISITION_POLICY = {
     "demo": {
@@ -87,73 +87,43 @@ DATA_ACQUISITION_POLICY = {
     },
 }
 
-CX_ANALYSIS_SYSTEM_PROMPT = """
-You are the Chief Customer Experience (CX) Officer for Inixindo Jogja.
-ROLE: {persona}.
-
-=== HOLISTIC INTERNAL FEEDBACK (TIMEFRAME: {timeframe}) ===
-{rag_data}
-
-=== EXTERNAL OSINT BENCHMARKS (MACRO TRENDS) ===
-{industry_trends}
-
-=== EXTERNAL OSINT BENCHMARKS (CHAPTER FOCUS) ===
-{chapter_osint}
-
-MANDATORY RULES:
-1. STRICT LANGUAGE: Write the entire response strictly in professional Bahasa Indonesia.
-2. HOLISTIC SYNTHESIS: You are analyzing the ENTIRE company's performance. You MUST compare different demographics (e.g., Gov vs Corporate vs Students) and different services (e.g., Training vs Consulting). 
-3. STRICT SUB-CHAPTER ENFORCEMENT: You MUST use Markdown Headers (###) for EVERY single sub-chapter listed below. You are FORBIDDEN from leaving any sub-chapter empty. Write at least 150 words per sub-chapter.
-4. EVIDENCE: Quote anonymized excerpts from the internal feedback data to prove your points.
-5. LIST STYLE: Use bullet points (`-`) for findings/evidence and numbered lists (`1.`) for action plans.
-6. NO TITLE REPETITION: Do NOT write '{chapter_title}' at the start of your response.
-7. {visual_prompt}
-
-WRITE DETAILED CONTENT FOR THE FOLLOWING SUB-CHAPTERS:
-{sub_chapters}
-"""
-
 CX_SENTIMENT_STRUCTURE = [
     {
-        "id": "cx_chap_1", "title": "BAB I – MACRO CX & SERVICE QUALITY SUMMARY",
+        "id": "cx_chap_1", "title": "BAB I – DESCRIPTIVE ANALYTICS & FEEDBACK GOVERNANCE",
         "sections": [
-            "1.1 Kondisi Kepuasan Pelanggan Inixindo Jogja Secara Keseluruhan", 
-            "1.2 Perbandingan Sentimen Antar Demografi (Pemerintah vs BUMN vs Mahasiswa/Personal)", 
-            "1.3 Layanan dengan Performa Terbaik & Terburuk Periode Ini"
+            "1.1 Ringkasan Cakupan Feedback dan Tata Kelola",
+            "1.2 Distribusi Sentimen, Rating, dan Volume",
+            "1.3 Distribusi Stakeholder, Layanan, dan Kanal/Sumber"
         ],
-        "focus_keywords": "overall sentiment satisfaction summary rating compare demographic service",
+        "focus_keywords": "feedback governance descriptive analytics rating stakeholder service channel source",
         "visual": "bar_chart"
     },
     {
-        "id": "cx_chap_2", "title": "BAB II – APRESIASI & KEKUATAN LINTAS LAYANAN",
+        "id": "cx_chap_2", "title": "BAB II – DIAGNOSTIC ANALYTICS",
         "sections": [
-            "2.1 Puncak Apresiasi Klien (Instruktur, Materi, atau Layanan Administratif)", 
-            "2.2 Testimoni Positif Berdasarkan Segmen Klien",
-            "2.3 Kutipan Langsung dari Klien/Siswa (Evidence)"
+            "2.1 Akar Masalah Utama dan Pain Point Dominan",
+            "2.2 Kekuatan yang Konsisten dan Area yang Perlu Dijaga",
+            "2.3 Bukti Verbatim, Kesenjangan Proses, dan Segmentasi Masalah"
         ],
-        "focus_keywords": "praise positive feedback happy strength competent facility good across services"
+        "focus_keywords": "diagnostic analytics root cause complaint praise service quality process gap"
     },
     {
-        "id": "cx_chap_3", "title": "BAB III – ANALISIS KESENJANGAN & KELUHAN SISTEMIK",
+        "id": "cx_chap_3", "title": "BAB III – PREDICTIVE ANALYTICS",
         "sections": [
-            "3.1 Pain Points Utama Lintas Layanan (Fasilitas, Komunikasi, Timeline)", 
-            "3.2 Analisis Kesenjangan Ekspektasi Berdasarkan Demografi (Misal: Ekspektasi Senior vs Pemula)", 
-            "3.3 Kutipan Langsung dari Klien/Siswa (Evidence)"
+            "3.1 Risiko Jangka Pendek Jika Pola Saat Ini Berlanjut",
+            "3.2 Prediksi Segmen dan Layanan yang Paling Rentan",
+            "3.3 Tren Eksternal yang Berpotensi Memperbesar Risiko"
         ],
-        "focus_keywords": "complaint negative issue concern bad slow facility schedule expectation gap"
+        "focus_keywords": "predictive analytics risk trend forecast segment service vulnerability"
     },
     {
-        "id": "cx_chap_4", "title": "BAB IV – REKOMENDASI STRATEGIS & MITIGASI RISIKO",
+        "id": "cx_chap_4", "title": "BAB IV – PRESCRIPTIVE ANALYTICS",
         "sections": [
-            "4.1 Intervensi Segera (Area kritis yang berdampak pada banyak demografi)", 
-            "4.2 Penyesuaian Strategi Layanan Berdasarkan Tren OSINT & Perilaku Konsumen Terkini", 
-            "4.3 Langkah Preventif Operasional Ke Depan"
+            "4.1 Intervensi Prioritas 30 Hari",
+            "4.2 Penguatan Tata Kelola Feedback dan Eskalasi",
+            "4.3 Rencana Tindak Lanjut Lintas Fungsi"
         ],
-        "focus_keywords": "recommendation improve keep prevent mitigate action plan demographic behavior trend future",
+        "focus_keywords": "prescriptive analytics recommendation action plan governance mitigation",
         "visual": "flowchart"
     }
 ]
-
-PERSONAS = {
-    "default": "Chief CX Officer (Visionary, Analytical, Highly Objective, Strategic)"
-}

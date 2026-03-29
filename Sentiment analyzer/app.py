@@ -1,5 +1,6 @@
 import io
 import logging
+import os
 from flask import Flask, jsonify, render_template, request, send_file
 from flask_cors import CORS
 
@@ -19,6 +20,21 @@ logger.info("Application started in %s mode.", APP_MODE)
 @app.route("/")
 def home():
     return render_template("index.html")
+
+
+@app.route("/health")
+def health():
+    data_ready = kb.df is not None and not kb.df.empty
+    status_code = 200 if data_ready else 503
+    return (
+        jsonify(
+            {
+                "status": "ok" if data_ready else "degraded",
+                "data_ready": data_ready,
+            }
+        ),
+        status_code,
+    )
 
 
 @app.route("/get-config")
@@ -74,4 +90,7 @@ def refresh_knowledge():
 
 
 if __name__ == "__main__":
-    app.run(port=5000, debug=True, threaded=True)
+    host = os.getenv("HOST", "0.0.0.0")
+    port = int(os.getenv("PORT", "8000"))
+    debug = os.getenv("FLASK_DEBUG", "0").strip().lower() in {"1", "true", "yes"}
+    app.run(host=host, port=port, debug=debug, threaded=True)
