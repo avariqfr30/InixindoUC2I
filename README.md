@@ -38,7 +38,7 @@ source venv/bin/activate
 Instal seluruh *library* yang dibutuhkan dengan perintah berikut:
 
 ```bash
-pip install flask flask-cors pandas chromadb ollama matplotlib python-docx markdown beautifulsoup4 requests Pillow sqlalchemy gunicorn waitress
+pip install flask flask-cors pandas chromadb ollama matplotlib python-docx markdown beautifulsoup4 requests Pillow sqlalchemy waitress
 ```
 
 ### 3. Konfigurasi Sistem
@@ -64,7 +64,7 @@ INTERNAL_API_KEY=your_api_key \
 python app.py
 ```
 
-Untuk shared pilot internal, jalankan aplikasi dengan server Waitress bawaan launcher:
+Untuk shared pilot internal, jalankan aplikasi dengan Waitress:
 
 ```bash
 cd "Sentiment analyzer"
@@ -76,22 +76,11 @@ Atau dengan pengaturan yang lebih eksplisit:
 ```bash
 cd "Sentiment analyzer"
 APP_MODE=hybrid \
-PILOT_SERVER=waitress \
 HOST=0.0.0.0 \
 PORT=8000 \
-PILOT_THREADS=8 \
-PILOT_CONNECTION_LIMIT=100 \
-./run_pilot.sh
-```
-
-Jika nanti ingin mencoba stack Gunicorn pada server Linux yang lebih mirip deployment sesungguhnya, launcher yang sama tetap bisa dipakai:
-
-```bash
-cd "Sentiment analyzer"
-APP_MODE=demo \
-PILOT_SERVER=gunicorn \
-GUNICORN_WORKERS=1 \
-GUNICORN_THREADS=8 \
+WAITRESS_THREADS=8 \
+WAITRESS_CONNECTION_LIMIT=100 \
+WAITRESS_CHANNEL_TIMEOUT=240 \
 ./run_pilot.sh
 ```
 
@@ -153,4 +142,4 @@ Aplikasi ini sepenuhnya *Dockerized* dan siap untuk metode *Lift and Shift* ke s
 docker-compose up -d --build
 ```
 
-Arsitektur Docker ini dapat memakai **Gunicorn** pada environment deployment yang sesuai. Namun untuk pilot internal yang ringan dan cepat dibagikan, launcher saat ini default ke **Waitress** karena lebih stabil pada runtime pengujian ini sambil tetap mendukung banyak koneksi paralel dari browser karyawan.
+Arsitektur Docker dapat disesuaikan nanti untuk deployment produksi. Untuk pilot internal yang ringan dan cepat dibagikan, launcher saat ini langsung memakai **Waitress** agar jalur eksekusinya sederhana dan stabil untuk koneksi paralel dari browser karyawan.
