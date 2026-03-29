@@ -22,24 +22,22 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Inches, Pt, RGBColor
-from ollama import Client
 from sqlalchemy import create_engine
 
 from config import (
     APP_MODE,
-    CX_ANALYSIS_SYSTEM_PROMPT,
     CX_SENTIMENT_STRUCTURE,
     CSV_PATH,
     DATA_DIR,
     DEFAULT_COLOR,
     EMBED_MODEL,
+    ENABLE_VECTOR_INDEX,
     EXTERNAL_DATA_MODE,
     INTERNAL_API_BASE_URL,
     INTERNAL_API_FEEDBACK_ENDPOINT,
     INTERNAL_API_KEY,
     INTERNAL_API_TIMEOUT_SECONDS,
     INTERNAL_DATA_MODE,
-    LLM_MODEL,
     OLLAMA_HOST,
     OSINT_BASE_QUERIES,
     OSINT_MAX_SIGNALS,
@@ -47,8 +45,6 @@ from config import (
     OSINT_RESULTS_PER_QUERY,
     OSINT_SEARCH_LANGUAGE,
     OSINT_SEARCH_REGION,
-    OSINT_TOPIC_QUERY_TEMPLATE,
-    PERSONAS,
     SERPER_API_KEY,
     WRITER_FIRM_NAME,
 )
@@ -58,6 +54,10 @@ matplotlib.use("Agg")
 logger = logging.getLogger(__name__)
 
 CANONICAL_INTERNAL_COLUMNS = (
+    "Record ID",
+    "Sumber Feedback",
+    "Kanal Feedback",
+    "Tanggal Feedback",
     "Tipe Stakeholder",
     "Layanan",
     "Rentang Waktu",
@@ -66,6 +66,36 @@ CANONICAL_INTERNAL_COLUMNS = (
 )
 
 COLUMN_ALIASES = {
+    "Record ID": (
+        "record_id",
+        "id",
+        "feedback_id",
+        "ticket_id",
+        "case_id",
+    ),
+    "Sumber Feedback": (
+        "sumber feedback",
+        "source",
+        "feedback_source",
+        "origin",
+        "source_name",
+    ),
+    "Kanal Feedback": (
+        "kanal feedback",
+        "channel",
+        "feedback_channel",
+        "touchpoint",
+        "platform",
+        "kanal",
+    ),
+    "Tanggal Feedback": (
+        "tanggal feedback",
+        "feedback_date",
+        "created_at",
+        "submitted_at",
+        "date",
+        "tanggal",
+    ),
     "Tipe Stakeholder": (
         "tipe stakeholder",
         "stakeholder_type",
@@ -110,6 +140,7 @@ COLUMN_ALIASES = {
 }
 
 DATE_COLUMN_ALIASES = (
+    "tanggal feedback",
     "tanggal",
     "date",
     "created_at",
@@ -167,6 +198,18 @@ class InternalDataProvider:
 
         dataframe = dataframe.rename(columns=rename_map)
 
+        feedback_dates = pd.Series(dtype="datetime64[ns]")
+        for alias in DATE_COLUMN_ALIASES:
+            matched_column = normalized_lookup.get(cls._normalize_token(alias))
+            if matched_column:
+                feedback_dates = pd.to_datetime(
+                    dataframe[matched_column],
+                    errors="coerce",
+                )
+                if feedback_dates.notna().any():
+                    dataframe["Tanggal Feedback"] = feedback_dates.dt.strftime("%Y-%m-%d")
+                    break
+
         if "Rentang Waktu" not in dataframe.columns:
             for alias in DATE_COLUMN_ALIASES:
                 matched_column = normalized_lookup.get(cls._normalize_token(alias))
@@ -184,8 +227,11 @@ class InternalDataProvider:
             if column_name not in dataframe.columns:
                 dataframe[column_name] = pd.NA
 
+        if dataframe["Record ID"].isna().all():
+            dataframe["Record ID"] = [f"FB-{index + 1:05d}" for index in range(len(dataframe))]
+
         dataframe["Rating"] = pd.to_numeric(dataframe["Rating"], errors="coerce")
-        for column_name in ("Tipe Stakeholder", "Layanan", "Rentang Waktu", "Komentar"):
+        for column_name in CANONICAL_INTERNAL_COLUMNS:
             dataframe[column_name] = dataframe[column_name].fillna("").astype(str).str.strip()
 
         return dataframe
@@ -268,16 +314,21 @@ class KnowledgeBase:
         self.app_mode = APP_MODE
         self.internal_data_mode = INTERNAL_DATA_MODE
         self.external_data_mode = EXTERNAL_DATA_MODE
+        self.enable_vector_index = ENABLE_VECTOR_INDEX
         self.provider = self._build_provider()
-        self.chroma = chromadb.Client(Settings(anonymized_telemetry=False))
-        self.embed_fn = embedding_functions.OllamaEmbeddingFunction(
-            url=f"{OLLAMA_HOST}/api/embeddings",
-            model_name=EMBED_MODEL,
-        )
-        self.collection = self.chroma.get_or_create_collection(
-            name="cx_holistic_db",
-            embedding_function=self.embed_fn,
-        )
+        self.chroma = None
+        self.embed_fn = None
+        self.collection = None
+        if self.enable_vector_index:
+            self.chroma = chromadb.Client(Settings(anonymized_telemetry=False))
+            self.embed_fn = embedding_functions.OllamaEmbeddingFunction(
+                url=f"{OLLAMA_HOST}/api/embeddings",
+                model_name=EMBED_MODEL,
+            )
+            self.collection = self.chroma.get_or_create_collection(
+                name="cx_holistic_db",
+                embedding_function=self.embed_fn,
+            )
         self.df = None
         self.refresh_data()
 
@@ -297,6 +348,9 @@ class KnowledgeBase:
         return None
 
     def _rebuild_vector_store(self):
+        if not self.enable_vector_index or self.collection is None:
+            return True
+
         if self.df is None or self.df.empty:
             return False
 
@@ -324,14 +378,6 @@ class KnowledgeBase:
         self.collection.add(documents=documents, metadatas=metadata, ids=ids)
         return True
 
-    def get_runtime_summary(self):
-        return {
-            "app_mode": self.app_mode,
-            "internal_data_mode": self.internal_data_mode,
-            "external_data_mode": self.external_data_mode,
-            "internal_source": self.provider.source_name,
-        }
-
     def refresh_data(self):
         try:
             latest_df = self.provider.load_feedback_data()
@@ -354,6 +400,20 @@ class KnowledgeBase:
             return False
 
     def query(self, timeframe, context_keywords=""):
+        if not self.enable_vector_index or self.collection is None:
+            filtered_df = self.df if self.df is not None else pd.DataFrame()
+            if timeframe and not filtered_df.empty:
+                filtered_df = filtered_df[filtered_df["Rentang Waktu"] == timeframe]
+            if filtered_df.empty:
+                return "Tidak ada data feedback internal untuk periode ini."
+            limited_rows = filtered_df.head(25)
+            documents = []
+            for _, row in limited_rows.iterrows():
+                documents.append(
+                    " | ".join(f"{column}: {value}" for column, value in row.items())
+                )
+            return "\n---\n".join(documents)
+
         query_text = (
             f"General feedback, complaints, praise, and operational issues. "
             f"{context_keywords}"
@@ -544,21 +604,513 @@ class Researcher:
             "Sinyal OSINT Makro (Indonesia)",
         )
 
-    @staticmethod
-    def get_topic_trends(timeframe, focus_keywords, notes=""):
-        if not Researcher._is_enabled():
-            return "Data OSINT topikal tidak tersedia (SERPER_API_KEY belum diatur)."
+class FeedbackAnalyticsEngine:
+    THEME_LIBRARY = (
+        {
+            "id": "responsiveness",
+            "label": "Respons dan SLA",
+            "keywords": ("lambat", "respon", "response", "sla", "timeline", "delay", "mundur", "follow up"),
+            "prescription": "Tetapkan SLA respon, dashboard aging, dan owner follow-up per tiket/permintaan.",
+        },
+        {
+            "id": "schedule",
+            "label": "Jadwal dan beban sesi",
+            "keywords": ("jadwal", "padat", "jeda", "durasi", "sesi", "waktu"),
+            "prescription": "Kalibrasi durasi sesi, sediakan jeda terstruktur, dan review desain agenda per layanan.",
+        },
+        {
+            "id": "facility",
+            "label": "Fasilitas dan infrastruktur",
+            "keywords": ("fasilitas", "lab", "ruang", "wifi", "jaringan", "network", "kelas"),
+            "prescription": "Audit kesiapan fasilitas sebelum delivery dan tetapkan checklist operasional harian.",
+        },
+        {
+            "id": "instructor",
+            "label": "Kualitas instruktur atau konsultan",
+            "keywords": ("instruktur", "trainer", "konsultan", "mentor", "pengajar", "narasumber"),
+            "prescription": "Perkuat coaching instruktur, review kompetensi domain, dan standardisasi evaluasi fasilitator.",
+        },
+        {
+            "id": "material",
+            "label": "Materi dan relevansi konten",
+            "keywords": ("materi", "kurikulum", "modul", "silabus", "relevan", "contoh"),
+            "prescription": "Review kurikulum per segmen, tambahkan contoh kontekstual, dan perbarui modul prioritas.",
+        },
+        {
+            "id": "communication",
+            "label": "Komunikasi dan koordinasi",
+            "keywords": ("komunikasi", "informasi", "koordinasi", "brief", "update"),
+            "prescription": "Rapikan alur komunikasi pra-delivery dan pastikan semua stakeholder menerima update status yang sama.",
+        },
+        {
+            "id": "outcome",
+            "label": "Dampak hasil layanan",
+            "keywords": ("actionable", "implementasi", "hasil", "manfaat", "membantu", "sertifikasi"),
+            "prescription": "Pertahankan praktik outcome review dan ubah testimoni hasil menjadi playbook layanan.",
+        },
+    )
 
-        query = OSINT_TOPIC_QUERY_TEMPLATE.format(
-            timeframe=timeframe or "periode terbaru",
-            focus_keywords=focus_keywords,
-            notes=re.sub(r"\s+", " ", notes).strip()[:120],
+    def __init__(self, dataframe):
+        self.full_df = dataframe.copy() if dataframe is not None else pd.DataFrame()
+        self.full_df = self.full_df.fillna("")
+        if not self.full_df.empty:
+            self.full_df["Rating Numeric"] = pd.to_numeric(
+                self.full_df["Rating"],
+                errors="coerce",
+            )
+            self.full_df["Sentiment Label"] = self.full_df["Rating Numeric"].apply(
+                self._sentiment_label
+            )
+            self.full_df["Komentar Lower"] = self.full_df["Komentar"].astype(str).str.lower()
+
+    @staticmethod
+    def _sentiment_label(value):
+        if pd.isna(value):
+            return "unknown"
+        if value >= 4:
+            return "positive"
+        if value <= 2:
+            return "negative"
+        return "neutral"
+
+    @staticmethod
+    def _safe_percentage(numerator, denominator):
+        if not denominator:
+            return 0.0
+        return round((numerator / denominator) * 100, 1)
+
+    @staticmethod
+    def _truncate_text(text, max_length=180):
+        clean_text = re.sub(r"\s+", " ", str(text)).strip()
+        if len(clean_text) <= max_length:
+            return clean_text
+        return f"{clean_text[:max_length - 3]}..."
+
+    @staticmethod
+    def _series_counts(series, limit=5):
+        filtered = series.fillna("").astype(str).str.strip()
+        filtered = filtered[filtered != ""]
+        return filtered.value_counts().head(limit)
+
+    def _filter_timeframe(self, timeframe):
+        if self.full_df.empty:
+            return self.full_df.copy()
+        filtered = self.full_df[self.full_df["Rentang Waktu"] == timeframe].copy()
+        return filtered
+
+    def _theme_hits(self, dataframe):
+        theme_stats = []
+        if dataframe.empty:
+            return theme_stats
+
+        comment_series = dataframe["Komentar Lower"].astype(str)
+        for theme in self.THEME_LIBRARY:
+            match_mask = comment_series.apply(
+                lambda text: any(keyword in text for keyword in theme["keywords"])
+            )
+            matched = dataframe[match_mask]
+            if matched.empty:
+                continue
+            positive_hits = int((matched["Sentiment Label"] == "positive").sum())
+            negative_hits = int((matched["Sentiment Label"] == "negative").sum())
+            neutral_hits = int((matched["Sentiment Label"] == "neutral").sum())
+            theme_stats.append(
+                {
+                    "id": theme["id"],
+                    "label": theme["label"],
+                    "prescription": theme["prescription"],
+                    "total_hits": int(len(matched)),
+                    "positive_hits": positive_hits,
+                    "negative_hits": negative_hits,
+                    "neutral_hits": neutral_hits,
+                    "matched_df": matched,
+                }
+            )
+
+        return sorted(
+            theme_stats,
+            key=lambda item: (item["negative_hits"], item["total_hits"]),
+            reverse=True,
         )
 
-        findings = Researcher._run_query_batch([query], max_signals=4)
-        return Researcher._format_osint_brief(
-            findings,
-            "Sinyal OSINT Fokus Bab",
+    def _quote_lines(self, dataframe, limit=3):
+        if dataframe.empty:
+            return ["- Tidak ada kutipan yang cukup untuk periode ini."]
+
+        lines = []
+        seen_comments = set()
+        for _, row in dataframe.iterrows():
+            comment = self._truncate_text(row.get("Komentar", ""))
+            if not comment or comment in seen_comments:
+                continue
+            seen_comments.add(comment)
+            stakeholder = row.get("Tipe Stakeholder", "Stakeholder")
+            service = row.get("Layanan", "Layanan")
+            rating = row.get("Rating", "-")
+            lines.append(
+                f'- "{comment}" ({stakeholder} | {service} | rating {rating})'
+            )
+            if len(lines) >= limit:
+                break
+
+        return lines or ["- Tidak ada kutipan yang cukup untuk periode ini."]
+
+    def _group_risk(self, dataframe, column_name, limit=3):
+        if dataframe.empty:
+            return []
+
+        rows = []
+        grouped = dataframe.groupby(column_name, dropna=False)
+        for label, group in grouped:
+            clean_label = str(label).strip() or "Tidak terklasifikasi"
+            rating_avg = group["Rating Numeric"].mean()
+            negative_ratio = (group["Sentiment Label"] == "negative").mean()
+            volume = len(group)
+            safe_avg_rating = round(rating_avg, 2) if pd.notna(rating_avg) else 0.0
+            risk_score = round((negative_ratio * 70) + ((5 - safe_avg_rating) * 6) + min(volume, 10), 1)
+            rows.append(
+                {
+                    "label": clean_label,
+                    "volume": volume,
+                    "average_rating": safe_avg_rating,
+                    "negative_ratio": round(negative_ratio * 100, 1),
+                    "risk_score": risk_score,
+                }
+            )
+
+        rows.sort(key=lambda item: item["risk_score"], reverse=True)
+        return rows[:limit]
+
+    def _governance_summary(self, timeframe_df):
+        total_rows = len(timeframe_df)
+        if total_rows == 0:
+            return {
+                "total_rows": 0,
+                "completeness_pct": 0.0,
+                "source_count": 0,
+                "channel_count": 0,
+            }
+
+        mandatory_fields = ["Tipe Stakeholder", "Layanan", "Rentang Waktu", "Komentar"]
+        completeness_scores = []
+        for field in mandatory_fields:
+            populated = timeframe_df[field].astype(str).str.strip() != ""
+            completeness_scores.append(populated.mean())
+
+        source_count = self._series_counts(timeframe_df["Sumber Feedback"], limit=20).shape[0]
+        channel_count = self._series_counts(timeframe_df["Kanal Feedback"], limit=20).shape[0]
+        if source_count == 0:
+            source_count = 1
+
+        return {
+            "total_rows": total_rows,
+            "completeness_pct": round(sum(completeness_scores) / len(completeness_scores) * 100, 1),
+            "source_count": source_count,
+            "channel_count": channel_count,
+        }
+
+    def _descriptive_markdown(self, timeframe_df, timeframe, notes):
+        governance = self._governance_summary(timeframe_df)
+        total_rows = governance["total_rows"]
+        if total_rows == 0:
+            return (
+                "## 1.1 Ringkasan Cakupan Feedback dan Tata Kelola\n"
+                "Tidak ada feedback internal yang tersedia untuk periode ini.\n"
+            )
+
+        avg_rating = timeframe_df["Rating Numeric"].mean()
+        positive_count = int((timeframe_df["Sentiment Label"] == "positive").sum())
+        neutral_count = int((timeframe_df["Sentiment Label"] == "neutral").sum())
+        negative_count = int((timeframe_df["Sentiment Label"] == "negative").sum())
+
+        stakeholder_counts = self._series_counts(timeframe_df["Tipe Stakeholder"])
+        service_counts = self._series_counts(timeframe_df["Layanan"])
+        source_counts = self._series_counts(timeframe_df["Sumber Feedback"])
+        channel_counts = self._series_counts(timeframe_df["Kanal Feedback"])
+
+        top_sources = source_counts.index.tolist() if not source_counts.empty else ["Sumber internal terstandar"]
+        top_channels = channel_counts.index.tolist() if not channel_counts.empty else ["Belum terpetakan"]
+
+        note_line = (
+            f"- Fokus pengguna untuk periode ini: {notes.strip()}"
+            if notes and notes.strip()
+            else "- Tidak ada fokus tambahan dari pengguna; analisis menggunakan seluruh sinyal yang tersedia."
+        )
+
+        chart_line = (
+            "[[CHART: Distribusi Sentimen Feedback | Persentase | "
+            f"Positif,{self._safe_percentage(positive_count, total_rows)}; "
+            f"Netral,{self._safe_percentage(neutral_count, total_rows)}; "
+            f"Negatif,{self._safe_percentage(negative_count, total_rows)}]]"
+        )
+
+        stakeholder_lines = [
+            f"- {label}: {count} feedback"
+            for label, count in stakeholder_counts.items()
+        ] or ["- Belum ada distribusi stakeholder yang dapat dihitung."]
+        service_lines = [
+            f"- {label}: {count} feedback"
+            for label, count in service_counts.items()
+        ] or ["- Belum ada distribusi layanan yang dapat dihitung."]
+        source_lines = [
+            f"- Sumber utama: {', '.join(top_sources[:3])}"
+        ]
+        source_lines.append(f"- Kanal utama: {', '.join(top_channels[:3])}")
+
+        return "\n".join(
+            [
+                "## 1.1 Ringkasan Cakupan Feedback dan Tata Kelola",
+                f"- Periode analisis: {timeframe}",
+                f"- Total feedback tervalidasi: {total_rows} record",
+                f"- Kelengkapan field inti: {governance['completeness_pct']}%",
+                f"- Jumlah sumber feedback terpetakan: {governance['source_count']}",
+                f"- Jumlah kanal feedback terpetakan: {governance['channel_count']}",
+                note_line,
+                "",
+                "## 1.2 Distribusi Sentimen, Rating, dan Volume",
+                f"- Rata-rata rating periode ini: {round(avg_rating, 2) if pd.notna(avg_rating) else 0.0} dari 5",
+                f"- Sentimen positif: {positive_count} feedback ({self._safe_percentage(positive_count, total_rows)}%)",
+                f"- Sentimen netral: {neutral_count} feedback ({self._safe_percentage(neutral_count, total_rows)}%)",
+                f"- Sentimen negatif: {negative_count} feedback ({self._safe_percentage(negative_count, total_rows)}%)",
+                chart_line,
+                "",
+                "## 1.3 Distribusi Stakeholder, Layanan, dan Kanal/Sumber",
+                "### Stakeholder dengan volume feedback terbesar",
+                *stakeholder_lines,
+                "### Layanan dengan volume feedback terbesar",
+                *service_lines,
+                "### Cakupan sumber dan kanal",
+                *source_lines,
+            ]
+        )
+
+    def _diagnostic_markdown(self, timeframe_df):
+        if timeframe_df.empty:
+            return (
+                "## 2.1 Akar Masalah Utama dan Pain Point Dominan\n"
+                "Tidak ada feedback internal yang tersedia untuk periode ini.\n"
+            )
+
+        theme_hits = self._theme_hits(timeframe_df)
+        negative_themes = [theme for theme in theme_hits if theme["negative_hits"] > 0][:3]
+        positive_themes = sorted(
+            theme_hits,
+            key=lambda item: (item["positive_hits"], item["total_hits"]),
+            reverse=True,
+        )[:3]
+
+        if not negative_themes:
+            negative_lines = ["- Belum ada pola keluhan dominan yang menonjol; mayoritas feedback berada pada area stabil."]
+        else:
+            negative_lines = []
+            for theme in negative_themes:
+                impacted_services = self._series_counts(theme["matched_df"]["Layanan"], limit=2)
+                impacted_segments = self._series_counts(theme["matched_df"]["Tipe Stakeholder"], limit=2)
+                negative_lines.append(
+                    f"- {theme['label']}: {theme['negative_hits']} sinyal negatif. "
+                    f"Layanan terdampak: {', '.join(impacted_services.index.tolist()) or 'belum terpetakan'}. "
+                    f"Segmen terdampak: {', '.join(impacted_segments.index.tolist()) or 'belum terpetakan'}."
+                )
+
+        positive_lines = []
+        for theme in positive_themes:
+            if theme["positive_hits"] <= 0:
+                continue
+            strongest_services = self._series_counts(theme["matched_df"]["Layanan"], limit=2)
+            positive_lines.append(
+                f"- {theme['label']}: {theme['positive_hits']} sinyal positif. "
+                f"Paling banyak muncul pada layanan {', '.join(strongest_services.index.tolist()) or 'belum terpetakan'}."
+            )
+        if not positive_lines:
+            positive_lines = ["- Belum ada kekuatan yang cukup konsisten untuk dikonfirmasi pada periode ini."]
+
+        negative_quotes = self._quote_lines(timeframe_df[timeframe_df["Sentiment Label"] == "negative"], limit=3)
+        positive_quotes = self._quote_lines(timeframe_df[timeframe_df["Sentiment Label"] == "positive"], limit=2)
+
+        service_risks = self._group_risk(timeframe_df, "Layanan", limit=3)
+        process_gap_lines = [
+            f"- {item['label']}: rata-rata rating {item['average_rating']}, "
+            f"proporsi negatif {item['negative_ratio']}%, volume {item['volume']}."
+            for item in service_risks
+        ] or ["- Belum ada gap proses yang dapat dipetakan."]
+
+        return "\n".join(
+            [
+                "## 2.1 Akar Masalah Utama dan Pain Point Dominan",
+                *negative_lines,
+                "",
+                "## 2.2 Kekuatan yang Konsisten dan Area yang Perlu Dijaga",
+                *positive_lines,
+                "",
+                "## 2.3 Bukti Verbatim, Kesenjangan Proses, dan Segmentasi Masalah",
+                "### Kutipan keluhan representatif",
+                *negative_quotes,
+                "### Kutipan apresiasi representatif",
+                *positive_quotes,
+                "### Kesenjangan proses yang paling terlihat",
+                *process_gap_lines,
+            ]
+        )
+
+    def _predictive_markdown(self, timeframe_df, macro_trends):
+        if timeframe_df.empty:
+            return (
+                "## 3.1 Risiko Jangka Pendek Jika Pola Saat Ini Berlanjut\n"
+                "Tidak ada feedback internal yang tersedia untuk periode ini.\n"
+            )
+
+        service_risks = self._group_risk(timeframe_df, "Layanan", limit=3)
+        stakeholder_risks = self._group_risk(timeframe_df, "Tipe Stakeholder", limit=3)
+
+        risk_lines = []
+        for item in service_risks:
+            severity = "tinggi" if item["risk_score"] >= 55 else "menengah"
+            risk_lines.append(
+                f"- {item['label']} berisiko {severity} mengalami penurunan kepuasan lanjutan "
+                f"karena proporsi sinyal negatif {item['negative_ratio']}% dengan rata-rata rating {item['average_rating']}."
+            )
+        if not risk_lines:
+            risk_lines = ["- Tidak ada risiko layanan yang cukup kuat untuk diproyeksikan pada periode ini."]
+
+        segment_lines = []
+        for item in stakeholder_risks:
+            segment_lines.append(
+                f"- Segmen {item['label']} perlu dipantau karena volume {item['volume']} feedback "
+                f"dengan proporsi negatif {item['negative_ratio']}%."
+            )
+        if not segment_lines:
+            segment_lines = ["- Tidak ada segmen pelanggan yang cukup dominan untuk diproyeksikan."]
+
+        osint_lines = []
+        for line in str(macro_trends).splitlines():
+            cleaned = line.strip()
+            if not cleaned:
+                continue
+            if re.match(r"^\d+\.", cleaned):
+                osint_lines.append(f"- {cleaned}")
+            elif cleaned.endswith(":"):
+                osint_lines.append(f"- {cleaned}")
+        if not osint_lines:
+            osint_lines = ["- Tren eksternal belum tersedia; prediksi saat ini sepenuhnya didasarkan pada data internal."]
+
+        return "\n".join(
+            [
+                "## 3.1 Risiko Jangka Pendek Jika Pola Saat Ini Berlanjut",
+                *risk_lines,
+                "",
+                "## 3.2 Prediksi Segmen dan Layanan yang Paling Rentan",
+                *segment_lines,
+                "",
+                "## 3.3 Tren Eksternal yang Berpotensi Memperbesar Risiko",
+                *osint_lines[:6],
+            ]
+        )
+
+    def _prescriptive_markdown(self, timeframe_df):
+        if timeframe_df.empty:
+            return (
+                "## 4.1 Intervensi Prioritas 30 Hari\n"
+                "Tidak ada feedback internal yang tersedia untuk periode ini.\n"
+            )
+
+        theme_hits = self._theme_hits(timeframe_df)
+        prioritized_actions = []
+        for theme in theme_hits:
+            if theme["negative_hits"] <= 0:
+                continue
+            prioritized_actions.append(
+                f"1. {theme['label']}: {theme['prescription']}"
+            )
+            if len(prioritized_actions) >= 4:
+                break
+
+        if not prioritized_actions:
+            prioritized_actions = [
+                "1. Pertahankan monitoring mingguan karena belum ada pain point dominan yang membutuhkan intervensi besar."
+            ]
+
+        governance_actions = [
+            "1. Wajibkan field sumber feedback, kanal, stakeholder, layanan, tanggal, dan rating pada setiap record yang masuk.",
+            "2. Satukan kontrak data antar sistem supaya analisis lintas sumber tetap konsisten dan dapat diaudit.",
+            "3. Tetapkan SLA respon dan eskalasi untuk feedback negatif berprioritas tinggi.",
+        ]
+
+        roadmap_actions = [
+            "1. Minggu 1: validasi kualitas data, pemetaan owner layanan, dan review pain point dominan.",
+            "2. Minggu 2: jalankan quick wins pada layanan berisiko tertinggi serta aktifkan dashboard monitoring.",
+            "3. Minggu 3-4: evaluasi dampak perbaikan, tutup feedback loop ke stakeholder, dan siapkan iterasi berikutnya.",
+            "[[FLOW: Kumpulkan Feedback Multi-Sumber -> Normalisasi dan Audit Data -> Diagnosa Prioritas -> Jalankan Intervensi -> Evaluasi Dampak]]",
+        ]
+
+        return "\n".join(
+            [
+                "## 4.1 Intervensi Prioritas 30 Hari",
+                *prioritized_actions,
+                "",
+                "## 4.2 Penguatan Tata Kelola Feedback dan Eskalasi",
+                *governance_actions,
+                "",
+                "## 4.3 Rencana Tindak Lanjut Lintas Fungsi",
+                *roadmap_actions,
+            ]
+        )
+
+    def build_report_sections(self, timeframe, notes, macro_trends):
+        timeframe_df = self._filter_timeframe(timeframe)
+        section_map = {
+            "cx_chap_1": self._descriptive_markdown(timeframe_df, timeframe, notes),
+            "cx_chap_2": self._diagnostic_markdown(timeframe_df),
+            "cx_chap_3": self._predictive_markdown(timeframe_df, macro_trends),
+            "cx_chap_4": self._prescriptive_markdown(timeframe_df),
+        }
+
+        sections = []
+        for chapter in CX_SENTIMENT_STRUCTURE:
+            sections.append(
+                {
+                    "id": chapter["id"],
+                    "title": chapter["title"],
+                    "content": section_map.get(chapter["id"], ""),
+                }
+            )
+        return sections
+
+    def build_executive_snapshot(self, timeframe):
+        timeframe_df = self._filter_timeframe(timeframe)
+        if timeframe_df.empty:
+            return (
+                "## Ringkasan Eksekutif\n"
+                "- Tidak ada data internal yang cukup untuk menyusun snapshot eksekutif.\n"
+            )
+
+        total_rows = len(timeframe_df)
+        avg_rating = timeframe_df["Rating Numeric"].mean()
+        negative_share = self._safe_percentage(
+            int((timeframe_df["Sentiment Label"] == "negative").sum()),
+            total_rows,
+        )
+        top_service = self._series_counts(timeframe_df["Layanan"], limit=1)
+        top_stakeholder = self._series_counts(timeframe_df["Tipe Stakeholder"], limit=1)
+        top_risk = self._group_risk(timeframe_df, "Layanan", limit=1)
+
+        risk_statement = (
+            f"- Risiko teratas saat ini ada pada layanan {top_risk[0]['label']} "
+            f"dengan proporsi sinyal negatif {top_risk[0]['negative_ratio']}%."
+            if top_risk
+            else "- Belum ada layanan dengan risiko dominan yang teridentifikasi."
+        )
+
+        return "\n".join(
+            [
+                "## Ringkasan Eksekutif",
+                f"- Total feedback yang dianalisis: {total_rows} record.",
+                f"- Rata-rata rating periode ini: {round(avg_rating, 2) if pd.notna(avg_rating) else 0.0} dari 5.",
+                f"- Volume layanan terbesar: {top_service.index[0] if not top_service.empty else 'Belum terpetakan'}.",
+                f"- Segmen dengan volume terbesar: {top_stakeholder.index[0] if not top_stakeholder.empty else 'Belum terpetakan'}.",
+                f"- Proporsi sentimen negatif: {negative_share}%.",
+                risk_statement,
+                "- Struktur laporan ini disusun untuk mendukung analisis Descriptive, Diagnostic, Predictive, dan Prescriptive secara konsisten.",
+            ]
         )
 
 
@@ -984,131 +1536,46 @@ class DocumentBuilder:
 
 class ReportGenerator:
     def __init__(self, kb_instance):
-        self.ollama = Client(host=OLLAMA_HOST)
         self.kb = kb_instance
         self.research_pool = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 
-    def _get_visual_directive(self, chapter):
-        visual_type = chapter.get("visual")
-        if visual_type == "bar_chart":
-            return (
-                "Mandatory Visual: [[CHART: Sentimen Lintas Demografi | Persentase | "
-                "Positif,60; Netral,20; Negatif,20]]"
-            )
-        if visual_type == "flowchart":
-            return (
-                "Action Plan Visual: [[FLOW: Tinjau Keluhan Mayoritas -> "
-                "Sinkronisasi Lintas Divisi -> Implementasi Solusi]]."
-            )
-        return "Do not force visuals."
-
-    def _fetch_chapter_context(
-        self,
-        chapter,
-        timeframe,
-        notes,
-        macro_trends,
-        chapter_trends,
-    ):
-        try:
-            rag_data = self.kb.query(
-                timeframe,
-                f"{chapter['focus_keywords']} {notes}".strip(),
-            )
-            persona = PERSONAS.get("default", "Chief CX Officer")
-            section_markdown = "\n".join(
-                f"### {section}" for section in chapter["sections"]
-            )
-
-            prompt = CX_ANALYSIS_SYSTEM_PROMPT.format(
-                persona=persona,
-                timeframe=timeframe,
-                industry_trends=macro_trends,
-                chapter_osint=chapter_trends,
-                rag_data=rag_data,
-                visual_prompt=self._get_visual_directive(chapter),
-                chapter_title=chapter["title"],
-                sub_chapters=section_markdown,
-            )
-            return {"prompt": prompt, "success": True}
-        except Exception as exc:
-            return {"prompt": "", "success": False, "error": str(exc)}
-
     def run(self, timeframe, notes=""):
-        logger.info("Starting Holistic CX generation for timeframe: %s", timeframe)
+        logger.info("Starting feedback intelligence report generation for timeframe: %s", timeframe)
 
         macro_future = self.research_pool.submit(
             Researcher.get_macro_trends,
             timeframe,
             notes,
         )
-        topic_futures = {
-            chapter["id"]: self.research_pool.submit(
-                Researcher.get_topic_trends,
-                timeframe,
-                chapter["focus_keywords"],
-                notes,
-            )
-            for chapter in CX_SENTIMENT_STRUCTURE
-        }
 
         try:
             macro_trends = macro_future.result(timeout=25)
         except Exception:
             macro_trends = "Tidak ada tren eksternal yang berhasil dimuat."
 
-        chapter_trends = {}
-        for chapter_id, future in topic_futures.items():
-            try:
-                chapter_trends[chapter_id] = future.result(timeout=15)
-            except Exception:
-                chapter_trends[chapter_id] = "Tidak ada sinyal OSINT fokus bab."
+        analytics = FeedbackAnalyticsEngine(self.kb.df)
+        executive_snapshot = analytics.build_executive_snapshot(timeframe)
+        report_sections = analytics.build_report_sections(timeframe, notes, macro_trends)
 
         document = Document()
         DocumentBuilder.create_cover(document, timeframe, DEFAULT_COLOR)
+        document.add_heading("EXECUTIVE SNAPSHOT", level=1)
+        DocumentBuilder.process_content(
+            document,
+            executive_snapshot,
+            DEFAULT_COLOR,
+        )
+        document.add_page_break()
 
-        for index, chapter in enumerate(CX_SENTIMENT_STRUCTURE):
-            context = self._fetch_chapter_context(
-                chapter,
-                timeframe,
-                notes,
-                macro_trends,
-                chapter_trends.get(chapter["id"], ""),
+        for index, section in enumerate(report_sections):
+            document.add_heading(section["title"], level=1)
+            DocumentBuilder.process_content(
+                document,
+                section["content"],
+                DEFAULT_COLOR,
             )
-            if not context["success"]:
-                logger.error(
-                    "Gagal membangun konteks untuk bab %s: %s",
-                    chapter["title"],
-                    context.get("error", "unknown error"),
-                )
-                continue
+            if index < len(report_sections) - 1:
+                document.add_page_break()
 
-            try:
-                response = self.ollama.chat(
-                    model=LLM_MODEL,
-                    messages=[
-                        {"role": "system", "content": context["prompt"]},
-                        {
-                            "role": "user",
-                            "content": (
-                                f"Write content for {chapter['title']}. "
-                                "Remember: Use '###' for every sub-chapter header and compare "
-                                "demographics holistically."
-                            ),
-                        },
-                    ],
-                    options={"num_ctx": 4096},
-                )
-                document.add_heading(chapter["title"], level=1)
-                DocumentBuilder.process_content(
-                    document,
-                    response["message"]["content"],
-                    DEFAULT_COLOR,
-                )
-                if index < len(CX_SENTIMENT_STRUCTURE) - 1:
-                    document.add_page_break()
-            except Exception as exc:
-                logger.error("Error saat memproses %s: %s", chapter["title"], exc)
-
-        filename = f"Inixindo_Holistic_CX_Report_{timeframe}".replace(" ", "_")
+        filename = f"Inixindo_Feedback_Intelligence_Report_{timeframe}".replace(" ", "_")
         return document, filename
