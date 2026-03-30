@@ -11,6 +11,7 @@ Alih-alih membaca *feedback* secara manual, sistem ini menormalkan data, menghit
 * **Evidence-Based Reporting**: Setiap bagian analisis tetap ditopang kutipan verbatim dan distribusi data nyata.
 * **Enterprise OSINT**: Menarik tren pasar dan benchmark publik sebagai konteks eksternal.
 * **Fast Report Pipeline**: Laporan disusun terutama dari analytics terstruktur agar lebih stabil untuk eksekusi paralel banyak pengguna.
+* **Async Report Jobs for Pilot/VPS**: Jalur generate laporan dapat diproses sebagai background job dengan status polling, sehingga lebih aman untuk dipakai beberapa pengguna sekaligus pada satu server internal.
 
 ## Prasyarat Sistem
 
@@ -81,6 +82,8 @@ PORT=8000 \
 WAITRESS_THREADS=8 \
 WAITRESS_CONNECTION_LIMIT=100 \
 WAITRESS_CHANNEL_TIMEOUT=240 \
+REPORT_JOB_WORKERS=3 \
+REPORT_MAX_PENDING_JOBS=24 \
 ./run_pilot.sh
 ```
 
@@ -94,6 +97,12 @@ Endpoint health check tersedia di:
 
 ```text
 http://<IP-atau-host-internal>:8000/health
+```
+
+Untuk readiness check yang juga memeriksa kesiapan data dan direktori artefak laporan:
+
+```text
+http://<IP-atau-host-internal>:8000/ready
 ```
 
 ### 4. Menyiapkan Model Embedding (Opsional)
@@ -164,3 +173,25 @@ docker-compose up -d --build
 ```
 
 Arsitektur Docker dapat disesuaikan nanti untuk deployment produksi. Untuk pilot internal yang ringan dan cepat dibagikan, launcher saat ini langsung memakai **Waitress** agar jalur eksekusinya sederhana dan stabil untuk koneksi paralel dari browser karyawan.
+
+## Catatan Operasional untuk VPS Simulation
+
+Pada jalur UI terbaru, permintaan report tidak lagi harus menunggu file Word selesai dibangun di request yang sama. Browser akan:
+
+1. membuat report job ke server,
+2. memantau status job secara periodik,
+3. mengunduh file Word ketika status sudah `completed`.
+
+Endpoint yang relevan:
+
+* `POST /generate-job` untuk membuat job report.
+* `GET /jobs/<job_id>` untuk membaca status, durasi, dan metadata job.
+* `GET /download/<job_id>` untuk mengambil dokumen yang sudah selesai.
+
+Environment variable tambahan yang berguna untuk simulasi VPS:
+
+* `REPORT_JOB_WORKERS`: jumlah worker background untuk generate report.
+* `REPORT_MAX_PENDING_JOBS`: batas job aktif (`queued` + `running`) agar server tidak overload.
+* `REPORT_JOB_RETENTION_SECONDS`: masa simpan metadata dan file report sebelum dibersihkan.
+* `REPORT_ARTIFACT_DIR`: direktori penyimpanan file report hasil generate.
+* `OSINT_CACHE_TTL_SECONDS`: masa hidup cache OSINT agar query benchmark tidak selalu memukul layanan eksternal.

@@ -13,6 +13,7 @@ from config import (
     SMART_SUGGESTIONS,
 )
 from core import KnowledgeBase, ReportGenerator
+from runtime import QueueCapacityError, ReportJobManager
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -22,7 +23,19 @@ CORS(app)
 
 kb = KnowledgeBase(DB_URI)
 generator = ReportGenerator(kb)
+job_manager = ReportJobManager(generator)
 logger.info("Application started in %s mode.", APP_MODE)
+
+
+def _request_payload(data):
+    payload = {
+        "timeframe": data.get("timeframe"),
+        "notes": data.get("notes", ""),
+        "sentiment": data.get("sentiment", "all"),
+        "segment": data.get("segment", "all"),
+        "score_engine": data.get("score_engine", DEFAULT_SCORE_ENGINE),
+    }
+    return payload
 
 @app.route("/")
 def home():
@@ -38,6 +51,30 @@ def health():
             {
                 "status": "ok" if data_ready else "degraded",
                 "data_ready": data_ready,
+            }
+        ),
+        status_code,
+    )
+
+
+@app.route("/ready")
+def ready():
+    data_ready = kb.df is not None and not kb.df.empty
+    job_stats = job_manager.stats()
+    ready_state = data_ready and job_stats["artifact_dir_writable"]
+    status_code = 200 if ready_state else 503
+    return (
+        jsonify(
+            {
+                "status": "ready" if ready_state else "not_ready",
+                "data_ready": data_ready,
+                "artifact_dir_writable": job_stats["artifact_dir_writable"],
+                "job_capacity": {
+                    "max_workers": job_stats["max_workers"],
+                    "max_pending_jobs": job_stats["max_pending_jobs"],
+                    "queued": job_stats["jobs"]["queued"],
+                    "running": job_stats["jobs"]["running"],
+                },
             }
         ),
         status_code,
@@ -79,11 +116,8 @@ def get_config():
 @app.route("/generate", methods=["POST"])
 def generate_report():
     data = request.get_json(silent=True) or {}
-    timeframe = data.get("timeframe")
-    notes = data.get("notes", "")
-    sentiment = data.get("sentiment", "all")
-    segment = data.get("segment", "all")
-    score_engine = data.get("score_engine", DEFAULT_SCORE_ENGINE)
+    payload = _request_payload(data)
+    timeframe = payload["timeframe"]
 
     if not timeframe:
         return jsonify({"error": "Parameter 'timeframe' wajib diisi."}), 400
@@ -91,16 +125,16 @@ def generate_report():
     logger.info(
         "Generating report for timeframe='%s', sentiment='%s', segment='%s', score_engine='%s'.",
         timeframe,
-        sentiment,
-        segment,
-        score_engine,
+        payload["sentiment"],
+        payload["segment"],
+        payload["score_engine"],
     )
     doc, filename = generator.run(
         timeframe,
-        notes,
-        sentiment=sentiment,
-        segment=segment,
-        score_engine=score_engine,
+        payload["notes"],
+        sentiment=payload["sentiment"],
+        segment=payload["segment"],
+        score_engine=payload["score_engine"],
     )
 
     out = io.BytesIO()
@@ -115,8 +149,80 @@ def generate_report():
     )
 
 
+@app.route("/generate-job", methods=["POST"])
+def generate_report_job():
+    data = request.get_json(silent=True) or {}
+    payload = _request_payload(data)
+
+    if not payload["timeframe"]:
+        return jsonify({"error": "Parameter 'timeframe' wajib diisi."}), 400
+
+    try:
+        job = job_manager.submit(payload)
+    except QueueCapacityError as exc:
+        return jsonify({"error": str(exc)}), 429
+
+    logger.info(
+        "Queued report job %s for timeframe='%s', sentiment='%s', segment='%s', score_engine='%s'.",
+        job["job_id"],
+        payload["timeframe"],
+        payload["sentiment"],
+        payload["segment"],
+        payload["score_engine"],
+    )
+    return (
+        jsonify(
+            {
+                **job,
+                "status_url": f"/jobs/{job['job_id']}",
+                "download_url": f"/download/{job['job_id']}",
+            }
+        ),
+        202,
+    )
+
+
+@app.route("/jobs/<job_id>")
+def get_report_job(job_id):
+    job = job_manager.get(job_id)
+    if not job:
+        return jsonify({"error": "Job tidak ditemukan."}), 404
+
+    response = dict(job)
+    response["status_url"] = f"/jobs/{job_id}"
+    if job["status"] == "completed":
+        response["download_url"] = f"/download/{job_id}"
+    return jsonify(response)
+
+
+@app.route("/download/<job_id>")
+def download_report(job_id):
+    artifact = job_manager.artifact_for(job_id)
+    if not artifact:
+        return jsonify({"error": "Berkas laporan belum tersedia."}), 404
+
+    return send_file(
+        artifact["path"],
+        as_attachment=True,
+        download_name=artifact["filename"],
+        mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+
+
 @app.route("/refresh-knowledge", methods=["POST"])
 def refresh_knowledge():
+    job_stats = job_manager.stats()
+    if job_stats["jobs"]["queued"] or job_stats["jobs"]["running"]:
+        return (
+            jsonify(
+                {
+                    "status": "busy",
+                    "error": "Sinkronisasi data sementara dikunci karena masih ada laporan yang sedang diproses.",
+                }
+            ),
+            409,
+        )
+
     success = kb.refresh_data()
     return jsonify({"status": "success" if success else "error"})
 

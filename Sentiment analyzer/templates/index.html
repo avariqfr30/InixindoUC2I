@@ -28,6 +28,10 @@
         .field-grid .full-width { grid-column: 1 / -1; }
         .helper { color: #64748b; font-size: 0.85rem; margin: -8px 0 14px 0; line-height: 1.4; }
         .review-notes { background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; color: #475569; line-height: 1.5; }
+        .status-panel { display: none; margin: 18px 0 8px 0; border-radius: 10px; padding: 14px 16px; border: 1px solid #e2e8f0; background: #f8fafc; color: #475569; line-height: 1.5; }
+        .status-panel.active { display: block; }
+        .status-panel.error { border-color: #fecaca; background: #fef2f2; color: #991b1b; }
+        .status-panel.success { border-color: #bbf7d0; background: #f0fdf4; color: #166534; }
 
         .chip-container { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
         .chip { background: #e2e8f0; color: #475569; padding: 6px 12px; border-radius: 16px; font-size: 0.85rem; cursor: pointer; transition: 0.2s; border: 1px solid transparent; }
@@ -88,6 +92,7 @@
         <div id="step-review" class="hidden">
             <h2>Konfirmasi Laporan Eksekutif</h2>
             <div class="review-box" id="review-text"></div>
+            <div id="job-status" class="status-panel"></div>
             <div style="display:flex; gap:15px;">
                 <button type="button" id="btn-back" class="secondary" style="width:35%">Kembali</button>
                 <button type="button" id="btn-generate" style="width:65%">Generate Report <span id="spinner" class="spinner"></span></button>
@@ -98,6 +103,7 @@
             <div style="font-size: 60px; margin-bottom: 20px;">✅</div>
             <h2>Selesai!</h2>
             <p class="sub">Laporan feedback intelligence telah diunduh.</p>
+            <p id="success-meta" class="helper" style="margin: 0 0 20px 0;"></p>
             <button type="button" onclick="location.reload()" class="secondary">Buat Laporan Baru</button>
         </div>
     </div>
@@ -119,6 +125,8 @@
             suggestionContainer: document.getElementById('suggestion-container'),
             containerDiscovery: document.getElementById('container-discovery'),
             reviewText: document.getElementById('review-text'),
+            jobStatus: document.getElementById('job-status'),
+            successMeta: document.getElementById('success-meta'),
             
             btnReview: document.getElementById('btn-review'),
             btnGenerate: document.getElementById('btn-generate'),
@@ -129,7 +137,9 @@
         const appState = {
             sentiments: [],
             segments: [],
-            scoreEngines: []
+            scoreEngines: [],
+            currentJobId: null,
+            pollTimer: null
         };
 
         function populateSelect(selectElement, items, placeholder) {
@@ -154,6 +164,99 @@
         function getSelectedLabel(selectElement) {
             if (!selectElement.selectedOptions.length) return '-';
             return selectElement.selectedOptions[0].text;
+        }
+
+        function escapeHtml(text) {
+            return String(text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+
+        function showJobStatus(message, tone = 'neutral') {
+            ui.jobStatus.className = 'status-panel active';
+            if (tone === 'error') ui.jobStatus.classList.add('error');
+            if (tone === 'success') ui.jobStatus.classList.add('success');
+            ui.jobStatus.innerHTML = escapeHtml(message);
+        }
+
+        function clearJobStatus() {
+            ui.jobStatus.className = 'status-panel';
+            ui.jobStatus.innerHTML = '';
+        }
+
+        function clearPolling() {
+            if (appState.pollTimer) {
+                window.clearTimeout(appState.pollTimer);
+                appState.pollTimer = null;
+            }
+        }
+
+        function schedulePoll(jobId, delayMs = 2000) {
+            clearPolling();
+            appState.pollTimer = window.setTimeout(() => pollJob(jobId), delayMs);
+        }
+
+        function startDownload(url, filename) {
+            const anchor = document.createElement('a');
+            anchor.href = url;
+            if (filename) anchor.download = filename;
+            document.body.appendChild(anchor);
+            anchor.click();
+            anchor.remove();
+        }
+
+        function completeJob(job) {
+            clearPolling();
+            document.getElementById('spinner').classList.remove('active');
+            ui.successMeta.textContent = `Job ${job.job_id} selesai dalam ${job.duration_seconds || '-'} detik.`;
+            showJobStatus('Laporan selesai disiapkan dan unduhan akan dimulai.', 'success');
+            startDownload(job.download_url, job.filename);
+            ui.reviewStep.classList.add('hidden');
+            ui.successStep.classList.remove('hidden');
+        }
+
+        function failJob(message) {
+            clearPolling();
+            document.getElementById('spinner').classList.remove('active');
+            ui.btnGenerate.disabled = false;
+            showJobStatus(message, 'error');
+            alert(message);
+        }
+
+        function pollJob(jobId) {
+            fetch(`/jobs/${jobId}`)
+                .then(async response => {
+                    const data = await response.json();
+                    if (!response.ok) throw new Error(data.error || 'Status job tidak dapat dibaca.');
+                    return data;
+                })
+                .then(job => {
+                    if (job.status === 'queued') {
+                        const queueMessage = job.queue_position > 0
+                            ? `Laporan masuk antrian. Posisi saat ini: ${job.queue_position}.`
+                            : 'Laporan masuk antrian dan akan segera diproses.';
+                        showJobStatus(queueMessage);
+                        schedulePoll(jobId);
+                        return;
+                    }
+
+                    if (job.status === 'running') {
+                        const runningMessage = job.started_at
+                            ? `Laporan sedang disusun. Proses dimulai pada ${job.started_at}.`
+                            : 'Laporan sedang disusun.';
+                        showJobStatus(runningMessage);
+                        schedulePoll(jobId);
+                        return;
+                    }
+
+                    if (job.status === 'completed') {
+                        completeJob(job);
+                        return;
+                    }
+
+                    failJob(job.error || 'Proses laporan gagal diselesaikan.');
+                })
+                .catch(err => {
+                    failJob(err.message);
+                });
         }
 
         function updateScoreEngineHelper() {
@@ -239,6 +342,7 @@
         };
         
         ui.btnReview.onclick = () => { 
+            clearJobStatus();
             const notes = ui.inputNotes.value.trim();
             let html = `
                 <div class="review-row"><span>Periode Analisis</span><span>${ui.selectTimeframe.value}</span></div>
@@ -248,7 +352,7 @@
                 <div class="review-row"><span>Kerangka Laporan</span><span>Summary, Analisis, Customer Journey, dan Tindak Lanjut</span></div>
                 <div style="margin-top: 16px;">
                     <label style="margin-bottom:8px;">Instruksi Tambahan</label>
-                    <div class="review-notes">${notes ? notes.replace(/</g, '&lt;').replace(/>/g, '&gt;') : 'Tidak ada instruksi tambahan.'}</div>
+                    <div class="review-notes">${notes ? escapeHtml(notes) : 'Tidak ada instruksi tambahan.'}</div>
                 </div>
             `;
             ui.reviewText.innerHTML = html; 
@@ -257,6 +361,8 @@
         };
         
         ui.btnBack.onclick = () => { 
+            clearPolling();
+            clearJobStatus();
             ui.reviewStep.classList.add('hidden'); 
             ui.configStep.classList.remove('hidden'); 
         };
@@ -264,6 +370,7 @@
         ui.btnGenerate.onclick = () => {
             ui.btnGenerate.disabled = true; 
             document.getElementById('spinner').classList.add('active');
+            showJobStatus('Permintaan laporan dikirim ke server. Menyiapkan antrian proses...');
             
             const payload = {
                 timeframe: ui.selectTimeframe.value,
@@ -273,27 +380,30 @@
                 notes: ui.inputNotes.value
             };
 
-            fetch('/generate', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) })
-            .then(response => {
-                if (!response.ok) throw new Error("Gagal generate dokumen. Pastikan Ollama menyala.");
-                return response.blob();
+            fetch('/generate-job', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) })
+            .then(async response => {
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error || 'Gagal mengirim job laporan.');
+                return data;
             })
-            .then(blob => {
-                let url = window.URL.createObjectURL(blob);
-                let a = document.createElement('a'); a.href = url; 
-                a.download = `Holistic_CX_Report_${ui.selectTimeframe.value.replace(/\s+/g, '_').substring(0,6)}.docx`; 
-                a.click();
-                ui.reviewStep.classList.add('hidden'); ui.successStep.classList.remove('hidden');
+            .then(job => {
+                appState.currentJobId = job.job_id;
+                showJobStatus(`Job ${job.job_id} berhasil dibuat. Laporan akan diproses di background server.`);
+                pollJob(job.job_id);
             })
             .catch(err => {
-                alert(err.message);
-                ui.btnGenerate.disabled = false;
-                document.getElementById('spinner').classList.remove('active');
+                failJob(err.message);
             });
         };
         
         ui.btnRefresh.onclick = () => {
-            fetch('/refresh-knowledge', {method: 'POST'}).then(() => location.reload());
+            fetch('/refresh-knowledge', {method: 'POST'})
+                .then(async response => {
+                    const data = await response.json();
+                    if (!response.ok) throw new Error(data.error || 'Sinkronisasi data gagal.');
+                    location.reload();
+                })
+                .catch(err => alert(err.message));
         };
     </script>
 </body>
