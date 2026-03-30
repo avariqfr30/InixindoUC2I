@@ -41,7 +41,7 @@
 
         <div id="step-config" class="hidden">
             <h2>Feedback Intelligence Analyzer</h2>
-            <p class="sub">Platform ini mengolah feedback dari berbagai sumber untuk menghasilkan analisis descriptive, diagnostic, predictive, dan prescriptive dalam satu laporan yang siap ditindaklanjuti.</p>
+            <p class="sub">Platform ini mengolah feedback dari berbagai sumber untuk menghasilkan analisis descriptive, diagnostic, predictive, dan prescriptive yang siap dipakai untuk evaluasi layanan, pengambilan keputusan, dan perencanaan tindak lanjut lintas fungsi.</p>
             
             <label for="select-timeframe">Periode Analisis Evaluasi</label>
             <select id="select-timeframe">
@@ -155,6 +155,7 @@
             let html = `
                 <div class="review-row"><span>Cakupan Data</span><span>Semua Stakeholder & Layanan</span></div>
                 <div class="review-row"><span>Periode Analisis</span><span>${ui.selectTimeframe.value}</span></div>
+                <div class="review-row"><span>Kerangka Laporan</span><span>Analisis + Tindak Lanjut Manajerial</span></div>
             `;
             ui.reviewText.innerHTML = html; 
             ui.configStep.classList.add('hidden'); 

@@ -35,10 +35,10 @@ WRITER_FIRM_NAME = "Inixindo Jogja - Quality Assurance & CX Division"
 DEFAULT_COLOR = (204, 0, 0)
 
 SMART_SUGGESTIONS = [
-    "Tolong bandingkan ekspektasi klien BUMN/Corporate dengan peserta Mahasiswa/Personal.",
-    "Fokuskan analisis pada keluhan terkait infrastruktur fisik dan jaringan secara keseluruhan.",
-    "Berikan analisis mendalam mengenai performa instruktur dan konsultan di semua layanan.",
-    "Bandingkan sentimen klien Pemerintahan (Gov) terhadap layanan pelatihan vs layanan audit/konsultasi."
+    "Soroti area mana yang paling layak dijadikan prioritas perbaikan dan peluang pilot implementasi terlebih dahulu.",
+    "Fokuskan analisis pada dampak bisnis, kesiapan data, dan siapa owner tindak lanjut tiap area.",
+    "Jelaskan kontrol risiko, tata kelola, dan indikator kapan inisiatif perlu dilanjutkan, diubah, atau dihentikan.",
+    "Tekankan pembelajaran organisasi, perubahan cara kerja, dan kebutuhan capability lintas fungsi."
 ]
 
 OSINT_SEARCH_REGION = "id"
@@ -87,6 +87,39 @@ DATA_ACQUISITION_POLICY = {
     },
 }
 
+ADOPTION_READINESS_PILLARS = [
+    {
+        "id": "business_use_case",
+        "title": "5.1 Prioritas Sasaran Bisnis",
+        "guiding_question": "Masalah apa yang paling layak diprioritaskan dan apa dampaknya terhadap revenue, cost, atau risk?",
+    },
+    {
+        "id": "data_model_foundation",
+        "title": "5.2 Kesiapan Data dan Fondasi Analitik",
+        "guiding_question": "Apakah data tersedia, cukup bersih, dan sudah jelas siapa owner serta standar pengelolaannya?",
+    },
+    {
+        "id": "infrastructure_architecture",
+        "title": "5.3 Kesiapan Arsitektur dan Operasionalisasi",
+        "guiding_question": "Arsitektur seperti apa yang cukup aman, scalable, dan realistis untuk tahap implementasi saat ini?",
+    },
+    {
+        "id": "people_capability",
+        "title": "5.4 Peran, Kapabilitas, dan Kepemilikan Tindak Lanjut",
+        "guiding_question": "Siapa yang perlu dilibatkan agar inisiatif ini benar-benar dekat dengan kebutuhan bisnis dan dapat dieksekusi?",
+    },
+    {
+        "id": "governance",
+        "title": "5.5 Kontrol Risiko dan Tata Kelola",
+        "guiding_question": "Kontrol apa yang dibutuhkan agar risiko, kualitas rekomendasi, dan SOP tetap terjaga?",
+    },
+    {
+        "id": "culture",
+        "title": "5.6 Perubahan Kerja dan Pembelajaran Organisasi",
+        "guiding_question": "Perubahan perilaku kerja apa yang perlu dibangun agar inisiatif ini menjadi kebiasaan kerja, bukan eksperimen sesaat?",
+    },
+]
+
 CX_SENTIMENT_STRUCTURE = [
     {
         "id": "cx_chap_1", "title": "BAB I – DESCRIPTIVE ANALYTICS & FEEDBACK GOVERNANCE",
@@ -125,5 +158,17 @@ CX_SENTIMENT_STRUCTURE = [
         ],
         "focus_keywords": "prescriptive analytics recommendation action plan governance mitigation",
         "visual": "flowchart"
+    },
+    {
+        "id": "cx_chap_5", "title": "BAB V – REKOMENDASI IMPLEMENTASI DAN PENGUATAN ORGANISASI",
+        "sections": [
+            "5.1 Prioritas Sasaran Bisnis",
+            "5.2 Kesiapan Data dan Fondasi Analitik",
+            "5.3 Kesiapan Arsitektur dan Operasionalisasi",
+            "5.4 Peran, Kapabilitas, dan Kepemilikan Tindak Lanjut",
+            "5.5 Kontrol Risiko dan Tata Kelola",
+            "5.6 Perubahan Kerja dan Pembelajaran Organisasi"
+        ],
+        "focus_keywords": "implementation readiness business priority data architecture capability governance learning culture pilot",
     }
 ]
