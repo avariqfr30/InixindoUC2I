@@ -113,6 +113,43 @@
     "status": "completed",
     "updated_at": "2026-03-30T12:30:11Z"
   },
+  "5ef46e5c6a9d4018a4eb819579de3537": {
+    "_submitted_monotonic": 27.19234875,
+    "artifact_path": "/Users/avariqfr30/Documents/InixindoUC2I/Sentiment analyzer/data/generated_reports/5ef46e5c6a9d4018a4eb819579de3537.docx",
+    "artifact_size_bytes": 214675,
+    "completed_at": "2026-03-30T12:56:05.741Z",
+    "created_at": "2026-03-30T12:56:04.039Z",
+    "duration_seconds": 1.7,
+    "error": null,
+    "filename": "Inixindo_Feedback_Intelligence_Report_Experience_Index_1_Bulan_Terakhir_(Monthly).docx",
+    "generation_seconds": 1.7,
+    "input": {
+      "score_engine": "experience_index",
+      "segment": "all",
+      "sentiment": "all",
+      "timeframe": "1 Bulan Terakhir (Monthly)"
+    },
+    "job_id": "5ef46e5c6a9d4018a4eb819579de3537",
+    "quality": {
+      "completeness_score": 100.0,
+      "document_stats": {
+        "paragraph_count": 188,
+        "table_count": 21,
+        "visual_count": 6
+      },
+      "missing_checks": [],
+      "passed_checks": 15,
+      "summary": "15/15 checks passed. Completeness score 100.0%.",
+      "total_checks": 15,
+      "verification_status": "verified",
+      "verified_complete": true
+    },
+    "queue_wait_seconds": 0.0,
+    "started_at": "2026-03-30T12:56:04.104Z",
+    "status": "completed",
+    "total_elapsed_seconds": 1.7,
+    "updated_at": "2026-03-30T12:56:05.741Z"
+  },
   "7c3448ff21a7403a8730c1ce8b86c3b3": {
     "artifact_path": "/Users/avariqfr30/Documents/InixindoUC2I/Sentiment analyzer/data/generated_reports/7c3448ff21a7403a8730c1ce8b86c3b3.docx",
     "artifact_size_bytes": 216561,
@@ -245,6 +282,117 @@
     "status": "completed",
     "updated_at": "2026-03-30T12:30:09Z"
   },
+  "c6e7041bd06740f98d78379ecbf90979": {
+    "_submitted_monotonic": 27.189181458,
+    "artifact_path": "/Users/avariqfr30/Documents/InixindoUC2I/Sentiment analyzer/data/generated_reports/c6e7041bd06740f98d78379ecbf90979.docx",
+    "artifact_size_bytes": 216082,
+    "completed_at": "2026-03-30T12:56:05.808Z",
+    "created_at": "2026-03-30T12:56:04.035Z",
+    "duration_seconds": 1.77,
+    "error": null,
+    "filename": "Inixindo_Feedback_Intelligence_Report_Learning_Score_6_Bulan_Terakhir_(Biannual).docx",
+    "generation_seconds": 1.77,
+    "input": {
+      "score_engine": "learning_score",
+      "segment": "Instansi Pemerintah",
+      "sentiment": "all",
+      "timeframe": "6 Bulan Terakhir (Biannual)"
+    },
+    "job_id": "c6e7041bd06740f98d78379ecbf90979",
+    "quality": {
+      "completeness_score": 100.0,
+      "document_stats": {
+        "paragraph_count": 188,
+        "table_count": 21,
+        "visual_count": 6
+      },
+      "missing_checks": [],
+      "passed_checks": 15,
+      "summary": "15/15 checks passed. Completeness score 100.0%.",
+      "total_checks": 15,
+      "verification_status": "verified",
+      "verified_complete": true
+    },
+    "queue_wait_seconds": 0.0,
+    "started_at": "2026-03-30T12:56:04.040Z",
+    "status": "completed",
+    "total_elapsed_seconds": 1.77,
+    "updated_at": "2026-03-30T12:56:05.808Z"
+  },
+  "d28dbc2f67ba40a98973344c6accc82d": {
+    "_submitted_monotonic": 27.190971083,
+    "artifact_path": "/Users/avariqfr30/Documents/InixindoUC2I/Sentiment analyzer/data/generated_reports/d28dbc2f67ba40a98973344c6accc82d.docx",
+    "artifact_size_bytes": 183243,
+    "completed_at": "2026-03-30T12:56:05.541Z",
+    "created_at": "2026-03-30T12:56:04.037Z",
+    "duration_seconds": 1.5,
+    "error": null,
+    "filename": "Inixindo_Feedback_Intelligence_Report_Facility_Score_1_Tahun_Terakhir_(Yearly).docx",
+    "generation_seconds": 1.5,
+    "input": {
+      "score_engine": "facility_score",
+      "segment": "Sekolah / Universitas",
+      "sentiment": "negative",
+      "timeframe": "1 Tahun Terakhir (Yearly)"
+    },
+    "job_id": "d28dbc2f67ba40a98973344c6accc82d",
+    "quality": {
+      "completeness_score": 100.0,
+      "document_stats": {
+        "paragraph_count": 166,
+        "table_count": 20,
+        "visual_count": 6
+      },
+      "missing_checks": [],
+      "passed_checks": 15,
+      "summary": "15/15 checks passed. Completeness score 100.0%.",
+      "total_checks": 15,
+      "verification_status": "verified",
+      "verified_complete": true
+    },
+    "queue_wait_seconds": 0.0,
+    "started_at": "2026-03-30T12:56:04.102Z",
+    "status": "completed",
+    "total_elapsed_seconds": 1.5,
+    "updated_at": "2026-03-30T12:56:05.541Z"
+  },
+  "d34a3f22493d43e0875d495dde2858be": {
+    "_submitted_monotonic": 27.250172666,
+    "artifact_path": "/Users/avariqfr30/Documents/InixindoUC2I/Sentiment analyzer/data/generated_reports/d34a3f22493d43e0875d495dde2858be.docx",
+    "artifact_size_bytes": 187219,
+    "completed_at": "2026-03-30T12:56:06.676Z",
+    "created_at": "2026-03-30T12:56:04.096Z",
+    "duration_seconds": 0.93,
+    "error": null,
+    "filename": "Inixindo_Feedback_Intelligence_Report_Service_Score_1_Bulan_Terakhir_(Monthly).docx",
+    "generation_seconds": 0.93,
+    "input": {
+      "score_engine": "service_score",
+      "segment": "BUMN / Corporate",
+      "sentiment": "negative",
+      "timeframe": "1 Bulan Terakhir (Monthly)"
+    },
+    "job_id": "d34a3f22493d43e0875d495dde2858be",
+    "quality": {
+      "completeness_score": 100.0,
+      "document_stats": {
+        "paragraph_count": 169,
+        "table_count": 20,
+        "visual_count": 6
+      },
+      "missing_checks": [],
+      "passed_checks": 15,
+      "summary": "15/15 checks passed. Completeness score 100.0%.",
+      "total_checks": 15,
+      "verification_status": "verified",
+      "verified_complete": true
+    },
+    "queue_wait_seconds": 1.65,
+    "started_at": "2026-03-30T12:56:05.742Z",
+    "status": "completed",
+    "total_elapsed_seconds": 2.58,
+    "updated_at": "2026-03-30T12:56:06.676Z"
+  },
   "d528e2cb844e40bcb689df3a771c893c": {
     "artifact_path": "/Users/avariqfr30/Documents/InixindoUC2I/Sentiment analyzer/data/generated_reports/d528e2cb844e40bcb689df3a771c893c.docx",
     "artifact_size_bytes": 216807,
@@ -263,5 +411,42 @@
     "started_at": "2026-03-30T12:30:07Z",
     "status": "completed",
     "updated_at": "2026-03-30T12:30:09Z"
+  },
+  "f4ee54c525874031a0feece9e4c9eec0": {
+    "_submitted_monotonic": 27.194998041,
+    "artifact_path": "/Users/avariqfr30/Documents/InixindoUC2I/Sentiment analyzer/data/generated_reports/f4ee54c525874031a0feece9e4c9eec0.docx",
+    "artifact_size_bytes": 205376,
+    "completed_at": "2026-03-30T12:56:06.669Z",
+    "created_at": "2026-03-30T12:56:04.041Z",
+    "duration_seconds": 1.12,
+    "error": null,
+    "filename": "Inixindo_Feedback_Intelligence_Report_Learning_Score_1_Bulan_Terakhir_(Monthly).docx",
+    "generation_seconds": 1.12,
+    "input": {
+      "score_engine": "learning_score",
+      "segment": "Personal / Individual",
+      "sentiment": "positive",
+      "timeframe": "1 Bulan Terakhir (Monthly)"
+    },
+    "job_id": "f4ee54c525874031a0feece9e4c9eec0",
+    "quality": {
+      "completeness_score": 100.0,
+      "document_stats": {
+        "paragraph_count": 180,
+        "table_count": 20,
+        "visual_count": 6
+      },
+      "missing_checks": [],
+      "passed_checks": 15,
+      "summary": "15/15 checks passed. Completeness score 100.0%.",
+      "total_checks": 15,
+      "verification_status": "verified",
+      "verified_complete": true
+    },
+    "queue_wait_seconds": 1.51,
+    "started_at": "2026-03-30T12:56:05.547Z",
+    "status": "completed",
+    "total_elapsed_seconds": 2.63,
+    "updated_at": "2026-03-30T12:56:06.669Z"
   }
 }
