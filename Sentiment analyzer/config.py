@@ -41,6 +41,127 @@ SMART_SUGGESTIONS = [
     "Tekankan pembelajaran organisasi, perubahan cara kerja, dan kebutuhan capability lintas fungsi."
 ]
 
+SENTIMENT_OPTIONS = [
+    {"id": "all", "label": "Semua Sentimen"},
+    {"id": "positive", "label": "Positif"},
+    {"id": "neutral", "label": "Netral"},
+    {"id": "negative", "label": "Negatif"},
+]
+
+DEFAULT_SCORE_ENGINE = "experience_index"
+SCORE_ENGINE_OPTIONS = [
+    {
+        "id": "learning_score",
+        "label": "Learning Score",
+        "description": "Menekankan kualitas pembelajaran, instruktur, materi, dan outcome belajar.",
+    },
+    {
+        "id": "service_score",
+        "label": "Service Score",
+        "description": "Menekankan responsiveness, koordinasi, SLA, dan kualitas layanan secara umum.",
+    },
+    {
+        "id": "facility_score",
+        "label": "Facility Score",
+        "description": "Menekankan fasilitas, ruang, jaringan, dan kesiapan operasional pendukung.",
+    },
+    {
+        "id": "experience_index",
+        "label": "Experience Index",
+        "description": "Membaca pengalaman pelanggan secara menyeluruh lintas touchpoint dan tema.",
+    },
+]
+
+SCORE_ENGINE_PROFILES = {
+    "learning_score": {
+        "label": "Learning Score",
+        "summary_label": "kualitas pembelajaran",
+        "narrative_focus": "kualitas instruktur, relevansi materi, kenyamanan belajar, dan hasil yang dirasakan peserta",
+        "forecast_label": "Learning Score",
+        "theme_weights": {
+            "instructor": 1.5,
+            "material": 1.4,
+            "outcome": 1.25,
+            "schedule": 0.9,
+            "communication": 0.8,
+            "facility": 0.7,
+            "responsiveness": 0.6,
+        },
+    },
+    "service_score": {
+        "label": "Service Score",
+        "summary_label": "kualitas layanan",
+        "narrative_focus": "responsiveness, koordinasi, ketepatan tindak lanjut, dan kualitas eksekusi layanan",
+        "forecast_label": "Service Score",
+        "theme_weights": {
+            "responsiveness": 1.45,
+            "communication": 1.3,
+            "schedule": 1.15,
+            "outcome": 0.9,
+            "instructor": 0.8,
+            "material": 0.75,
+            "facility": 0.65,
+        },
+    },
+    "facility_score": {
+        "label": "Facility Score",
+        "summary_label": "kesiapan fasilitas",
+        "narrative_focus": "fasilitas kelas, jaringan, ruang, sarana pendukung, dan kesiapan operasional sebelum delivery",
+        "forecast_label": "Facility Score",
+        "theme_weights": {
+            "facility": 1.65,
+            "schedule": 1.1,
+            "communication": 0.8,
+            "responsiveness": 0.7,
+            "instructor": 0.55,
+            "material": 0.45,
+            "outcome": 0.45,
+        },
+    },
+    "experience_index": {
+        "label": "Experience Index",
+        "summary_label": "pengalaman pelanggan end-to-end",
+        "narrative_focus": "keseluruhan customer journey, dari koordinasi awal hingga outcome pasca-layanan",
+        "forecast_label": "Experience Index",
+        "theme_weights": {
+            "responsiveness": 1.1,
+            "communication": 1.1,
+            "schedule": 1.0,
+            "facility": 1.0,
+            "instructor": 1.15,
+            "material": 1.1,
+            "outcome": 1.2,
+        },
+    },
+}
+
+CUSTOMER_JOURNEY_STAGES = [
+    {
+        "id": "pre_engagement",
+        "label": "Pra-Layanan dan Ekspektasi",
+        "theme_ids": ["communication", "responsiveness"],
+        "description": "Tahap awal saat pelanggan membangun ekspektasi, meminta informasi, dan menilai kejelasan respons awal.",
+    },
+    {
+        "id": "preparation_readiness",
+        "label": "Persiapan dan Kesiapan Delivery",
+        "theme_ids": ["schedule", "facility", "communication"],
+        "description": "Tahap penyiapan jadwal, administrasi, ruang, perangkat, dan koordinasi operasional sebelum layanan berjalan.",
+    },
+    {
+        "id": "delivery_experience",
+        "label": "Pelaksanaan Layanan",
+        "theme_ids": ["instructor", "material", "facility", "schedule"],
+        "description": "Tahap inti ketika pelanggan merasakan kualitas fasilitator, materi, ritme sesi, dan kenyamanan eksekusi layanan.",
+    },
+    {
+        "id": "follow_up_outcome",
+        "label": "Tindak Lanjut dan Outcome",
+        "theme_ids": ["outcome", "responsiveness", "communication"],
+        "description": "Tahap pasca-layanan saat pelanggan menilai manfaat, penutupan isu, dan keberlanjutan tindak lanjut.",
+    },
+]
+
 OSINT_SEARCH_REGION = "id"
 OSINT_SEARCH_LANGUAGE = "id"
 OSINT_RESULTS_PER_QUERY = 5

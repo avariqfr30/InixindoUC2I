@@ -107,11 +107,29 @@ ollama pull bge-m3:latest
 
 ### 5. Sumber Data Internal
 Pada `APP_MODE=demo`, letakkan file `db.csv` di folder `Sentiment analyzer/data/`. Sistem menggunakan *mapping* dinamis, namun untuk hasil terbaik, pastikan strukturnya seperti ini:
+* `Record ID`
+* `Sumber Feedback`
+* `Kanal Feedback`
+* `Tanggal Feedback`
 * `Tipe Stakeholder` (Contoh: Instansi Pemerintah, BUMN, Personal)
 * `Layanan` (Contoh: Pelatihan IT Security, Konsultasi Masterplan)
 * `Rentang Waktu` (Contoh: 1 Bulan Terakhir (Monthly))
 * `Rating` (1-5)
 * `Komentar` (Teks masukan bebas)
+
+Untuk kebutuhan simulasi internal yang lebih stabil, gunakan reseed utility berikut agar dataset demo selalu terisi dengan data sintetis yang lebih lengkap dan konsisten:
+
+```bash
+cd "Sentiment analyzer"
+python3 seed_demo_data.py
+```
+
+Jika ingin otomatis melakukan reseed sebelum internal stress test dijalankan:
+
+```bash
+cd "Sentiment analyzer"
+APP_MODE=demo RESEED_DEMO_DATA=1 ./run_pilot.sh
+```
 
 Pada `APP_MODE=hybrid`, aplikasi akan mengambil data internal dari API perusahaan. Endpoint tersebut minimal perlu mengembalikan data feedback dalam format JSON yang memuat padanan untuk kolom berikut:
 * `Tipe Stakeholder`
