@@ -4,7 +4,7 @@ import logging
 import os
 import re
 import textwrap
-from datetime import datetime
+from datetime import datetime, timedelta
 from urllib.parse import urlparse
 
 import chromadb
@@ -65,9 +65,12 @@ CANONICAL_INTERNAL_COLUMNS = (
     "Tanggal Feedback",
     "Tipe Stakeholder",
     "Layanan",
+    "Lokasi",
+    "Tipe Instruktur",
     "Rentang Waktu",
     "Rating",
     "Komentar",
+    "Customer Journey Hint",
 )
 
 COLUMN_ALIASES = {
@@ -118,6 +121,23 @@ COLUMN_ALIASES = {
         "offering",
         "service_type",
     ),
+    "Lokasi": (
+        "lokasi",
+        "location",
+        "training_location",
+        "city",
+        "kota",
+        "venue_location",
+    ),
+    "Tipe Instruktur": (
+        "tipe instruktur",
+        "instructor_type",
+        "trainer_type",
+        "coach_type",
+        "internal_ol",
+        "internal_or_ol",
+        "trainer_origin",
+    ),
     "Rentang Waktu": (
         "rentang waktu",
         "timeframe",
@@ -141,6 +161,13 @@ COLUMN_ALIASES = {
         "notes",
         "complaint_text",
         "customer_comment",
+    ),
+    "Customer Journey Hint": (
+        "customer_journey_hint",
+        "journey_hint",
+        "journey_stage",
+        "customer_journey_stage",
+        "touchpoint_stage",
     ),
 }
 
@@ -657,6 +684,9 @@ class FeedbackAnalyticsEngine:
 
     def __init__(self, dataframe):
         self.full_df = dataframe.copy() if dataframe is not None else pd.DataFrame()
+        for column_name in CANONICAL_INTERNAL_COLUMNS:
+            if column_name not in self.full_df.columns:
+                self.full_df[column_name] = ""
         self.full_df = self.full_df.fillna("")
         if not self.full_df.empty:
             self.full_df["Rating Numeric"] = pd.to_numeric(
@@ -696,6 +726,15 @@ class FeedbackAnalyticsEngine:
         filtered = series.fillna("").astype(str).str.strip()
         filtered = filtered[filtered != ""]
         return filtered.value_counts().head(limit)
+
+    @staticmethod
+    def _column_series(dataframe, column_name):
+        if dataframe is None or column_name not in dataframe.columns:
+            return pd.Series(dtype="object")
+        return dataframe[column_name]
+
+    def _series_counts_for_column(self, dataframe, column_name, limit=5):
+        return self._series_counts(self._column_series(dataframe, column_name), limit=limit)
 
     @staticmethod
     def _label_from_options(options, option_id, fallback):
@@ -761,6 +800,59 @@ class FeedbackAnalyticsEngine:
             return "1-2 bulan ke depan"
         return "1-2 periode evaluasi berikutnya"
 
+    @staticmethod
+    def _format_month_year(value):
+        month_names = [
+            "Januari",
+            "Februari",
+            "Maret",
+            "April",
+            "Mei",
+            "Juni",
+            "Juli",
+            "Agustus",
+            "September",
+            "Oktober",
+            "November",
+            "Desember",
+        ]
+        return f"{month_names[value.month - 1]} {value.year}"
+
+    def _forecast_calendar_reference(self, timeframe):
+        now = datetime.now()
+        normalized = str(timeframe or "").lower()
+
+        if "minggu" in normalized or "weekly" in normalized:
+            start = now + timedelta(days=7)
+            end = now + timedelta(days=14)
+            return f"sekitar {self._format_month_year(start)} sampai {self._format_month_year(end)}"
+
+        if "bulan" in normalized or "monthly" in normalized:
+            start = now + timedelta(days=30)
+            end = now + timedelta(days=60)
+            if start.year == end.year and start.month == end.month:
+                return f"sekitar {self._format_month_year(start)}"
+            return f"sekitar {self._format_month_year(start)} sampai {self._format_month_year(end)}"
+
+        if "semester" in normalized or "6 bulan" in normalized or "biannual" in normalized:
+            future = now + timedelta(days=180)
+            return f"sekitar semester berikutnya pada {future.year}"
+
+        if "tahun" in normalized or "yearly" in normalized:
+            return f"pada tahun {now.year + 1}"
+
+        future = now + timedelta(days=60)
+        return f"sekitar {self._format_month_year(future)}"
+
+    def _chart_pairs(self, series_counts, total_rows=None, limit=5, use_percentage=False):
+        pairs = []
+        for label, count in series_counts.head(limit).items():
+            value = count
+            if use_percentage and total_rows:
+                value = self._safe_percentage(count, total_rows)
+            pairs.append(f"{label},{value}")
+        return "; ".join(pairs)
+
     def _filter_timeframe(self, timeframe):
         return self._filter_view(timeframe)
 
@@ -796,6 +888,7 @@ class FeedbackAnalyticsEngine:
             return enriched
 
         keyword_map = self._customer_journey_keywords()
+        valid_stage_labels = {stage["label"] for stage in CUSTOMER_JOURNEY_STAGES}
         default_stage = next(
             (
                 stage["label"]
@@ -817,7 +910,20 @@ class FeedbackAnalyticsEngine:
             return best_stage
 
         enriched = dataframe.copy()
-        enriched["Customer Journey Stage"] = enriched["Komentar Lower"].apply(classify_stage)
+        fallback_stages = enriched["Komentar Lower"].apply(classify_stage)
+        if "Customer Journey Hint" in enriched.columns:
+            hinted_stage = (
+                enriched["Customer Journey Hint"]
+                .fillna("")
+                .astype(str)
+                .str.strip()
+            )
+            enriched["Customer Journey Stage"] = hinted_stage.where(
+                hinted_stage.isin(valid_stage_labels),
+                fallback_stages,
+            )
+        else:
+            enriched["Customer Journey Stage"] = fallback_stages
         return enriched
 
     def _customer_journey_rows(self, dataframe):
@@ -978,6 +1084,8 @@ class FeedbackAnalyticsEngine:
         score_metrics = self._score_engine_metrics(timeframe_df, normalized_score_engine)
         dominant_journey = journey_rows[0] if journey_rows else None
         dominant_theme = score_metrics["theme_rows"][0] if score_metrics["theme_rows"] else None
+        location_counts = self._series_counts_for_column(timeframe_df, "Lokasi", limit=5)
+        instructor_type_counts = self._series_counts_for_column(timeframe_df, "Tipe Instruktur", limit=5)
 
         return {
             "timeframe": timeframe,
@@ -995,6 +1103,8 @@ class FeedbackAnalyticsEngine:
             "journey_rows": journey_rows,
             "dominant_journey": dominant_journey,
             "dominant_theme": dominant_theme,
+            "location_counts": location_counts,
+            "instructor_type_counts": instructor_type_counts,
             "scope_text": self._analysis_scope_text(
                 timeframe,
                 normalized_sentiment,
@@ -1062,7 +1172,7 @@ class FeedbackAnalyticsEngine:
         return lines or ["- Tidak ada kutipan yang cukup untuk periode ini."]
 
     def _group_risk(self, dataframe, column_name, limit=3):
-        if dataframe.empty:
+        if dataframe.empty or column_name not in dataframe.columns:
             return []
 
         rows = []
@@ -1257,19 +1367,20 @@ class FeedbackAnalyticsEngine:
         metrics = context["score_metrics"]
         score_label = context["score_profile"]["forecast_label"]
         horizon_text = context["horizon_text"]
+        calendar_reference = self._forecast_calendar_reference(context["timeframe"])
 
         if metrics["direction"] == "turun":
             return (
                 f"{score_label} diproyeksikan turun dari {metrics['current_score']} menjadi sekitar "
-                f"{metrics['projected_score']} dalam {horizon_text} apabila pola saat ini berlanjut."
+                f"{metrics['projected_score']} dalam {horizon_text}, atau {calendar_reference}, apabila pola saat ini berlanjut."
             )
         if metrics["direction"] == "naik":
             return (
                 f"{score_label} diproyeksikan naik dari {metrics['current_score']} menjadi sekitar "
-                f"{metrics['projected_score']} dalam {horizon_text} jika momentum yang ada dapat dipertahankan."
+                f"{metrics['projected_score']} dalam {horizon_text}, atau {calendar_reference}, jika momentum yang ada dapat dipertahankan."
             )
         return (
-            f"{score_label} diproyeksikan relatif stabil di kisaran {metrics['projected_score']} dalam {horizon_text}, "
+            f"{score_label} diproyeksikan relatif stabil di kisaran {metrics['projected_score']} dalam {horizon_text}, atau {calendar_reference}, "
             "namun tetap perlu dipantau agar tidak bergeser ketika volume feedback bertambah."
         )
 
@@ -1304,6 +1415,8 @@ class FeedbackAnalyticsEngine:
         score_metrics = context["score_metrics"]
         journey_rows = context["journey_rows"]
         scope_text = context["scope_text"]
+        location_counts = context["location_counts"]
+        instructor_type_counts = context["instructor_type_counts"]
 
         cleaned_notes = notes.strip().rstrip(".!?")
         focus_line = (
@@ -1355,11 +1468,27 @@ class FeedbackAnalyticsEngine:
             ],
         )
 
-        chart_line = (
-            "[[CHART: Distribusi Sentimen Feedback | Persentase | "
+        sentiment_chart_line = (
+            "[[PIE: Komposisi Sentimen Feedback | "
             f"Positif,{positive_share}; "
             f"Netral,{neutral_share}; "
             f"Negatif,{negative_share}]]"
+        )
+        journey_chart_line = (
+            "[[CHART: Titik Customer Journey dengan Sinyal Negatif | Persentase Negatif | "
+            + self._chart_pairs(
+                pd.Series(
+                    {
+                        item["stage_label"]: item["negative_share"]
+                        for item in journey_rows
+                    }
+                ),
+                use_percentage=False,
+                limit=4,
+            )
+            + "]]"
+            if journey_rows
+            else ""
         )
         sentiment_table = self._markdown_table(
             ["Kategori Sentimen", "Jumlah", "Persentase"],
@@ -1377,6 +1506,33 @@ class FeedbackAnalyticsEngine:
             ["Layanan", "Jumlah Feedback", "Persentase"],
             self._distribution_rows(service_counts, total_rows, limit=5),
         )
+        location_table = self._markdown_table(
+            ["Lokasi Pelatihan", "Jumlah Feedback", "Persentase"],
+            self._distribution_rows(location_counts, total_rows, limit=5),
+        )
+        instructor_type_table = self._markdown_table(
+            ["Tipe Instruktur", "Jumlah Feedback", "Persentase"],
+            self._distribution_rows(instructor_type_counts, total_rows, limit=5),
+        )
+        location_pie_line = (
+            "[[PIE: Sebaran Lokasi Pelatihan | "
+            + self._chart_pairs(location_counts, total_rows=total_rows, limit=5, use_percentage=True)
+            + "]]"
+            if not location_counts.empty
+            else ""
+        )
+        instructor_pie_line = (
+            "[[PIE: Komposisi Instruktur Internal vs OL | "
+            + self._chart_pairs(
+                instructor_type_counts,
+                total_rows=total_rows,
+                limit=5,
+                use_percentage=True,
+            )
+            + "]]"
+            if not instructor_type_counts.empty
+            else ""
+        )
         source_lines = [
             f"- Sumber utama: {', '.join(top_sources[:3])}"
         ]
@@ -1392,6 +1548,13 @@ class FeedbackAnalyticsEngine:
             f"Pada saat yang sama, kanal yang tercatat masih didominasi oleh {', '.join(top_channels[:3])}. "
             f"Informasi ini perlu dibaca sebagai indikator awal representativitas data: semakin luas sumber dan kanal, "
             f"semakin kuat dasar analisis untuk pengambilan keputusan lintas fungsi."
+        )
+        delivery_context_paragraph = (
+            f"Lokasi pelatihan pada cakupan terpilih paling banyak berlangsung di "
+            f"{self._format_count_summary(location_counts, limit=3)}. "
+            f"Dari sisi tipe instruktur, komposisi saat ini didominasi oleh "
+            f"{self._format_count_summary(instructor_type_counts, limit=3)}. "
+            "Informasi ini penting karena performa layanan sering kali dipengaruhi oleh kesiapan lokasi, format delivery, dan model pengajar yang dipakai."
         )
         journey_table = self._markdown_table(
             [
@@ -1444,7 +1607,9 @@ class FeedbackAnalyticsEngine:
                 "",
                 sentiment_table,
                 "",
-                chart_line,
+                "Visual berikut memperlihatkan distribusi sentimen untuk kombinasi input yang dipilih, sehingga pembaca dapat segera melihat apakah pengalaman pelanggan lebih banyak berada di area positif, netral, atau negatif.",
+                "",
+                sentiment_chart_line,
                 "",
                 "## 1.3 Distribusi Stakeholder, Layanan, dan Kanal/Sumber",
                 distribution_paragraph,
@@ -1459,6 +1624,21 @@ class FeedbackAnalyticsEngine:
                 dominant_journey_text,
                 "",
                 journey_table,
+                "",
+                "Visual berikut membantu melihat tahapan customer journey mana yang paling banyak menampung sinyal negatif pada input yang dipilih.",
+                "",
+                journey_chart_line,
+                "",
+                "### Lokasi pelatihan dan tipe instruktur",
+                delivery_context_paragraph,
+                "",
+                location_table,
+                "",
+                location_pie_line,
+                "",
+                instructor_type_table,
+                "",
+                instructor_pie_line,
                 "",
                 "### Cakupan sumber dan kanal",
                 source_paragraph,
@@ -1520,6 +1700,8 @@ class FeedbackAnalyticsEngine:
         positive_quotes = self._quote_lines(timeframe_df[timeframe_df["Sentiment Label"] == "positive"], limit=2)
 
         service_risks = self._group_risk(timeframe_df, "Layanan", limit=5)
+        location_risks = self._group_risk(timeframe_df, "Lokasi", limit=3)
+        instructor_risks = self._group_risk(timeframe_df, "Tipe Instruktur", limit=3)
         process_gap_lines = [
             f"- {item['label']}: rata-rata rating {item['average_rating']}, "
             f"proporsi negatif {item['negative_ratio']}%, volume {item['volume']}."
@@ -1614,6 +1796,35 @@ class FeedbackAnalyticsEngine:
                 for item in service_risks
             ],
         )
+        location_instructor_table = self._markdown_table(
+            ["Area Analisis", "Label", "Rata-rata Rating", "Proporsi Negatif", "Volume"],
+            [
+                [
+                    "Lokasi",
+                    item["label"],
+                    item["average_rating"],
+                    f"{item['negative_ratio']}%",
+                    item["volume"],
+                ]
+                for item in location_risks
+            ]
+            + [
+                [
+                    "Tipe Instruktur",
+                    item["label"],
+                    item["average_rating"],
+                    f"{item['negative_ratio']}%",
+                    item["volume"],
+                ]
+                for item in instructor_risks
+            ],
+        )
+        operational_context = (
+            f"Dari sisi lokasi dan model instruktur, area yang perlu dicermati lebih dekat adalah "
+            f"{location_risks[0]['label'] if location_risks else 'lokasi yang belum terpetakan'} serta komposisi instruktur "
+            f"{instructor_risks[0]['label'] if instructor_risks else 'yang belum terpetakan'}. "
+            "Pembacaan ini membantu membedakan apakah masalah lebih banyak terkait kesiapan tempat, model pengajar, atau memang tema layanan itu sendiri."
+        )
 
         return "\n".join(
             [
@@ -1658,6 +1869,11 @@ class FeedbackAnalyticsEngine:
                 service_risk_table,
                 "",
                 *process_gap_lines,
+                "",
+                "### Konteks lokasi pelatihan dan tipe instruktur",
+                operational_context,
+                "",
+                location_instructor_table,
             ]
         )
 
@@ -1670,6 +1886,8 @@ class FeedbackAnalyticsEngine:
 
         service_risks = self._group_risk(timeframe_df, "Layanan", limit=5)
         stakeholder_risks = self._group_risk(timeframe_df, "Tipe Stakeholder", limit=5)
+        location_risks = self._group_risk(timeframe_df, "Lokasi", limit=3)
+        instructor_risks = self._group_risk(timeframe_df, "Tipe Instruktur", limit=3)
         journey_rows = context["journey_rows"]
         score_metrics = context["score_metrics"]
 
@@ -1692,6 +1910,18 @@ class FeedbackAnalyticsEngine:
             )
         if not segment_lines:
             segment_lines = ["- Tidak ada segmen pelanggan yang cukup dominan untuk diproyeksikan."]
+
+        operational_lines = []
+        for item in location_risks:
+            operational_lines.append(
+                f"- Lokasi {item['label']} perlu dipantau karena proporsi sinyal negatifnya {item['negative_ratio']}% dengan rating rata-rata {item['average_rating']}."
+            )
+        for item in instructor_risks:
+            operational_lines.append(
+                f"- Komposisi instruktur {item['label']} juga perlu dibaca karena saat ini mencatat proporsi sinyal negatif {item['negative_ratio']}%."
+            )
+        if not operational_lines:
+            operational_lines = ["- Belum ada sinyal lokasi atau tipe instruktur yang cukup kuat untuk diproyeksikan."]
 
         journey_lines = []
         for item in journey_rows[:3]:
@@ -1730,7 +1960,7 @@ class FeedbackAnalyticsEngine:
             f"{'Segmen yang paling perlu dipantau adalah ' + top_segment_risk['label'] + '.' if top_segment_risk else 'Belum ada segmen dengan paparan risiko yang dominan.'}"
         )
         score_projection_table = self._markdown_table(
-            ["Score Engine", "Nilai Saat Ini", "Arah Proyeksi", "Nilai Proyeksi", "Horizon"],
+            ["Score Engine", "Nilai Saat Ini", "Arah Proyeksi", "Nilai Proyeksi", "Horizon", "Estimasi Waktu"],
             [
                 [
                     context["score_profile"]["label"],
@@ -1738,6 +1968,7 @@ class FeedbackAnalyticsEngine:
                     score_metrics["direction"].title(),
                     score_metrics["projected_score"],
                     context["horizon_text"],
+                    self._forecast_calendar_reference(context["timeframe"]),
                 ]
             ],
         )
@@ -1780,6 +2011,34 @@ class FeedbackAnalyticsEngine:
                 for item in journey_rows
             ],
         )
+        operational_projection_table = self._markdown_table(
+            ["Area Operasional", "Label", "Level Risiko", "Rata-rata Rating", "Proporsi Negatif"],
+            [
+                [
+                    "Lokasi",
+                    item["label"],
+                    self._risk_severity(item["risk_score"]).title(),
+                    item["average_rating"],
+                    f"{item['negative_ratio']}%",
+                ]
+                for item in location_risks
+            ]
+            + [
+                [
+                    "Tipe Instruktur",
+                    item["label"],
+                    self._risk_severity(item["risk_score"]).title(),
+                    item["average_rating"],
+                    f"{item['negative_ratio']}%",
+                ]
+                for item in instructor_risks
+            ],
+        )
+        projection_chart_line = (
+            "[[CHART: Perbandingan Score Saat Ini vs Proyeksi | Skor | "
+            f"Saat Ini,{score_metrics['current_score']}; "
+            f"Proyeksi,{score_metrics['projected_score']}]]"
+        )
         osint_table = self._markdown_table(
             ["Sinyal Eksternal", "Sumber", "Tanggal"],
             [
@@ -1801,6 +2060,8 @@ class FeedbackAnalyticsEngine:
                 "",
                 score_projection_table,
                 "",
+                projection_chart_line,
+                "",
                 service_risk_table,
                 "",
                 *risk_lines,
@@ -1820,6 +2081,11 @@ class FeedbackAnalyticsEngine:
                 journey_projection_table,
                 "",
                 *journey_lines,
+                "",
+                "### Area operasional yang perlu diawasi",
+                operational_projection_table,
+                "",
+                *operational_lines,
                 "",
                 "## 3.3 Tren Eksternal yang Berpotensi Memperbesar Risiko",
                 (
@@ -2267,6 +2533,8 @@ class FeedbackAnalyticsEngine:
         focus_text = notes.strip() if notes and notes.strip() else "Tidak ada fokus tambahan dari pengguna."
         dominant_journey = context["dominant_journey"]
         score_metrics = context["score_metrics"]
+        top_location = self._series_counts_for_column(timeframe_df, "Lokasi", limit=1)
+        top_instructor_type = self._series_counts_for_column(timeframe_df, "Tipe Instruktur", limit=1)
 
         risk_statement = (
             f"- Risiko teratas saat ini ada pada layanan {top_risk[0]['label']} "
@@ -2299,6 +2567,8 @@ class FeedbackAnalyticsEngine:
                 ["Proporsi sentimen negatif", f"{negative_share}%"],
                 ["Layanan dengan volume terbesar", self._primary_label(top_service, "Belum terpetakan")],
                 ["Segmen dengan volume terbesar", self._primary_label(top_stakeholder, "Belum terpetakan")],
+                ["Lokasi pelatihan dominan", self._primary_label(top_location, "Belum terpetakan")],
+                ["Tipe instruktur dominan", self._primary_label(top_instructor_type, "Belum terpetakan")],
                 ["Kelengkapan field inti", f"{governance['completeness_pct']}%"],
             ],
         )
@@ -2338,6 +2608,8 @@ class FeedbackAnalyticsEngine:
                 f"- Rata-rata rating periode ini: {round(avg_rating, 2) if pd.notna(avg_rating) else 0.0} dari 5.",
                 f"- Volume layanan terbesar: {top_service.index[0] if not top_service.empty else 'Belum terpetakan'}.",
                 f"- Segmen dengan volume terbesar: {top_stakeholder.index[0] if not top_stakeholder.empty else 'Belum terpetakan'}.",
+                f"- Lokasi pelatihan dominan: {top_location.index[0] if not top_location.empty else 'Belum terpetakan'}.",
+                f"- Tipe instruktur dominan: {top_instructor_type.index[0] if not top_instructor_type.empty else 'Belum terpetakan'}.",
                 f"- Proporsi sentimen negatif: {negative_share}%.",
                 f"- {context['score_profile']['label']} saat ini: {score_metrics['current_score']} dengan proyeksi {score_metrics['direction']} ke {score_metrics['projected_score']}.",
                 (
@@ -2453,6 +2725,20 @@ class ChartEngine:
         return tuple(channel / 255 for channel in theme_color)
 
     @staticmethod
+    def _parse_chart_points(raw_data):
+        labels, values = [], []
+        for pair in raw_data.split(";"):
+            if "," not in pair:
+                continue
+            label, value = pair.split(",", maxsplit=1)
+            cleaned_value = re.sub(r"[^\d.]", "", value)
+            if not cleaned_value:
+                continue
+            labels.append(label.strip())
+            values.append(float(cleaned_value))
+        return labels, values
+
+    @staticmethod
     def create_bar_chart(data_str, theme_color):
         try:
             parts = data_str.split("|")
@@ -2465,17 +2751,7 @@ class ChartEngine:
                     data_str,
                 )
 
-            labels, values = [], []
-            for pair in raw_data.split(";"):
-                if "," not in pair:
-                    continue
-                label, value = pair.split(",", maxsplit=1)
-                cleaned_value = re.sub(r"[^\d.]", "", value)
-                if not cleaned_value:
-                    continue
-                labels.append(label.strip())
-                values.append(float(cleaned_value))
-
+            labels, values = ChartEngine._parse_chart_points(raw_data)
             if not labels:
                 return None
 
@@ -2499,6 +2775,48 @@ class ChartEngine:
             return image_stream
         except Exception as exc:
             logger.warning("Gagal membuat bar chart: %s", exc)
+            return None
+
+    @staticmethod
+    def create_pie_chart(data_str, theme_color):
+        try:
+            parts = data_str.split("|")
+            if len(parts) == 2:
+                title_str, raw_data = [part.strip() for part in parts]
+            else:
+                title_str, raw_data = ("Distribusi", data_str)
+
+            labels, values = ChartEngine._parse_chart_points(raw_data)
+            if not labels:
+                return None
+
+            base_color = ChartEngine._get_plt_color(theme_color)
+            palette = [
+                base_color,
+                (0.85, 0.35, 0.25),
+                (0.20, 0.45, 0.70),
+                (0.35, 0.65, 0.45),
+                (0.75, 0.60, 0.25),
+            ]
+            fig, axis = plt.subplots(figsize=(6.2, 4.8))
+            axis.pie(
+                values,
+                labels=labels,
+                autopct="%1.1f%%",
+                startangle=90,
+                colors=palette[: len(labels)],
+                textprops={"fontsize": 9},
+            )
+            axis.set_title(title_str, fontsize=12, fontweight="bold", pad=16)
+            axis.axis("equal")
+
+            image_stream = io.BytesIO()
+            plt.savefig(image_stream, format="png", bbox_inches="tight", dpi=150)
+            plt.close(fig)
+            image_stream.seek(0)
+            return image_stream
+        except Exception as exc:
+            logger.warning("Gagal membuat pie chart: %s", exc)
             return None
 
     @staticmethod
@@ -2691,6 +3009,13 @@ class DocumentBuilder:
                 image = ChartEngine.create_bar_chart(chart_data, theme_color)
                 if image:
                     doc.add_paragraph().add_run().add_picture(image, width=Inches(5.5))
+                continue
+
+            if stripped_line.startswith("[[PIE:") and stripped_line.endswith("]]"):
+                pie_data = stripped_line.replace("[[PIE:", "").replace("]]", "").strip()
+                image = ChartEngine.create_pie_chart(pie_data, theme_color)
+                if image:
+                    doc.add_paragraph().add_run().add_picture(image, width=Inches(5.4))
                 continue
 
             if stripped_line.startswith("[[FLOW:") and stripped_line.endswith("]]"):

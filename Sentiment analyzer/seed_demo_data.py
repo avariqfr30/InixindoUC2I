@@ -22,56 +22,56 @@ SEGMENT_SPECS = [
     {
         "label": "Instansi Pemerintah (Gov)",
         "short_label": "instansi pemerintah",
+        "locations": ["Yogyakarta", "Jakarta"],
         "services": [
             "Pelatihan IT Security",
             "Audit SPBE",
             "Workshop Tata Kelola Data",
         ],
-        "location": "Yogyakarta",
         "owner": "Public Sector Account Lead",
     },
     {
         "label": "BUMN / Corporate",
         "short_label": "BUMN / corporate",
+        "locations": ["Jakarta", "Bandung", "Surabaya"],
         "services": [
             "Konsultasi IT Masterplan",
             "Pelatihan Cloud Native (AWS)",
             "Workshop AI Adoption Readiness",
         ],
-        "location": "Jakarta",
         "owner": "Corporate Delivery Lead",
     },
     {
         "label": "Mahasiswa / Personal",
         "short_label": "personal",
+        "locations": ["Yogyakarta", "Online Live"],
         "services": [
             "Sertifikasi Cisco (CCNA)",
             "Pelatihan Web Dev",
             "Bootcamp Data Science",
         ],
-        "location": "Yogyakarta",
         "owner": "Retail Program Coordinator",
     },
     {
         "label": "Sekolah / Universitas",
         "short_label": "sekolah / universitas",
+        "locations": ["Semarang", "Yogyakarta"],
         "services": [
             "Program Magang / Kunjungan Industri",
             "Pelatihan Dasar Cybersecurity",
             "Bootcamp Data untuk Dosen",
         ],
-        "location": "Semarang",
         "owner": "Education Partnership Manager",
     },
     {
         "label": "Vendor / Partner",
         "short_label": "vendor / partner",
+        "locations": ["Jakarta", "Online Live"],
         "services": [
             "Kerja Sama Event",
             "Enablement Partner Teknologi",
             "Technical Sales Workshop",
         ],
-        "location": "Jakarta",
         "owner": "Alliance Manager",
     },
 ]
@@ -254,6 +254,14 @@ def build_feedback_records():
                 feedback_date = today - timedelta(days=age_days)
                 channel = theme["channels"][(segment_index + timeframe_index) % len(theme["channels"])]
                 comment_template = theme[sentiment]
+                location = segment["locations"][
+                    (segment_index + timeframe_index + theme_index) % len(segment["locations"])
+                ]
+                instructor_type = (
+                    "Internal"
+                    if (segment_index + timeframe_index + theme_index) % 3 != 0
+                    else "OL"
+                )
 
                 records.append(
                     {
@@ -272,7 +280,8 @@ def build_feedback_records():
                         "Tema Feedback": theme["id"],
                         "Customer Journey Hint": theme["journey"],
                         "PIC Layanan": segment["owner"],
-                        "Lokasi": segment["location"],
+                        "Lokasi": location,
+                        "Tipe Instruktur": instructor_type,
                     }
                 )
                 record_counter += 1
@@ -294,7 +303,8 @@ def build_feedback_records():
                     "Tema Feedback": "cross_theme",
                     "Customer Journey Hint": "Lintas Tahap",
                     "PIC Layanan": segment["owner"],
-                    "Lokasi": segment["location"],
+                    "Lokasi": segment["locations"][timeframe_index % len(segment["locations"])],
+                    "Tipe Instruktur": "Internal" if timeframe_index % 2 == 0 else "OL",
                 }
             )
             record_counter += 1
