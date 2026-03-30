@@ -1,8 +1,11 @@
 import concurrent.futures
+import hashlib
 import io
+import json
 import logging
 import os
 import re
+import threading
 import textwrap
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
@@ -43,6 +46,8 @@ from config import (
     INTERNAL_DATA_MODE,
     OLLAMA_HOST,
     OSINT_BASE_QUERIES,
+    OSINT_CACHE_PATH,
+    OSINT_CACHE_TTL_SECONDS,
     OSINT_MAX_SIGNALS,
     OSINT_RECENCY,
     OSINT_RESULTS_PER_QUERY,
@@ -472,6 +477,96 @@ class Researcher:
         "YOUR_SERPER_API_KEY",
         "masukkan_api_key_serper_anda_disini",
     }
+    CACHE_PATH = OSINT_CACHE_PATH
+    CACHE_TTL_SECONDS = OSINT_CACHE_TTL_SECONDS
+    _cache_lock = threading.Lock()
+    _cache_payload = None
+
+    @classmethod
+    def _load_cache(cls):
+        with cls._cache_lock:
+            if cls._cache_payload is not None:
+                return cls._cache_payload
+
+            if not os.path.exists(cls.CACHE_PATH):
+                cls._cache_payload = {}
+                return cls._cache_payload
+
+            try:
+                with open(cls.CACHE_PATH, "r", encoding="utf-8") as handle:
+                    cls._cache_payload = json.load(handle)
+            except Exception as exc:
+                logger.warning("Failed to load OSINT cache: %s", exc)
+                cls._cache_payload = {}
+
+            return cls._cache_payload
+
+    @classmethod
+    def _persist_cache(cls):
+        os.makedirs(os.path.dirname(cls.CACHE_PATH), exist_ok=True)
+        temp_path = f"{cls.CACHE_PATH}.tmp"
+        with open(temp_path, "w", encoding="utf-8") as handle:
+            json.dump(cls._cache_payload or {}, handle, ensure_ascii=True, indent=2, sort_keys=True)
+        os.replace(temp_path, cls.CACHE_PATH)
+
+    @classmethod
+    def _cache_key(cls, queries):
+        payload = {
+            "queries": queries,
+            "max_results": OSINT_RESULTS_PER_QUERY,
+            "max_signals": OSINT_MAX_SIGNALS,
+            "language": OSINT_SEARCH_LANGUAGE,
+            "region": OSINT_SEARCH_REGION,
+            "recency": OSINT_RECENCY,
+        }
+        serialized = json.dumps(payload, ensure_ascii=True, sort_keys=True)
+        return hashlib.sha1(serialized.encode("utf-8")).hexdigest()
+
+    @classmethod
+    def _cache_entry(cls, cache_key):
+        cache_payload = cls._load_cache()
+        return cache_payload.get(cache_key)
+
+    @classmethod
+    def _cached_brief(cls, cache_key, allow_stale=False):
+        entry = cls._cache_entry(cache_key)
+        if not entry:
+            return None
+
+        cached_at = entry.get("cached_at")
+        brief = entry.get("brief")
+        if not cached_at or not brief:
+            return None
+
+        try:
+            cached_dt = datetime.fromisoformat(cached_at.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+
+        age_seconds = (datetime.utcnow() - cached_dt.replace(tzinfo=None)).total_seconds()
+        if allow_stale or age_seconds <= cls.CACHE_TTL_SECONDS:
+            return brief
+        return None
+
+    @classmethod
+    def _store_brief(cls, cache_key, brief):
+        with cls._cache_lock:
+            cache_payload = cls._cache_payload
+            if cache_payload is None:
+                if os.path.exists(cls.CACHE_PATH):
+                    try:
+                        with open(cls.CACHE_PATH, "r", encoding="utf-8") as handle:
+                            cache_payload = json.load(handle)
+                    except Exception:
+                        cache_payload = {}
+                else:
+                    cache_payload = {}
+            cache_payload[cache_key] = {
+                "cached_at": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+                "brief": brief,
+            }
+            cls._cache_payload = cache_payload
+            cls._persist_cache()
 
     @staticmethod
     def _is_enabled():
@@ -615,9 +710,6 @@ class Researcher:
 
     @staticmethod
     def get_macro_trends(timeframe, notes="", score_engine_label="Experience Index"):
-        if not Researcher._is_enabled():
-            return "Data OSINT eksternal tidak tersedia (SERPER_API_KEY belum diatur)."
-
         scope = timeframe or "periode terbaru"
         compact_notes = re.sub(r"\s+", " ", notes).strip()
         contextual_query = (
@@ -629,12 +721,32 @@ class Researcher:
         queries = [
             f"{query} {scope}" for query in OSINT_BASE_QUERIES
         ] + [contextual_query]
+        cache_key = Researcher._cache_key(queries)
 
-        findings = Researcher._run_query_batch(queries)
-        return Researcher._format_osint_brief(
-            findings,
-            "Sinyal OSINT Makro (Indonesia)",
-        )
+        cached_brief = Researcher._cached_brief(cache_key)
+        if cached_brief:
+            return cached_brief
+
+        if not Researcher._is_enabled():
+            stale_brief = Researcher._cached_brief(cache_key, allow_stale=True)
+            if stale_brief:
+                return stale_brief
+            return "Data OSINT eksternal tidak tersedia (SERPER_API_KEY belum diatur)."
+
+        try:
+            findings = Researcher._run_query_batch(queries)
+            brief = Researcher._format_osint_brief(
+                findings,
+                "Sinyal OSINT Makro (Indonesia)",
+            )
+            Researcher._store_brief(cache_key, brief)
+            return brief
+        except Exception as exc:
+            logger.warning("OSINT macro trends failed: %s", exc)
+            stale_brief = Researcher._cached_brief(cache_key, allow_stale=True)
+            if stale_brief:
+                return stale_brief
+            return "Tidak ada tren eksternal yang berhasil dimuat."
 
 class FeedbackAnalyticsEngine:
     THEME_LIBRARY = (

@@ -1,0 +1,230 @@
+{
+  "0c8a7cee78fd436b9128ed7488a2b151": {
+    "artifact_path": "/Users/avariqfr30/Documents/InixindoUC2I/Sentiment analyzer/data/generated_reports/0c8a7cee78fd436b9128ed7488a2b151.docx",
+    "artifact_size_bytes": 216736,
+    "completed_at": "2026-03-30T12:30:12Z",
+    "created_at": "2026-03-30T12:30:05Z",
+    "duration_seconds": 1.02,
+    "error": null,
+    "filename": "Inixindo_Feedback_Intelligence_Report_Service_Score_1_Bulan_Terakhir_(Monthly).docx",
+    "input": {
+      "score_engine": "service_score",
+      "segment": "all",
+      "sentiment": "all",
+      "timeframe": "1 Bulan Terakhir (Monthly)"
+    },
+    "job_id": "0c8a7cee78fd436b9128ed7488a2b151",
+    "started_at": "2026-03-30T12:30:11Z",
+    "status": "completed",
+    "updated_at": "2026-03-30T12:30:12Z"
+  },
+  "0ec242ae790c4c2e99c682f11e1ee482": {
+    "artifact_path": "/Users/avariqfr30/Documents/InixindoUC2I/Sentiment analyzer/data/generated_reports/0ec242ae790c4c2e99c682f11e1ee482.docx",
+    "artifact_size_bytes": 216807,
+    "completed_at": "2026-03-30T12:30:07Z",
+    "created_at": "2026-03-30T12:30:05Z",
+    "duration_seconds": 1.77,
+    "error": null,
+    "filename": "Inixindo_Feedback_Intelligence_Report_Facility_Score_1_Bulan_Terakhir_(Monthly).docx",
+    "input": {
+      "score_engine": "facility_score",
+      "segment": "all",
+      "sentiment": "all",
+      "timeframe": "1 Bulan Terakhir (Monthly)"
+    },
+    "job_id": "0ec242ae790c4c2e99c682f11e1ee482",
+    "started_at": "2026-03-30T12:30:05Z",
+    "status": "completed",
+    "updated_at": "2026-03-30T12:30:07Z"
+  },
+  "1da158a5d07d496ea787961692ab0c1b": {
+    "artifact_path": "/Users/avariqfr30/Documents/InixindoUC2I/Sentiment analyzer/data/generated_reports/1da158a5d07d496ea787961692ab0c1b.docx",
+    "artifact_size_bytes": 216738,
+    "completed_at": "2026-03-30T12:30:11Z",
+    "created_at": "2026-03-30T12:30:05Z",
+    "duration_seconds": 1.9,
+    "error": null,
+    "filename": "Inixindo_Feedback_Intelligence_Report_Service_Score_1_Bulan_Terakhir_(Monthly).docx",
+    "input": {
+      "score_engine": "service_score",
+      "segment": "all",
+      "sentiment": "all",
+      "timeframe": "1 Bulan Terakhir (Monthly)"
+    },
+    "job_id": "1da158a5d07d496ea787961692ab0c1b",
+    "started_at": "2026-03-30T12:30:09Z",
+    "status": "completed",
+    "updated_at": "2026-03-30T12:30:11Z"
+  },
+  "3b93c65c4fc9441fbeab1c70e1a5dc0e": {
+    "artifact_path": "/Users/avariqfr30/Documents/InixindoUC2I/Sentiment analyzer/data/generated_reports/3b93c65c4fc9441fbeab1c70e1a5dc0e.docx",
+    "artifact_size_bytes": 216724,
+    "completed_at": "2026-03-30T12:30:22Z",
+    "created_at": "2026-03-30T12:30:22Z",
+    "duration_seconds": 0.62,
+    "error": null,
+    "filename": "Inixindo_Feedback_Intelligence_Report_Service_Score_1_Bulan_Terakhir_(Monthly).docx",
+    "input": {
+      "score_engine": "service_score",
+      "segment": "all",
+      "sentiment": "all",
+      "timeframe": "1 Bulan Terakhir (Monthly)"
+    },
+    "job_id": "3b93c65c4fc9441fbeab1c70e1a5dc0e",
+    "started_at": "2026-03-30T12:30:22Z",
+    "status": "completed",
+    "updated_at": "2026-03-30T12:30:22Z"
+  },
+  "3e35a1ca08fb4bd8aac6c0c8c19f8cfb": {
+    "artifact_path": "/Users/avariqfr30/Documents/InixindoUC2I/Sentiment analyzer/data/generated_reports/3e35a1ca08fb4bd8aac6c0c8c19f8cfb.docx",
+    "artifact_size_bytes": 216805,
+    "completed_at": "2026-03-30T12:30:09Z",
+    "created_at": "2026-03-30T12:30:05Z",
+    "duration_seconds": 1.7,
+    "error": null,
+    "filename": "Inixindo_Feedback_Intelligence_Report_Facility_Score_1_Bulan_Terakhir_(Monthly).docx",
+    "input": {
+      "score_engine": "facility_score",
+      "segment": "all",
+      "sentiment": "all",
+      "timeframe": "1 Bulan Terakhir (Monthly)"
+    },
+    "job_id": "3e35a1ca08fb4bd8aac6c0c8c19f8cfb",
+    "started_at": "2026-03-30T12:30:07Z",
+    "status": "completed",
+    "updated_at": "2026-03-30T12:30:09Z"
+  },
+  "509d2308e248409b96b94941620b260b": {
+    "artifact_path": "/Users/avariqfr30/Documents/InixindoUC2I/Sentiment analyzer/data/generated_reports/509d2308e248409b96b94941620b260b.docx",
+    "artifact_size_bytes": 216562,
+    "completed_at": "2026-03-30T12:30:11Z",
+    "created_at": "2026-03-30T12:30:05Z",
+    "duration_seconds": 2.0,
+    "error": null,
+    "filename": "Inixindo_Feedback_Intelligence_Report_Experience_Index_1_Bulan_Terakhir_(Monthly).docx",
+    "input": {
+      "score_engine": "experience_index",
+      "segment": "all",
+      "sentiment": "all",
+      "timeframe": "1 Bulan Terakhir (Monthly)"
+    },
+    "job_id": "509d2308e248409b96b94941620b260b",
+    "started_at": "2026-03-30T12:30:09Z",
+    "status": "completed",
+    "updated_at": "2026-03-30T12:30:11Z"
+  },
+  "7c3448ff21a7403a8730c1ce8b86c3b3": {
+    "artifact_path": "/Users/avariqfr30/Documents/InixindoUC2I/Sentiment analyzer/data/generated_reports/7c3448ff21a7403a8730c1ce8b86c3b3.docx",
+    "artifact_size_bytes": 216561,
+    "completed_at": "2026-03-30T12:30:11Z",
+    "created_at": "2026-03-30T12:30:05Z",
+    "duration_seconds": 1.87,
+    "error": null,
+    "filename": "Inixindo_Feedback_Intelligence_Report_Experience_Index_1_Bulan_Terakhir_(Monthly).docx",
+    "input": {
+      "score_engine": "experience_index",
+      "segment": "all",
+      "sentiment": "all",
+      "timeframe": "1 Bulan Terakhir (Monthly)"
+    },
+    "job_id": "7c3448ff21a7403a8730c1ce8b86c3b3",
+    "started_at": "2026-03-30T12:30:09Z",
+    "status": "completed",
+    "updated_at": "2026-03-30T12:30:11Z"
+  },
+  "8abb8a8f087e4c8e8e8ad5aeeaee9098": {
+    "artifact_path": "/Users/avariqfr30/Documents/InixindoUC2I/Sentiment analyzer/data/generated_reports/8abb8a8f087e4c8e8e8ad5aeeaee9098.docx",
+    "artifact_size_bytes": 216561,
+    "completed_at": "2026-03-30T12:30:07Z",
+    "created_at": "2026-03-30T12:30:05Z",
+    "duration_seconds": 1.63,
+    "error": null,
+    "filename": "Inixindo_Feedback_Intelligence_Report_Experience_Index_1_Bulan_Terakhir_(Monthly).docx",
+    "input": {
+      "score_engine": "experience_index",
+      "segment": "all",
+      "sentiment": "all",
+      "timeframe": "1 Bulan Terakhir (Monthly)"
+    },
+    "job_id": "8abb8a8f087e4c8e8e8ad5aeeaee9098",
+    "started_at": "2026-03-30T12:30:05Z",
+    "status": "completed",
+    "updated_at": "2026-03-30T12:30:07Z"
+  },
+  "8d01e514a5a542cfbac2cbbc6de4ae9c": {
+    "artifact_path": "/Users/avariqfr30/Documents/InixindoUC2I/Sentiment analyzer/data/generated_reports/8d01e514a5a542cfbac2cbbc6de4ae9c.docx",
+    "artifact_size_bytes": 216561,
+    "completed_at": "2026-03-30T12:30:07Z",
+    "created_at": "2026-03-30T12:30:05Z",
+    "duration_seconds": 1.96,
+    "error": null,
+    "filename": "Inixindo_Feedback_Intelligence_Report_Experience_Index_1_Bulan_Terakhir_(Monthly).docx",
+    "input": {
+      "score_engine": "experience_index",
+      "segment": "all",
+      "sentiment": "all",
+      "timeframe": "1 Bulan Terakhir (Monthly)"
+    },
+    "job_id": "8d01e514a5a542cfbac2cbbc6de4ae9c",
+    "started_at": "2026-03-30T12:30:05Z",
+    "status": "completed",
+    "updated_at": "2026-03-30T12:30:07Z"
+  },
+  "b773cc0028e3425fb00f8bf7407e05d6": {
+    "artifact_path": "/Users/avariqfr30/Documents/InixindoUC2I/Sentiment analyzer/data/generated_reports/b773cc0028e3425fb00f8bf7407e05d6.docx",
+    "artifact_size_bytes": 216617,
+    "completed_at": "2026-03-30T12:29:42Z",
+    "created_at": "2026-03-30T12:29:41Z",
+    "duration_seconds": 0.61,
+    "error": null,
+    "filename": "Inixindo_Feedback_Intelligence_Report_Experience_Index_1_Bulan_Terakhir_(Monthly).docx",
+    "input": {
+      "score_engine": "experience_index",
+      "segment": "all",
+      "sentiment": "all",
+      "timeframe": "1 Bulan Terakhir (Monthly)"
+    },
+    "job_id": "b773cc0028e3425fb00f8bf7407e05d6",
+    "started_at": "2026-03-30T12:29:41Z",
+    "status": "completed",
+    "updated_at": "2026-03-30T12:29:42Z"
+  },
+  "c49c7ce26bb348abbc77f0da60df591d": {
+    "artifact_path": "/Users/avariqfr30/Documents/InixindoUC2I/Sentiment analyzer/data/generated_reports/c49c7ce26bb348abbc77f0da60df591d.docx",
+    "artifact_size_bytes": 216736,
+    "completed_at": "2026-03-30T12:30:09Z",
+    "created_at": "2026-03-30T12:30:05Z",
+    "duration_seconds": 1.8,
+    "error": null,
+    "filename": "Inixindo_Feedback_Intelligence_Report_Service_Score_1_Bulan_Terakhir_(Monthly).docx",
+    "input": {
+      "score_engine": "service_score",
+      "segment": "all",
+      "sentiment": "all",
+      "timeframe": "1 Bulan Terakhir (Monthly)"
+    },
+    "job_id": "c49c7ce26bb348abbc77f0da60df591d",
+    "started_at": "2026-03-30T12:30:07Z",
+    "status": "completed",
+    "updated_at": "2026-03-30T12:30:09Z"
+  },
+  "d528e2cb844e40bcb689df3a771c893c": {
+    "artifact_path": "/Users/avariqfr30/Documents/InixindoUC2I/Sentiment analyzer/data/generated_reports/d528e2cb844e40bcb689df3a771c893c.docx",
+    "artifact_size_bytes": 216807,
+    "completed_at": "2026-03-30T12:30:09Z",
+    "created_at": "2026-03-30T12:30:05Z",
+    "duration_seconds": 1.91,
+    "error": null,
+    "filename": "Inixindo_Feedback_Intelligence_Report_Facility_Score_1_Bulan_Terakhir_(Monthly).docx",
+    "input": {
+      "score_engine": "facility_score",
+      "segment": "all",
+      "sentiment": "all",
+      "timeframe": "1 Bulan Terakhir (Monthly)"
+    },
+    "job_id": "d528e2cb844e40bcb689df3a771c893c",
+    "started_at": "2026-03-30T12:30:07Z",
+    "status": "completed",
+    "updated_at": "2026-03-30T12:30:09Z"
+  }
+}

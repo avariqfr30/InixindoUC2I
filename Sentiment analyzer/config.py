@@ -17,6 +17,19 @@ OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
 EMBED_MODEL = os.getenv("EMBED_MODEL", "bge-m3:latest")
 DB_URI = os.getenv("DB_URI", f"sqlite:///{os.path.join(DATA_DIR, 'cx_feedback.db')}")
 CSV_PATH = os.getenv("CSV_PATH", os.path.join(DATA_DIR, "db.csv"))
+REPORT_ARTIFACT_DIR = os.getenv(
+    "REPORT_ARTIFACT_DIR",
+    os.path.join(DATA_DIR, "generated_reports"),
+)
+JOB_STATE_PATH = os.getenv(
+    "JOB_STATE_PATH",
+    os.path.join(DATA_DIR, "report_jobs.json"),
+)
+REPORT_JOB_WORKERS = int(os.getenv("REPORT_JOB_WORKERS", "3"))
+REPORT_MAX_PENDING_JOBS = int(os.getenv("REPORT_MAX_PENDING_JOBS", "24"))
+REPORT_JOB_RETENTION_SECONDS = int(
+    os.getenv("REPORT_JOB_RETENTION_SECONDS", "86400")
+)
 
 INTERNAL_API_BASE_URL = os.getenv("INTERNAL_API_BASE_URL", "").rstrip("/")
 INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "")
@@ -167,6 +180,11 @@ OSINT_SEARCH_LANGUAGE = "id"
 OSINT_RESULTS_PER_QUERY = 5
 OSINT_MAX_SIGNALS = 10
 OSINT_RECENCY = "qdr:y"
+OSINT_CACHE_PATH = os.getenv(
+    "OSINT_CACHE_PATH",
+    os.path.join(DATA_DIR, "osint_cache.json"),
+)
+OSINT_CACHE_TTL_SECONDS = int(os.getenv("OSINT_CACHE_TTL_SECONDS", "21600"))
 OSINT_BASE_QUERIES = [
     "tren pelatihan IT corporate Indonesia",
     "ekspektasi peserta training IT terhadap instruktur fasilitas dan kurikulum Indonesia",
