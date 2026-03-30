@@ -113,9 +113,12 @@ Pada `APP_MODE=demo`, letakkan file `db.csv` di folder `Sentiment analyzer/data/
 * `Tanggal Feedback`
 * `Tipe Stakeholder` (Contoh: Instansi Pemerintah, BUMN, Personal)
 * `Layanan` (Contoh: Pelatihan IT Security, Konsultasi Masterplan)
+* `Lokasi`
+* `Tipe Instruktur` (Contoh: `Internal`, `OL`)
 * `Rentang Waktu` (Contoh: 1 Bulan Terakhir (Monthly))
 * `Rating` (1-5)
 * `Komentar` (Teks masukan bebas)
+* `Customer Journey Hint` (Opsional, untuk mengunci area journey tertentu bila sudah tersedia)
 
 Untuk kebutuhan simulasi internal yang lebih stabil, gunakan reseed utility berikut agar dataset demo selalu terisi dengan data sintetis yang lebih lengkap dan konsisten:
 
