@@ -6,7 +6,7 @@
     <title>Inixindo Feedback Intelligence</title>
     <style>
         body { font-family: 'Segoe UI', sans-serif; background: #f8fafc; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; color: #334155; }
-        .card { background: white; padding: 40px; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.08); width: 680px; max-height: 95vh; overflow-y: auto;}
+        .card { background: white; padding: 40px; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.08); width: 760px; max-height: 95vh; overflow-y: auto;}
         .hidden { display: none; }
         h2 { color: #0f172a; margin: 0 0 10px 0; font-size: 1.8rem; }
         p.sub { color: #64748b; margin: 0 0 25px 0; font-size: 1rem; line-height: 1.4; }
@@ -24,11 +24,20 @@
         .spinner { width: 20px; height: 20px; border: 3px solid rgba(255,255,255,0.3); border-top-color: white; border-radius: 50%; animation: spin 1s linear infinite; display: none; vertical-align: middle; margin-left: 10px; }
         .spinner.active { display: inline-block; }
         textarea { resize: vertical; min-height: 90px; margin-bottom: 8px; }
-        
+        .field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+        .field-grid .full-width { grid-column: 1 / -1; }
+        .helper { color: #64748b; font-size: 0.85rem; margin: -8px 0 14px 0; line-height: 1.4; }
+        .review-notes { background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; color: #475569; line-height: 1.5; }
+
         .chip-container { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
         .chip { background: #e2e8f0; color: #475569; padding: 6px 12px; border-radius: 16px; font-size: 0.85rem; cursor: pointer; transition: 0.2s; border: 1px solid transparent; }
         .chip:hover { background: #f1f5f9; border-color: #cc0000; color: #cc0000; }
-        
+        @media (max-width: 720px) {
+            body { height: auto; padding: 20px 0; }
+            .card { width: min(92vw, 760px); padding: 28px 20px; }
+            .field-grid { grid-template-columns: 1fr; }
+        }
+
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
     </style>
 </head>
@@ -42,12 +51,29 @@
         <div id="step-config" class="hidden">
             <h2>Feedback Intelligence Analyzer</h2>
             <p class="sub">Platform ini mengolah feedback dari berbagai sumber untuk menghasilkan analisis descriptive, diagnostic, predictive, dan prescriptive yang siap dipakai untuk evaluasi layanan, pengambilan keputusan, dan perencanaan tindak lanjut lintas fungsi.</p>
-            
-            <label for="select-timeframe">Periode Analisis Evaluasi</label>
-            <select id="select-timeframe">
-                <option value="" disabled selected>Pilih Rentang Waktu...</option>
-            </select>
-            
+
+            <div class="field-grid">
+                <div>
+                    <label for="select-timeframe">Periode Analisis Evaluasi</label>
+                    <select id="select-timeframe">
+                        <option value="" disabled selected>Pilih Rentang Waktu...</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="select-sentiment">Filter Sentimen</label>
+                    <select id="select-sentiment"></select>
+                </div>
+                <div>
+                    <label for="select-segment">Filter Segmen</label>
+                    <select id="select-segment"></select>
+                </div>
+                <div>
+                    <label for="select-score-engine">Sudut Pandang Score Engine</label>
+                    <select id="select-score-engine"></select>
+                    <p id="score-engine-helper" class="helper"></p>
+                </div>
+            </div>
+
             <div id="container-discovery" class="hidden" style="margin-top: 15px; padding-top: 20px; border-top: 1px solid #e2e8f0;">
                 <label for="input-notes">Instruksi Spesifik untuk AI (Opsional)</label>
                 <textarea id="input-notes" placeholder="Atau klik rekomendasi instruksi di bawah ini..."></textarea>
@@ -85,6 +111,10 @@
             successStep: document.getElementById('step-success'),
             
             selectTimeframe: document.getElementById('select-timeframe'),
+            selectSentiment: document.getElementById('select-sentiment'),
+            selectSegment: document.getElementById('select-segment'),
+            selectScoreEngine: document.getElementById('select-score-engine'),
+            scoreEngineHelper: document.getElementById('score-engine-helper'),
             inputNotes: document.getElementById('input-notes'),
             suggestionContainer: document.getElementById('suggestion-container'),
             containerDiscovery: document.getElementById('container-discovery'),
@@ -95,7 +125,48 @@
             btnBack: document.getElementById('btn-back'),
             btnRefresh: document.getElementById('btn-refresh')
         };
-        
+
+        const appState = {
+            sentiments: [],
+            segments: [],
+            scoreEngines: []
+        };
+
+        function populateSelect(selectElement, items, placeholder) {
+            selectElement.innerHTML = '';
+            if (placeholder) {
+                let option = document.createElement('option');
+                option.value = '';
+                option.text = placeholder;
+                option.disabled = true;
+                option.selected = true;
+                selectElement.add(option);
+            }
+
+            items.forEach(item => {
+                let option = document.createElement('option');
+                option.value = item.id;
+                option.text = item.label;
+                selectElement.add(option);
+            });
+        }
+
+        function getSelectedLabel(selectElement) {
+            if (!selectElement.selectedOptions.length) return '-';
+            return selectElement.selectedOptions[0].text;
+        }
+
+        function updateScoreEngineHelper() {
+            const selectedEngine = appState.scoreEngines.find(item => item.id === ui.selectScoreEngine.value);
+            ui.scoreEngineHelper.textContent = selectedEngine ? selectedEngine.description : '';
+        }
+
+        function updateReviewAvailability() {
+            const hasTimeframe = Boolean(ui.selectTimeframe.value);
+            ui.btnReview.disabled = !hasTimeframe;
+            ui.containerDiscovery.classList.toggle('hidden', !hasTimeframe);
+        }
+
         function renderSuggestions(suggestionsList) {
             ui.suggestionContainer.innerHTML = ''; 
             if (suggestionsList) {
@@ -129,15 +200,28 @@
                         option.value = tf; option.text = tf;
                         ui.selectTimeframe.add(option);
                     });
+                    appState.sentiments = data.sentiments || [];
+                    appState.segments = data.segments || [];
+                    appState.scoreEngines = data.score_engines || [];
+
+                    populateSelect(ui.selectSentiment, appState.sentiments);
+                    populateSelect(ui.selectSegment, appState.segments);
+                    populateSelect(ui.selectScoreEngine, appState.scoreEngines);
+
+                    ui.selectSentiment.value = (appState.sentiments[0] || {}).id || 'all';
+                    ui.selectSegment.value = (appState.segments[0] || {}).id || 'all';
+                    ui.selectScoreEngine.value = data.default_score_engine || ((appState.scoreEngines[0] || {}).id || '');
+                    updateScoreEngineHelper();
                     
                     renderSuggestions(data.suggestions);
+                    updateReviewAvailability();
                     
                     ui.loader.classList.add('hidden'); 
                     ui.configStep.classList.remove('hidden');
                 })
                 .catch(err => {
                     if (err.message.includes("Failed to fetch")) {
-                        ui.loaderText.innerHTML = `<span style="color: #cc0000; font-weight: bold;">Error: Jangan klik ganda file HTML! Buka http://127.0.0.1:5000</span>`;
+                        ui.loaderText.innerHTML = `<span style="color: #cc0000; font-weight: bold;">Error: Jalankan server lalu buka melalui alamat internal aplikasi.</span>`;
                     } else {
                         ui.loaderText.innerHTML = `<span style="color: #cc0000; font-weight: bold;">Error: ${err.message}</span>`;
                     }
@@ -146,16 +230,26 @@
         
         loadConfig();
 
-        ui.selectTimeframe.onchange = () => {
-            ui.containerDiscovery.classList.remove('hidden');
-            ui.btnReview.disabled = false;
+        ui.selectTimeframe.onchange = updateReviewAvailability;
+        ui.selectSentiment.onchange = updateReviewAvailability;
+        ui.selectSegment.onchange = updateReviewAvailability;
+        ui.selectScoreEngine.onchange = () => {
+            updateScoreEngineHelper();
+            updateReviewAvailability();
         };
         
         ui.btnReview.onclick = () => { 
+            const notes = ui.inputNotes.value.trim();
             let html = `
-                <div class="review-row"><span>Cakupan Data</span><span>Semua Stakeholder & Layanan</span></div>
                 <div class="review-row"><span>Periode Analisis</span><span>${ui.selectTimeframe.value}</span></div>
-                <div class="review-row"><span>Kerangka Laporan</span><span>Analisis + Tindak Lanjut Manajerial</span></div>
+                <div class="review-row"><span>Filter Sentimen</span><span>${getSelectedLabel(ui.selectSentiment)}</span></div>
+                <div class="review-row"><span>Filter Segmen</span><span>${getSelectedLabel(ui.selectSegment)}</span></div>
+                <div class="review-row"><span>Sudut Pandang Analisis</span><span>${getSelectedLabel(ui.selectScoreEngine)}</span></div>
+                <div class="review-row"><span>Kerangka Laporan</span><span>Summary, Analisis, Customer Journey, dan Tindak Lanjut</span></div>
+                <div style="margin-top: 16px;">
+                    <label style="margin-bottom:8px;">Instruksi Tambahan</label>
+                    <div class="review-notes">${notes ? notes.replace(/</g, '&lt;').replace(/>/g, '&gt;') : 'Tidak ada instruksi tambahan.'}</div>
+                </div>
             `;
             ui.reviewText.innerHTML = html; 
             ui.configStep.classList.add('hidden'); 
@@ -173,6 +267,9 @@
             
             const payload = {
                 timeframe: ui.selectTimeframe.value,
+                sentiment: ui.selectSentiment.value,
+                segment: ui.selectSegment.value,
+                score_engine: ui.selectScoreEngine.value,
                 notes: ui.inputNotes.value
             };
 

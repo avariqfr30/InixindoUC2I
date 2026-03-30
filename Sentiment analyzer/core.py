@@ -26,10 +26,13 @@ from sqlalchemy import create_engine
 
 from config import (
     APP_MODE,
+    ADOPTION_READINESS_PILLARS,
+    CUSTOMER_JOURNEY_STAGES,
     CX_SENTIMENT_STRUCTURE,
     CSV_PATH,
     DATA_DIR,
     DEFAULT_COLOR,
+    DEFAULT_SCORE_ENGINE,
     EMBED_MODEL,
     ENABLE_VECTOR_INDEX,
     EXTERNAL_DATA_MODE,
@@ -45,8 +48,9 @@ from config import (
     OSINT_RESULTS_PER_QUERY,
     OSINT_SEARCH_LANGUAGE,
     OSINT_SEARCH_REGION,
+    SCORE_ENGINE_PROFILES,
     SERPER_API_KEY,
-    ADOPTION_READINESS_PILLARS,
+    SENTIMENT_OPTIONS,
     WRITER_FIRM_NAME,
 )
 
@@ -583,14 +587,14 @@ class Researcher:
         return ranked[:max_signals]
 
     @staticmethod
-    def get_macro_trends(timeframe, notes=""):
+    def get_macro_trends(timeframe, notes="", score_engine_label="Experience Index"):
         if not Researcher._is_enabled():
             return "Data OSINT eksternal tidak tersedia (SERPER_API_KEY belum diatur)."
 
         scope = timeframe or "periode terbaru"
         compact_notes = re.sub(r"\s+", " ", notes).strip()
         contextual_query = (
-            f"benchmark sentimen pelanggan pelatihan dan konsultasi IT Indonesia {scope}"
+            f"benchmark sentimen pelanggan pelatihan dan konsultasi IT Indonesia {scope} {score_engine_label}"
         )
         if compact_notes:
             contextual_query += f" {compact_notes[:140]}"
@@ -693,11 +697,312 @@ class FeedbackAnalyticsEngine:
         filtered = filtered[filtered != ""]
         return filtered.value_counts().head(limit)
 
+    @staticmethod
+    def _label_from_options(options, option_id, fallback):
+        for item in options:
+            if item["id"] == option_id:
+                return item["label"]
+        return fallback
+
+    @staticmethod
+    def _clamp(value, minimum=0.0, maximum=100.0):
+        return max(minimum, min(maximum, value))
+
+    def _normalize_sentiment_filter(self, sentiment):
+        valid_ids = {item["id"] for item in SENTIMENT_OPTIONS}
+        if sentiment in valid_ids:
+            return sentiment
+        return "all"
+
+    def _normalize_score_engine(self, score_engine):
+        if score_engine in SCORE_ENGINE_PROFILES:
+            return score_engine
+        return DEFAULT_SCORE_ENGINE
+
+    def _normalize_segment_filter(self, segment):
+        cleaned = str(segment or "").strip()
+        if not cleaned or cleaned.lower() == "all":
+            return "all"
+        available_segments = set(
+            self.full_df["Tipe Stakeholder"].fillna("").astype(str).str.strip().tolist()
+        )
+        return cleaned if cleaned in available_segments else "all"
+
+    def _score_engine_profile(self, score_engine):
+        normalized_engine = self._normalize_score_engine(score_engine)
+        return SCORE_ENGINE_PROFILES.get(
+            normalized_engine,
+            SCORE_ENGINE_PROFILES[DEFAULT_SCORE_ENGINE],
+        )
+
+    def _analysis_scope_text(self, timeframe, sentiment, segment, score_engine):
+        sentiment_label = self._label_from_options(
+            SENTIMENT_OPTIONS,
+            sentiment,
+            "Semua Sentimen",
+        )
+        profile = self._score_engine_profile(score_engine)
+        scope_parts = [f"periode {timeframe}", f"perspektif {profile['label']}"]
+        if sentiment != "all":
+            scope_parts.append(f"filter sentimen {sentiment_label.lower()}")
+        if segment != "all":
+            scope_parts.append(f"segmen {segment}")
+        return ", ".join(scope_parts)
+
+    def _forecast_horizon(self, timeframe):
+        normalized = str(timeframe or "").lower()
+        if "minggu" in normalized or "weekly" in normalized:
+            return "1-2 minggu ke depan"
+        if "semester" in normalized or "6 bulan" in normalized:
+            return "semester berikutnya"
+        if "tahun" in normalized or "year" in normalized:
+            return "periode tahun berikutnya"
+        if "bulan" in normalized or "monthly" in normalized:
+            return "1-2 bulan ke depan"
+        return "1-2 periode evaluasi berikutnya"
+
     def _filter_timeframe(self, timeframe):
+        return self._filter_view(timeframe)
+
+    def _filter_view(self, timeframe, sentiment="all", segment="all"):
         if self.full_df.empty:
             return self.full_df.copy()
         filtered = self.full_df[self.full_df["Rentang Waktu"] == timeframe].copy()
+        normalized_sentiment = self._normalize_sentiment_filter(sentiment)
+        normalized_segment = self._normalize_segment_filter(segment)
+
+        if normalized_sentiment != "all":
+            filtered = filtered[filtered["Sentiment Label"] == normalized_sentiment]
+        if normalized_segment != "all":
+            filtered = filtered[
+                filtered["Tipe Stakeholder"].astype(str).str.strip() == normalized_segment
+            ]
         return filtered
+
+    def _customer_journey_keywords(self):
+        theme_lookup = {theme["id"]: theme for theme in self.THEME_LIBRARY}
+        keyword_map = {}
+        for stage in CUSTOMER_JOURNEY_STAGES:
+            stage_keywords = []
+            for theme_id in stage["theme_ids"]:
+                stage_keywords.extend(theme_lookup.get(theme_id, {}).get("keywords", ()))
+            keyword_map[stage["label"]] = tuple(dict.fromkeys(stage_keywords))
+        return keyword_map
+
+    def _attach_customer_journey(self, dataframe):
+        if dataframe.empty:
+            enriched = dataframe.copy()
+            enriched["Customer Journey Stage"] = pd.Series(dtype="object")
+            return enriched
+
+        keyword_map = self._customer_journey_keywords()
+        default_stage = next(
+            (
+                stage["label"]
+                for stage in CUSTOMER_JOURNEY_STAGES
+                if stage["id"] == "delivery_experience"
+            ),
+            CUSTOMER_JOURNEY_STAGES[0]["label"],
+        )
+
+        def classify_stage(text):
+            lowered = str(text or "").lower()
+            best_stage = default_stage
+            best_score = 0
+            for stage_label, keywords in keyword_map.items():
+                score = sum(1 for keyword in keywords if keyword in lowered)
+                if score > best_score:
+                    best_score = score
+                    best_stage = stage_label
+            return best_stage
+
+        enriched = dataframe.copy()
+        enriched["Customer Journey Stage"] = enriched["Komentar Lower"].apply(classify_stage)
+        return enriched
+
+    def _customer_journey_rows(self, dataframe):
+        if dataframe.empty:
+            return []
+
+        enriched = self._attach_customer_journey(dataframe)
+        rows = []
+        for stage in CUSTOMER_JOURNEY_STAGES:
+            label = stage["label"]
+            stage_df = enriched[enriched["Customer Journey Stage"] == label]
+            if stage_df.empty:
+                continue
+
+            total = len(stage_df)
+            positive_count = int((stage_df["Sentiment Label"] == "positive").sum())
+            neutral_count = int((stage_df["Sentiment Label"] == "neutral").sum())
+            negative_count = int((stage_df["Sentiment Label"] == "negative").sum())
+            stage_theme_hits = self._theme_hits(stage_df)
+            dominant_theme = next(
+                (
+                    theme["label"]
+                    for theme in stage_theme_hits
+                    if theme["negative_hits"] > 0 or theme["positive_hits"] > 0
+                ),
+                "Sinyal umum customer journey",
+            )
+
+            rows.append(
+                {
+                    "stage_id": stage["id"],
+                    "stage_label": label,
+                    "description": stage["description"],
+                    "volume": total,
+                    "average_rating": round(stage_df["Rating Numeric"].mean(), 2)
+                    if stage_df["Rating Numeric"].notna().any()
+                    else 0.0,
+                    "positive_share": self._safe_percentage(positive_count, total),
+                    "neutral_share": self._safe_percentage(neutral_count, total),
+                    "negative_share": self._safe_percentage(negative_count, total),
+                    "dominant_theme": dominant_theme,
+                }
+            )
+
+        rows.sort(key=lambda item: (item["negative_share"], item["volume"]), reverse=True)
+        return rows
+
+    def _score_engine_metrics(self, dataframe, score_engine):
+        profile = self._score_engine_profile(score_engine)
+        if dataframe.empty:
+            return {
+                "label": profile["label"],
+                "current_score": 0.0,
+                "projected_score": 0.0,
+                "delta": 0.0,
+                "direction": "stabil",
+                "theme_rows": [],
+            }
+
+        avg_rating = dataframe["Rating Numeric"].mean()
+        base_score = ((avg_rating / 5) * 100) if pd.notna(avg_rating) else 0.0
+        total_rows = len(dataframe)
+        positive_share = self._safe_percentage(
+            int((dataframe["Sentiment Label"] == "positive").sum()),
+            total_rows,
+        )
+        negative_share = self._safe_percentage(
+            int((dataframe["Sentiment Label"] == "negative").sum()),
+            total_rows,
+        )
+
+        weighted_balance = 0.0
+        weighted_positive_ratio = 0.0
+        weighted_negative_ratio = 0.0
+        total_weight = 0.0
+        theme_rows = []
+
+        for theme in self._theme_hits(dataframe):
+            weight = profile["theme_weights"].get(theme["id"], 0.35)
+            total_hits = max(theme["total_hits"], 1)
+            positive_ratio = theme["positive_hits"] / total_hits
+            negative_ratio = theme["negative_hits"] / total_hits
+            balance = positive_ratio - negative_ratio
+            priority_score = round(
+                ((theme["negative_hits"] * 1.8) + theme["total_hits"]) * weight,
+                1,
+            )
+
+            weighted_balance += balance * weight
+            weighted_positive_ratio += positive_ratio * weight
+            weighted_negative_ratio += negative_ratio * weight
+            total_weight += weight
+
+            theme_rows.append(
+                {
+                    "theme_id": theme["id"],
+                    "label": theme["label"],
+                    "weight": round(weight, 2),
+                    "total_hits": theme["total_hits"],
+                    "positive_hits": theme["positive_hits"],
+                    "negative_hits": theme["negative_hits"],
+                    "priority_score": priority_score,
+                    "prescription": theme["prescription"],
+                }
+            )
+
+        if total_weight > 0:
+            weighted_balance /= total_weight
+            weighted_positive_ratio /= total_weight
+            weighted_negative_ratio /= total_weight
+
+        current_score = self._clamp(
+            (base_score * 0.72) + ((50 + (weighted_balance * 50)) * 0.28)
+        )
+        top_weighted_risk = max(
+            (
+                (row["negative_hits"] / max(row["total_hits"], 1)) * row["weight"]
+                for row in theme_rows
+            ),
+            default=0.0,
+        )
+        delta = round(
+            (((positive_share - negative_share) / 100) * 6)
+            - (weighted_negative_ratio * 11)
+            + (weighted_positive_ratio * 4)
+            - (top_weighted_risk * 3),
+            1,
+        )
+        if abs(delta) < 0.6:
+            delta = 0.0
+        projected_score = self._clamp(current_score + delta)
+        direction = "stabil"
+        if delta > 0:
+            direction = "naik"
+        elif delta < 0:
+            direction = "turun"
+
+        theme_rows.sort(
+            key=lambda item: (item["priority_score"], item["negative_hits"]),
+            reverse=True,
+        )
+
+        return {
+            "label": profile["label"],
+            "current_score": round(current_score, 1),
+            "projected_score": round(projected_score, 1),
+            "delta": delta,
+            "direction": direction,
+            "theme_rows": theme_rows,
+        }
+
+    def _build_analysis_context(self, timeframe_df, timeframe, sentiment, segment, score_engine):
+        normalized_sentiment = self._normalize_sentiment_filter(sentiment)
+        normalized_segment = self._normalize_segment_filter(segment)
+        normalized_score_engine = self._normalize_score_engine(score_engine)
+        score_profile = self._score_engine_profile(normalized_score_engine)
+        journey_rows = self._customer_journey_rows(timeframe_df)
+        score_metrics = self._score_engine_metrics(timeframe_df, normalized_score_engine)
+        dominant_journey = journey_rows[0] if journey_rows else None
+        dominant_theme = score_metrics["theme_rows"][0] if score_metrics["theme_rows"] else None
+
+        return {
+            "timeframe": timeframe,
+            "sentiment": normalized_sentiment,
+            "sentiment_label": self._label_from_options(
+                SENTIMENT_OPTIONS,
+                normalized_sentiment,
+                "Semua Sentimen",
+            ),
+            "segment": normalized_segment,
+            "segment_label": normalized_segment if normalized_segment != "all" else "Semua Segmen",
+            "score_engine": normalized_score_engine,
+            "score_profile": score_profile,
+            "score_metrics": score_metrics,
+            "journey_rows": journey_rows,
+            "dominant_journey": dominant_journey,
+            "dominant_theme": dominant_theme,
+            "scope_text": self._analysis_scope_text(
+                timeframe,
+                normalized_sentiment,
+                normalized_segment,
+                normalized_score_engine,
+            ),
+            "horizon_text": self._forecast_horizon(timeframe),
+        }
 
     def _theme_hits(self, dataframe):
         theme_stats = []
@@ -948,13 +1253,33 @@ class FeedbackAnalyticsEngine:
             return "Perlu Diperkuat"
         return "Prioritas Tinggi"
 
-    def _descriptive_markdown(self, timeframe_df, timeframe, notes):
+    def _projection_sentence(self, context):
+        metrics = context["score_metrics"]
+        score_label = context["score_profile"]["forecast_label"]
+        horizon_text = context["horizon_text"]
+
+        if metrics["direction"] == "turun":
+            return (
+                f"{score_label} diproyeksikan turun dari {metrics['current_score']} menjadi sekitar "
+                f"{metrics['projected_score']} dalam {horizon_text} apabila pola saat ini berlanjut."
+            )
+        if metrics["direction"] == "naik":
+            return (
+                f"{score_label} diproyeksikan naik dari {metrics['current_score']} menjadi sekitar "
+                f"{metrics['projected_score']} dalam {horizon_text} jika momentum yang ada dapat dipertahankan."
+            )
+        return (
+            f"{score_label} diproyeksikan relatif stabil di kisaran {metrics['projected_score']} dalam {horizon_text}, "
+            "namun tetap perlu dipantau agar tidak bergeser ketika volume feedback bertambah."
+        )
+
+    def _descriptive_markdown(self, timeframe_df, timeframe, notes, context):
         governance = self._governance_summary(timeframe_df)
         total_rows = governance["total_rows"]
         if total_rows == 0:
             return (
                 "## 1.1 Ringkasan Cakupan Feedback dan Tata Kelola\n"
-                "Tidak ada feedback internal yang tersedia untuk periode ini.\n"
+                "Tidak ada feedback internal yang sesuai dengan kombinasi filter yang dipilih untuk periode ini.\n"
             )
 
         avg_rating = timeframe_df["Rating Numeric"].mean()
@@ -976,6 +1301,9 @@ class FeedbackAnalyticsEngine:
         positive_share = self._safe_percentage(positive_count, total_rows)
         neutral_share = self._safe_percentage(neutral_count, total_rows)
         negative_share = self._safe_percentage(negative_count, total_rows)
+        score_metrics = context["score_metrics"]
+        journey_rows = context["journey_rows"]
+        scope_text = context["scope_text"]
 
         cleaned_notes = notes.strip().rstrip(".!?")
         focus_line = (
@@ -989,7 +1317,8 @@ class FeedbackAnalyticsEngine:
             else "Pemetaan sumber dan kanal sudah tersedia sehingga jalur asal feedback lebih mudah diaudit."
         )
         descriptive_intro = (
-            f"Bagian ini menjelaskan kualitas dasar portofolio feedback yang menjadi fondasi laporan. "
+            f"Bagian ini menjelaskan kualitas dasar portofolio feedback yang menjadi fondasi laporan. Analisis dibaca pada {scope_text}. "
+            f"Fokus pembacaannya menekankan {context['score_profile']['narrative_focus']}. "
             f"Pada periode {timeframe}, sistem memproses {total_rows} feedback tervalidasi dengan "
             f"rata-rata rating {round(avg_rating, 2) if pd.notna(avg_rating) else 0.0} dari 5, yang menunjukkan kinerja "
             f"layanan berada pada kategori {self._rating_assessment(avg_rating)}. "
@@ -1005,11 +1334,24 @@ class FeedbackAnalyticsEngine:
             ["Indikator", "Nilai"],
             [
                 ["Periode analisis", timeframe],
+                ["Cakupan analisis", scope_text],
                 ["Total feedback tervalidasi", f"{total_rows} record"],
                 ["Rata-rata rating", f"{round(avg_rating, 2) if pd.notna(avg_rating) else 0.0} dari 5"],
+                [context["score_profile"]["label"], f"{score_metrics['current_score']} / 100"],
                 ["Kelengkapan field inti", f"{governance['completeness_pct']}%"],
                 ["Jumlah sumber feedback", governance["source_count"]],
                 ["Jumlah kanal feedback", governance["channel_count"]],
+            ],
+        )
+        score_table = self._markdown_table(
+            ["Score Engine", "Nilai Saat Ini", "Arah Bacaan", "Tema Paling Berpengaruh"],
+            [
+                [
+                    context["score_profile"]["label"],
+                    f"{score_metrics['current_score']}",
+                    score_metrics["direction"].title(),
+                    context["dominant_theme"]["label"] if context["dominant_theme"] else "Belum terpetakan",
+                ]
             ],
         )
 
@@ -1051,6 +1393,35 @@ class FeedbackAnalyticsEngine:
             f"Informasi ini perlu dibaca sebagai indikator awal representativitas data: semakin luas sumber dan kanal, "
             f"semakin kuat dasar analisis untuk pengambilan keputusan lintas fungsi."
         )
+        journey_table = self._markdown_table(
+            [
+                "Tahap Customer Journey",
+                "Volume",
+                "Rating Rata-rata",
+                "Positif",
+                "Netral",
+                "Negatif",
+                "Tema Dominan",
+            ],
+            [
+                [
+                    item["stage_label"],
+                    item["volume"],
+                    item["average_rating"],
+                    f"{item['positive_share']}%",
+                    f"{item['neutral_share']}%",
+                    f"{item['negative_share']}%",
+                    item["dominant_theme"],
+                ]
+                for item in journey_rows
+            ],
+        )
+        dominant_journey_text = (
+            f"Sentimen paling menantang pada filter yang dipilih saat ini muncul pada tahap {context['dominant_journey']['stage_label']} "
+            f"dengan porsi sinyal negatif {context['dominant_journey']['negative_share']}%."
+            if context["dominant_journey"]
+            else "Belum ada tahap customer journey yang dapat dipetakan secara cukup kuat."
+        )
 
         return "\n".join(
             [
@@ -1069,6 +1440,8 @@ class FeedbackAnalyticsEngine:
                     f"ruang untuk memperkuat pengalaman agar tidak berhenti pada persepsi 'cukup'."
                 ),
                 "",
+                score_table,
+                "",
                 sentiment_table,
                 "",
                 chart_line,
@@ -1082,6 +1455,11 @@ class FeedbackAnalyticsEngine:
                 "### Layanan dengan volume feedback terbesar",
                 service_table,
                 "",
+                "### Pemetaan sentimen pada customer journey",
+                dominant_journey_text,
+                "",
+                journey_table,
+                "",
                 "### Cakupan sumber dan kanal",
                 source_paragraph,
                 "",
@@ -1089,15 +1467,24 @@ class FeedbackAnalyticsEngine:
             ]
         )
 
-    def _diagnostic_markdown(self, timeframe_df):
+    def _diagnostic_markdown(self, timeframe_df, context):
         if timeframe_df.empty:
             return (
                 "## 2.1 Akar Masalah Utama dan Pain Point Dominan\n"
-                "Tidak ada feedback internal yang tersedia untuk periode ini.\n"
+                "Tidak ada feedback internal yang sesuai dengan kombinasi filter yang dipilih untuk periode ini.\n"
             )
 
         theme_hits = self._theme_hits(timeframe_df)
-        negative_themes = [theme for theme in theme_hits if theme["negative_hits"] > 0][:3]
+        theme_lookup = {theme["id"]: theme for theme in theme_hits}
+        prioritized_theme_rows = context["score_metrics"]["theme_rows"]
+        prioritized_negative_ids = [
+            item["theme_id"]
+            for item in prioritized_theme_rows
+            if theme_lookup.get(item["theme_id"], {}).get("negative_hits", 0) > 0
+        ][:3]
+        negative_themes = [theme_lookup[theme_id] for theme_id in prioritized_negative_ids]
+        if not negative_themes:
+            negative_themes = [theme for theme in theme_hits if theme["negative_hits"] > 0][:3]
         positive_themes = sorted(
             theme_hits,
             key=lambda item: (item["positive_hits"], item["total_hits"]),
@@ -1153,6 +1540,7 @@ class FeedbackAnalyticsEngine:
                 (theme for theme in positive_themes if theme["positive_hits"] > 0),
                 None,
             )
+        dominant_journey = context["dominant_journey"]
 
         if top_issue and top_strength and top_issue["id"] == top_strength["id"]:
             strength_context = (
@@ -1170,8 +1558,16 @@ class FeedbackAnalyticsEngine:
 
         diagnostic_intro = (
             f"Analisis diagnostik bertujuan menjawab mengapa pola feedback pada periode ini muncul. "
+            f"Karena laporan dibaca dari sudut pandang {context['score_profile']['label']}, perhatian diagnosis terutama diarahkan ke "
+            f"{context['score_profile']['narrative_focus']}. "
             f"{'Tema keluhan paling dominan saat ini adalah ' + top_issue['label'] + ', yang berulang pada beberapa komentar pelanggan.' if top_issue else 'Belum ada tema keluhan yang sangat dominan, sehingga pola masalah masih relatif tersebar.'} "
             f"{strength_context}"
+        )
+        journey_diagnostic = (
+            f"Jika dibaca menurut customer journey, titik gesekan yang paling terasa saat ini berada pada tahap {dominant_journey['stage_label']} "
+            f"dengan rating rata-rata {dominant_journey['average_rating']} dan porsi sentimen negatif {dominant_journey['negative_share']}%."
+            if dominant_journey
+            else "Pemetaan customer journey belum menunjukkan titik gesekan yang dominan."
         )
         root_cause_table_rows = []
         for theme in negative_themes:
@@ -1252,6 +1648,8 @@ class FeedbackAnalyticsEngine:
                     "Ringkasan kesenjangan proses membantu menerjemahkan komentar individual ke dalam area operasional yang dapat ditindaklanjuti."
                 ),
                 "",
+                journey_diagnostic,
+                "",
                 "### Kutipan keluhan representatif",
                 *negative_quotes,
                 "### Kutipan apresiasi representatif",
@@ -1263,22 +1661,25 @@ class FeedbackAnalyticsEngine:
             ]
         )
 
-    def _predictive_markdown(self, timeframe_df, macro_trends):
+    def _predictive_markdown(self, timeframe_df, macro_trends, context):
         if timeframe_df.empty:
             return (
                 "## 3.1 Risiko Jangka Pendek Jika Pola Saat Ini Berlanjut\n"
-                "Tidak ada feedback internal yang tersedia untuk periode ini.\n"
+                "Tidak ada feedback internal yang sesuai dengan kombinasi filter yang dipilih untuk periode ini.\n"
             )
 
         service_risks = self._group_risk(timeframe_df, "Layanan", limit=5)
         stakeholder_risks = self._group_risk(timeframe_df, "Tipe Stakeholder", limit=5)
+        journey_rows = context["journey_rows"]
+        score_metrics = context["score_metrics"]
 
         risk_lines = []
         for item in service_risks:
             severity = self._risk_severity(item["risk_score"])
             risk_lines.append(
-                f"- {item['label']} berisiko {severity} mengalami penurunan kepuasan lanjutan "
-                f"karena proporsi sinyal negatif {item['negative_ratio']}% dengan rata-rata rating {item['average_rating']}."
+                f"- {item['label']} diperkirakan tetap menjadi area {severity} karena proporsi sinyal negatif {item['negative_ratio']}% "
+                f"dengan rata-rata rating {item['average_rating']}. Jika tidak ada intervensi, skor pengalaman untuk layanan ini "
+                f"cenderung berada di bawah rata-rata periode berjalan."
             )
         if not risk_lines:
             risk_lines = ["- Tidak ada risiko layanan yang cukup kuat untuk diproyeksikan pada periode ini."]
@@ -1287,10 +1688,27 @@ class FeedbackAnalyticsEngine:
         for item in stakeholder_risks:
             segment_lines.append(
                 f"- Segmen {item['label']} perlu dipantau karena volume {item['volume']} feedback "
-                f"dengan proporsi negatif {item['negative_ratio']}%."
+                f"dengan proporsi negatif {item['negative_ratio']}%. Tanpa penanganan, persepsi mereka berpotensi lebih rendah pada periode evaluasi berikutnya."
             )
         if not segment_lines:
             segment_lines = ["- Tidak ada segmen pelanggan yang cukup dominan untuk diproyeksikan."]
+
+        journey_lines = []
+        for item in journey_rows[:3]:
+            if item["negative_share"] >= 25:
+                journey_lines.append(
+                    f"- Tahap {item['stage_label']} diperkirakan tetap menjadi titik gesekan utama karena porsi sentimen negatif masih {item['negative_share']}%."
+                )
+            elif item["positive_share"] >= 60:
+                journey_lines.append(
+                    f"- Tahap {item['stage_label']} cenderung tetap menjadi area yang lebih kuat karena porsi sentimen positif mencapai {item['positive_share']}%."
+                )
+            else:
+                journey_lines.append(
+                    f"- Tahap {item['stage_label']} diperkirakan relatif stabil, tetapi perlu dipantau karena sentimennya masih bercampur."
+                )
+        if not journey_lines:
+            journey_lines = ["- Belum ada pembacaan customer journey yang cukup kuat untuk dijadikan proyeksi."]
 
         osint_signals = self._extract_osint_signals(macro_trends, limit=4)
         osint_lines = []
@@ -1307,8 +1725,21 @@ class FeedbackAnalyticsEngine:
         top_segment_risk = stakeholder_risks[0] if stakeholder_risks else None
         predictive_intro = (
             f"Analisis prediktif membaca risiko yang kemungkinan berkembang apabila pola feedback saat ini berlanjut dalam jangka pendek. "
+            f"{self._projection_sentence(context)} "
             f"{'Layanan yang paling layak diprioritaskan untuk pengawasan adalah ' + top_service_risk['label'] + '.' if top_service_risk else 'Belum ada layanan dengan pola risiko yang cukup kuat untuk diprioritaskan.'} "
             f"{'Segmen yang paling perlu dipantau adalah ' + top_segment_risk['label'] + '.' if top_segment_risk else 'Belum ada segmen dengan paparan risiko yang dominan.'}"
+        )
+        score_projection_table = self._markdown_table(
+            ["Score Engine", "Nilai Saat Ini", "Arah Proyeksi", "Nilai Proyeksi", "Horizon"],
+            [
+                [
+                    context["score_profile"]["label"],
+                    score_metrics["current_score"],
+                    score_metrics["direction"].title(),
+                    score_metrics["projected_score"],
+                    context["horizon_text"],
+                ]
+            ],
         )
         service_risk_table = self._markdown_table(
             ["Layanan", "Level Risiko", "Rata-rata Rating", "Proporsi Negatif", "Volume"],
@@ -1336,6 +1767,19 @@ class FeedbackAnalyticsEngine:
                 for item in stakeholder_risks
             ],
         )
+        journey_projection_table = self._markdown_table(
+            ["Tahap Customer Journey", "Rating Rata-rata", "Negatif", "Positif", "Tema Dominan"],
+            [
+                [
+                    item["stage_label"],
+                    item["average_rating"],
+                    f"{item['negative_share']}%",
+                    f"{item['positive_share']}%",
+                    item["dominant_theme"],
+                ]
+                for item in journey_rows
+            ],
+        )
         osint_table = self._markdown_table(
             ["Sinyal Eksternal", "Sumber", "Tanggal"],
             [
@@ -1355,6 +1799,8 @@ class FeedbackAnalyticsEngine:
                     "Dengan pendekatan ini, manajemen dapat lebih cepat memutuskan layanan mana yang perlu ditangani lebih dahulu."
                 ),
                 "",
+                score_projection_table,
+                "",
                 service_risk_table,
                 "",
                 *risk_lines,
@@ -1370,6 +1816,11 @@ class FeedbackAnalyticsEngine:
                 "",
                 *segment_lines,
                 "",
+                "### Pembacaan customer journey ke depan",
+                journey_projection_table,
+                "",
+                *journey_lines,
+                "",
                 "## 3.3 Tren Eksternal yang Berpotensi Memperbesar Risiko",
                 (
                     "Sinyal eksternal digunakan sebagai benchmark untuk membaca apakah tantangan yang muncul berasal "
@@ -1383,17 +1834,20 @@ class FeedbackAnalyticsEngine:
             ]
         )
 
-    def _prescriptive_markdown(self, timeframe_df):
+    def _prescriptive_markdown(self, timeframe_df, context):
         if timeframe_df.empty:
             return (
                 "## 4.1 Intervensi Prioritas 30 Hari\n"
-                "Tidak ada feedback internal yang tersedia untuk periode ini.\n"
+                "Tidak ada feedback internal yang sesuai dengan kombinasi filter yang dipilih untuk periode ini.\n"
             )
 
-        theme_hits = self._theme_hits(timeframe_df)
+        theme_hits = {theme["id"]: theme for theme in self._theme_hits(timeframe_df)}
         prioritized_actions = []
         prioritized_rows = []
-        for theme in theme_hits:
+        for score_theme in context["score_metrics"]["theme_rows"]:
+            theme = theme_hits.get(score_theme["theme_id"])
+            if not theme:
+                continue
             if theme["negative_hits"] <= 0:
                 continue
             action_index = len(prioritized_actions) + 1
@@ -1452,7 +1906,7 @@ class FeedbackAnalyticsEngine:
         )
         prescriptive_intro = (
             "Bagian preskriptif menerjemahkan temuan sebelumnya ke dalam tindakan yang dapat dibahas dan diputuskan dalam forum internal. "
-            "Urutan prioritas disusun berdasarkan intensitas sinyal negatif, potensi dampak ke pengalaman pelanggan, dan kebutuhan koordinasi lintas fungsi."
+            f"Urutan prioritas disusun berdasarkan intensitas sinyal negatif, potensi dampak ke pengalaman pelanggan, dan kebutuhan koordinasi lintas fungsi dari sudut pandang {context['score_profile']['label']}."
         )
 
         return "\n".join(
@@ -1486,11 +1940,11 @@ class FeedbackAnalyticsEngine:
             ]
         )
 
-    def _implementation_readiness_markdown(self, timeframe_df, timeframe, notes, macro_trends):
+    def _implementation_readiness_markdown(self, timeframe_df, timeframe, notes, macro_trends, context):
         if timeframe_df.empty:
             return (
                 "## 5.1 Prioritas Sasaran Bisnis\n"
-                "Tidak ada feedback internal yang tersedia untuk periode ini.\n"
+                "Tidak ada feedback internal yang sesuai dengan kombinasi filter yang dipilih untuk periode ini.\n"
             )
 
         total_rows = len(timeframe_df)
@@ -1573,7 +2027,7 @@ class FeedbackAnalyticsEngine:
                     f"Prioritas implementasi yang paling konkret saat ini adalah memperkuat tata kelola feedback untuk mendeteksi lebih dini "
                     f"risiko pada layanan {top_service_name} dan memantau pengalaman segmen {top_segment_name}. "
                     f"Dengan rata-rata rating {round(avg_rating, 2) if pd.notna(avg_rating) else 0.0} dan sinyal negatif {negative_share}%, "
-                    "laporan ini sudah memiliki dasar yang cukup jelas untuk diterjemahkan ke keputusan bisnis."
+                    f"laporan ini sudah memiliki dasar yang cukup jelas untuk diterjemahkan ke keputusan bisnis. Fokus use case saat ini dibaca pada {context['scope_text']}."
                 ),
                 "implication": (
                     "Inisiatif ini sebaiknya tidak diposisikan sebagai eksperimen AI yang abstrak, melainkan sebagai use case "
@@ -1722,7 +2176,8 @@ class FeedbackAnalyticsEngine:
                 "",
                 (
                     f"Untuk periode {timeframe}, pertimbangan implementasi perlu dilihat bersama konteks berikut: "
-                    f"{osint_note} Dengan demikian, forum internal dapat menilai bukan hanya apa yang harus diperbaiki, "
+                    f"{osint_note} Analisis saat ini dibaca menggunakan {context['score_profile']['label']} dengan fokus pada {context['score_profile']['narrative_focus']}. "
+                    "Dengan demikian, forum internal dapat menilai bukan hanya apa yang harus diperbaiki, "
                     "tetapi juga seberapa siap organisasi untuk menjalankan inisiatif ini secara lebih sistematis."
                 ),
                 "",
@@ -1732,14 +2187,35 @@ class FeedbackAnalyticsEngine:
             ]
         )
 
-    def build_report_sections(self, timeframe, notes, macro_trends):
-        timeframe_df = self._filter_timeframe(timeframe)
+    def build_report_sections(
+        self,
+        timeframe,
+        notes,
+        macro_trends,
+        sentiment="all",
+        segment="all",
+        score_engine=DEFAULT_SCORE_ENGINE,
+    ):
+        timeframe_df = self._filter_view(timeframe, sentiment=sentiment, segment=segment)
+        context = self._build_analysis_context(
+            timeframe_df,
+            timeframe,
+            sentiment,
+            segment,
+            score_engine,
+        )
         section_map = {
-            "cx_chap_1": self._descriptive_markdown(timeframe_df, timeframe, notes),
-            "cx_chap_2": self._diagnostic_markdown(timeframe_df),
-            "cx_chap_3": self._predictive_markdown(timeframe_df, macro_trends),
-            "cx_chap_4": self._prescriptive_markdown(timeframe_df),
-            "cx_chap_5": self._implementation_readiness_markdown(timeframe_df, timeframe, notes, macro_trends),
+            "cx_chap_1": self._descriptive_markdown(timeframe_df, timeframe, notes, context),
+            "cx_chap_2": self._diagnostic_markdown(timeframe_df, context),
+            "cx_chap_3": self._predictive_markdown(timeframe_df, macro_trends, context),
+            "cx_chap_4": self._prescriptive_markdown(timeframe_df, context),
+            "cx_chap_5": self._implementation_readiness_markdown(
+                timeframe_df,
+                timeframe,
+                notes,
+                macro_trends,
+                context,
+            ),
         }
 
         sections = []
@@ -1753,14 +2229,28 @@ class FeedbackAnalyticsEngine:
             )
         return sections
 
-    def build_executive_snapshot(self, timeframe, notes=""):
-        timeframe_df = self._filter_timeframe(timeframe)
+    def build_executive_snapshot(
+        self,
+        timeframe,
+        notes="",
+        sentiment="all",
+        segment="all",
+        score_engine=DEFAULT_SCORE_ENGINE,
+    ):
+        timeframe_df = self._filter_view(timeframe, sentiment=sentiment, segment=segment)
         if timeframe_df.empty:
             return (
                 "## Ringkasan Eksekutif\n"
-                "- Tidak ada data internal yang cukup untuk menyusun snapshot eksekutif.\n"
+                "- Tidak ada data internal yang cukup untuk menyusun snapshot eksekutif pada kombinasi filter yang dipilih.\n"
             )
 
+        context = self._build_analysis_context(
+            timeframe_df,
+            timeframe,
+            sentiment,
+            segment,
+            score_engine,
+        )
         total_rows = len(timeframe_df)
         avg_rating = timeframe_df["Rating Numeric"].mean()
         negative_count = int((timeframe_df["Sentiment Label"] == "negative").sum())
@@ -1775,6 +2265,8 @@ class FeedbackAnalyticsEngine:
         theme_hits = self._theme_hits(timeframe_df)
         top_issue = next((theme for theme in theme_hits if theme["negative_hits"] > 0), None)
         focus_text = notes.strip() if notes and notes.strip() else "Tidak ada fokus tambahan dari pengguna."
+        dominant_journey = context["dominant_journey"]
+        score_metrics = context["score_metrics"]
 
         risk_statement = (
             f"- Risiko teratas saat ini ada pada layanan {top_risk[0]['label']} "
@@ -1784,6 +2276,7 @@ class FeedbackAnalyticsEngine:
         )
         executive_intro = (
             f"Laporan ini merangkum kondisi pengalaman pelanggan untuk periode {timeframe} berdasarkan {total_rows} feedback tervalidasi. "
+            f"Analisis saat ini dibaca pada {context['scope_text']} dengan fokus pada {context['score_profile']['narrative_focus']}. "
             f"Secara umum, rata-rata rating berada pada level {round(avg_rating, 2) if pd.notna(avg_rating) else 0.0} dari 5, "
             f"yang menunjukkan kualitas layanan {self._rating_assessment(avg_rating)}. "
             f"Proporsi sentimen negatif tercatat sebesar {negative_share}% ({negative_count} feedback), sehingga kondisi ini "
@@ -1793,12 +2286,15 @@ class FeedbackAnalyticsEngine:
             f"Untuk kebutuhan rapat internal, perhatian utama sebaiknya diarahkan pada layanan "
             f"{top_risk[0]['label'] if top_risk else self._primary_label(top_service, 'yang memiliki volume feedback terbesar')} "
             f"serta pada isu {top_issue['label'] if top_issue else 'konsistensi kualitas layanan'}. "
+            f"{self._projection_sentence(context)} "
             f"Fokus tambahan yang diminta pengguna: {focus_text}"
         )
         snapshot_table = self._markdown_table(
             ["Indikator Kunci", "Nilai"],
             [
                 ["Total feedback dianalisis", f"{total_rows} record"],
+                ["Cakupan analisis", context["scope_text"]],
+                [context["score_profile"]["label"], f"{score_metrics['current_score']} / 100"],
                 ["Rata-rata rating", f"{round(avg_rating, 2) if pd.notna(avg_rating) else 0.0} dari 5"],
                 ["Proporsi sentimen negatif", f"{negative_share}%"],
                 ["Layanan dengan volume terbesar", self._primary_label(top_service, "Belum terpetakan")],
@@ -1816,6 +2312,11 @@ class FeedbackAnalyticsEngine:
                 f"- Bagaimana tindak lanjut yang paling tepat untuk tema {top_issue['label']} agar tidak berkembang menjadi keluhan berulang?"
                 if top_issue
                 else "- Kekuatan layanan mana yang paling layak distandardisasi dan direplikasi?"
+            ),
+            (
+                f"- Tahap customer journey mana yang paling perlu dikoreksi lebih dulu, mengingat titik gesekan terbesar saat ini berada pada {dominant_journey['stage_label']}?"
+                if dominant_journey
+                else "- Tahap customer journey mana yang paling perlu dipetakan lebih rinci pada periode berikutnya?"
             ),
             "- Apakah tata kelola sumber, kanal, dan owner tindak lanjut sudah cukup jelas untuk mendukung evaluasi periodik berikutnya?",
         ]
@@ -1838,6 +2339,12 @@ class FeedbackAnalyticsEngine:
                 f"- Volume layanan terbesar: {top_service.index[0] if not top_service.empty else 'Belum terpetakan'}.",
                 f"- Segmen dengan volume terbesar: {top_stakeholder.index[0] if not top_stakeholder.empty else 'Belum terpetakan'}.",
                 f"- Proporsi sentimen negatif: {negative_share}%.",
+                f"- {context['score_profile']['label']} saat ini: {score_metrics['current_score']} dengan proyeksi {score_metrics['direction']} ke {score_metrics['projected_score']}.",
+                (
+                    f"- Tahap customer journey yang paling perlu diperhatikan: {dominant_journey['stage_label']}."
+                    if dominant_journey
+                    else "- Pemetaan customer journey belum menunjukkan titik perhatian yang dominan."
+                ),
                 risk_statement,
                 "- Struktur laporan ini disusun untuk mendukung analisis Descriptive, Diagnostic, Predictive, Prescriptive, serta kesiapan implementasi dan penguatan organisasi secara konsisten.",
             ]
@@ -2269,13 +2776,31 @@ class ReportGenerator:
         self.kb = kb_instance
         self.research_pool = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 
-    def run(self, timeframe, notes=""):
-        logger.info("Starting feedback intelligence report generation for timeframe: %s", timeframe)
+    def run(
+        self,
+        timeframe,
+        notes="",
+        sentiment="all",
+        segment="all",
+        score_engine=DEFAULT_SCORE_ENGINE,
+    ):
+        logger.info(
+            "Starting feedback intelligence report generation for timeframe=%s, sentiment=%s, segment=%s, score_engine=%s",
+            timeframe,
+            sentiment,
+            segment,
+            score_engine,
+        )
+        score_profile = SCORE_ENGINE_PROFILES.get(
+            score_engine,
+            SCORE_ENGINE_PROFILES[DEFAULT_SCORE_ENGINE],
+        )
 
         macro_future = self.research_pool.submit(
             Researcher.get_macro_trends,
             timeframe,
             notes,
+            score_profile["label"],
         )
 
         try:
@@ -2284,8 +2809,21 @@ class ReportGenerator:
             macro_trends = "Tidak ada tren eksternal yang berhasil dimuat."
 
         analytics = FeedbackAnalyticsEngine(self.kb.df)
-        executive_snapshot = analytics.build_executive_snapshot(timeframe, notes)
-        report_sections = analytics.build_report_sections(timeframe, notes, macro_trends)
+        executive_snapshot = analytics.build_executive_snapshot(
+            timeframe,
+            notes,
+            sentiment=sentiment,
+            segment=segment,
+            score_engine=score_engine,
+        )
+        report_sections = analytics.build_report_sections(
+            timeframe,
+            notes,
+            macro_trends,
+            sentiment=sentiment,
+            segment=segment,
+            score_engine=score_engine,
+        )
 
         document = Document()
         DocumentBuilder.create_cover(document, timeframe, DEFAULT_COLOR)
@@ -2307,5 +2845,7 @@ class ReportGenerator:
             if index < len(report_sections) - 1:
                 document.add_page_break()
 
-        filename = f"Inixindo_Feedback_Intelligence_Report_{timeframe}".replace(" ", "_")
+        filename = (
+            f"Inixindo_Feedback_Intelligence_Report_{score_profile['label']}_{timeframe}"
+        ).replace(" ", "_")
         return document, filename

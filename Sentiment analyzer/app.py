@@ -4,7 +4,14 @@ import os
 from flask import Flask, jsonify, render_template, request, send_file
 from flask_cors import CORS
 
-from config import APP_MODE, DB_URI, SMART_SUGGESTIONS
+from config import (
+    APP_MODE,
+    DB_URI,
+    DEFAULT_SCORE_ENGINE,
+    SCORE_ENGINE_OPTIONS,
+    SENTIMENT_OPTIONS,
+    SMART_SUGGESTIONS,
+)
 from core import KnowledgeBase, ReportGenerator
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
@@ -50,10 +57,20 @@ def get_config():
         )
 
     timeframes = sorted(kb.df["Rentang Waktu"].dropna().unique().tolist())
+    segments = sorted(
+        value
+        for value in kb.df["Tipe Stakeholder"].fillna("").astype(str).str.strip().unique().tolist()
+        if value
+    )
 
     return jsonify(
         {
             "timeframes": timeframes,
+            "sentiments": SENTIMENT_OPTIONS,
+            "segments": [{"id": "all", "label": "Semua Segmen"}]
+            + [{"id": segment, "label": segment} for segment in segments],
+            "score_engines": SCORE_ENGINE_OPTIONS,
+            "default_score_engine": DEFAULT_SCORE_ENGINE,
             "suggestions": SMART_SUGGESTIONS,
         }
     )
@@ -64,12 +81,27 @@ def generate_report():
     data = request.get_json(silent=True) or {}
     timeframe = data.get("timeframe")
     notes = data.get("notes", "")
+    sentiment = data.get("sentiment", "all")
+    segment = data.get("segment", "all")
+    score_engine = data.get("score_engine", DEFAULT_SCORE_ENGINE)
 
     if not timeframe:
         return jsonify({"error": "Parameter 'timeframe' wajib diisi."}), 400
 
-    logger.info("Generating report for timeframe '%s'.", timeframe)
-    doc, filename = generator.run(timeframe, notes)
+    logger.info(
+        "Generating report for timeframe='%s', sentiment='%s', segment='%s', score_engine='%s'.",
+        timeframe,
+        sentiment,
+        segment,
+        score_engine,
+    )
+    doc, filename = generator.run(
+        timeframe,
+        notes,
+        sentiment=sentiment,
+        segment=segment,
+        score_engine=score_engine,
+    )
 
     out = io.BytesIO()
     doc.save(out)

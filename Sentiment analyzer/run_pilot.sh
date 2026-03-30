@@ -10,6 +10,11 @@ export PORT="${PORT:-8000}"
 export WAITRESS_THREADS="${WAITRESS_THREADS:-8}"
 export WAITRESS_CONNECTION_LIMIT="${WAITRESS_CONNECTION_LIMIT:-100}"
 export WAITRESS_CHANNEL_TIMEOUT="${WAITRESS_CHANNEL_TIMEOUT:-240}"
+export RESEED_DEMO_DATA="${RESEED_DEMO_DATA:-0}"
+
+if [[ "$APP_MODE" == "demo" && "$RESEED_DEMO_DATA" == "1" ]]; then
+  python3 seed_demo_data.py
+fi
 
 exec python3 -m waitress \
   --host="$HOST" \
