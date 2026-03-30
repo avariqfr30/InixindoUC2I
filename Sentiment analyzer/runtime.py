@@ -74,7 +74,7 @@ class ReportJobManager:
 
     @staticmethod
     def _utc_now():
-        return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+        return datetime.utcnow().isoformat(timespec="milliseconds") + "Z"
 
     def _expired_job_ids(self):
         cutoff = datetime.utcnow() - timedelta(seconds=self.retention_seconds)
@@ -133,10 +133,15 @@ class ReportJobManager:
             "started_at": None,
             "completed_at": None,
             "duration_seconds": None,
+            "queue_wait_seconds": None,
+            "generation_seconds": None,
+            "total_elapsed_seconds": None,
             "error": None,
             "filename": None,
             "artifact_path": None,
             "artifact_size_bytes": None,
+            "quality": None,
+            "_submitted_monotonic": time.perf_counter(),
             "input": {
                 "timeframe": payload["timeframe"],
                 "sentiment": payload.get("sentiment", "all"),
@@ -171,10 +176,14 @@ class ReportJobManager:
             job["status"] = "running"
             job["started_at"] = self._utc_now()
             job["updated_at"] = job["started_at"]
+            job["queue_wait_seconds"] = round(
+                start_time - job.get("_submitted_monotonic", start_time),
+                2,
+            )
             self._persist_state()
 
         try:
-            document, filename = self.generator.run(
+            document, filename, quality = self.generator.run(
                 payload["timeframe"],
                 payload.get("notes", ""),
                 sentiment=payload.get("sentiment", "all"),
@@ -183,26 +192,41 @@ class ReportJobManager:
             )
             artifact_path = os.path.join(self.artifact_dir, f"{job_id}.docx")
             document.save(artifact_path)
+            generation_seconds = round(time.perf_counter() - start_time, 2)
+            total_elapsed_seconds = round(
+                time.perf_counter() - job.get("_submitted_monotonic", start_time),
+                2,
+            )
 
             with self.lock:
                 job = self.jobs[job_id]
                 job["status"] = "completed"
                 job["completed_at"] = self._utc_now()
                 job["updated_at"] = job["completed_at"]
-                job["duration_seconds"] = round(time.perf_counter() - start_time, 2)
+                job["duration_seconds"] = generation_seconds
+                job["generation_seconds"] = generation_seconds
+                job["total_elapsed_seconds"] = total_elapsed_seconds
                 job["filename"] = f"{filename}.docx"
                 job["artifact_path"] = artifact_path
                 job["artifact_size_bytes"] = os.path.getsize(artifact_path)
+                job["quality"] = quality
                 job["error"] = None
                 self._persist_state()
         except Exception as exc:
             logger.exception("Report job %s failed.", job_id)
+            generation_seconds = round(time.perf_counter() - start_time, 2)
+            total_elapsed_seconds = round(
+                time.perf_counter() - self.jobs[job_id].get("_submitted_monotonic", start_time),
+                2,
+            )
             with self.lock:
                 job = self.jobs[job_id]
                 job["status"] = "failed"
                 job["completed_at"] = self._utc_now()
                 job["updated_at"] = job["completed_at"]
-                job["duration_seconds"] = round(time.perf_counter() - start_time, 2)
+                job["duration_seconds"] = generation_seconds
+                job["generation_seconds"] = generation_seconds
+                job["total_elapsed_seconds"] = total_elapsed_seconds
                 job["error"] = str(exc)
                 self._persist_state()
 
@@ -211,7 +235,11 @@ class ReportJobManager:
         if not job:
             return None
 
-        job_copy = dict(job)
+        job_copy = {
+            key: value
+            for key, value in job.items()
+            if not str(key).startswith("_")
+        }
         artifact_path = job_copy.pop("artifact_path", None)
         if artifact_path and not os.path.exists(artifact_path):
             job_copy["status"] = "failed"

@@ -206,8 +206,17 @@
         function completeJob(job) {
             clearPolling();
             document.getElementById('spinner').classList.remove('active');
-            ui.successMeta.textContent = `Job ${job.job_id} selesai dalam ${job.duration_seconds || '-'} detik.`;
-            showJobStatus('Laporan selesai disiapkan dan unduhan akan dimulai.', 'success');
+            const quality = job.quality || {};
+            const completenessText = quality.completeness_score != null
+                ? ` Verifikasi kelengkapan: ${quality.completeness_score}% (${quality.verified_complete ? 'verified' : 'needs review'}).`
+                : '';
+            const timingText = `Job ${job.job_id} selesai. Queue wait ${job.queue_wait_seconds || 0} detik, proses generasi ${job.generation_seconds || job.duration_seconds || '-'} detik, total ${job.total_elapsed_seconds || '-'} detik.`;
+            ui.successMeta.textContent = `${timingText}${completenessText}`;
+            if (quality.verified_complete === false) {
+                showJobStatus('Laporan selesai dan akan diunduh, tetapi verifikasi kelengkapan meminta review manual tambahan.');
+            } else {
+                showJobStatus('Laporan selesai disiapkan dan unduhan akan dimulai.', 'success');
+            }
             startDownload(job.download_url, job.filename);
             ui.reviewStep.classList.add('hidden');
             ui.successStep.classList.remove('hidden');

@@ -129,7 +129,7 @@ def generate_report():
         payload["segment"],
         payload["score_engine"],
     )
-    doc, filename = generator.run(
+    doc, filename, quality = generator.run(
         timeframe,
         payload["notes"],
         sentiment=payload["sentiment"],
@@ -141,12 +141,15 @@ def generate_report():
     doc.save(out)
     out.seek(0)
 
-    return send_file(
+    response = send_file(
         out,
         as_attachment=True,
         download_name=f"{filename}.docx",
         mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     )
+    response.headers["X-Report-Completeness"] = str(quality["completeness_score"])
+    response.headers["X-Report-Verified"] = str(quality["verified_complete"]).lower()
+    return response
 
 
 @app.route("/generate-job", methods=["POST"])

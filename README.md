@@ -188,6 +188,16 @@ Endpoint yang relevan:
 * `GET /jobs/<job_id>` untuk membaca status, durasi, dan metadata job.
 * `GET /download/<job_id>` untuk mengambil dokumen yang sudah selesai.
 
+Metadata job sekarang juga memisahkan:
+
+* `queue_wait_seconds`
+* `generation_seconds`
+* `total_elapsed_seconds`
+* `quality.completeness_score`
+* `quality.verified_complete`
+
+Dengan begitu, KPI waktu per tugas dan target dokumen `80% finished` bisa dibaca lebih jelas saat simulasi VPS berlangsung.
+
 Environment variable tambahan yang berguna untuk simulasi VPS:
 
 * `REPORT_JOB_WORKERS`: jumlah worker background untuk generate report.
