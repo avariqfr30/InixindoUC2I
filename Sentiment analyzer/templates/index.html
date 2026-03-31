@@ -32,11 +32,24 @@
         .status-panel.active { display: block; }
         .status-panel.error { border-color: #fecaca; background: #fef2f2; color: #991b1b; }
         .status-panel.success { border-color: #bbf7d0; background: #f0fdf4; color: #166534; }
-        .editor-toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
-        .toolbar-btn { width: auto; margin: 0; padding: 8px 12px; border-radius: 999px; background: #f8fafc; color: #334155; border: 1px solid #cbd5e1; font-size: 0.85rem; font-weight: 600; }
+        .editor-shell { border: 1px solid #cbd5e1; border-radius: 12px; background: white; overflow: hidden; margin-bottom: 10px; }
+        .editor-toolbar { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px; margin-bottom: 0; border-bottom: 1px solid #e2e8f0; background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%); }
+        .toolbar-btn { width: auto; margin: 0; padding: 8px 10px; border-radius: 8px; background: white; color: #334155; border: 1px solid #cbd5e1; font-size: 0.82rem; font-weight: 700; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05); }
         .toolbar-btn:hover { background: #fff1f2; border-color: #cc0000; color: #991b1b; }
         .toolbar-btn:disabled { background: #e2e8f0; color: #94a3b8; border-color: #cbd5e1; }
+        .toolbar-separator { width: 1px; align-self: stretch; background: #e2e8f0; margin: 0 2px; }
+        .rich-editor { min-height: 170px; padding: 16px; font-size: 1rem; line-height: 1.6; color: #334155; outline: none; }
+        .rich-editor:empty:before { content: attr(data-placeholder); color: #94a3b8; }
+        .rich-editor p, .rich-editor h2, .rich-editor h3, .rich-editor blockquote, .rich-editor ul, .rich-editor ol { margin: 0 0 0.85rem 0; }
+        .rich-editor h2 { font-size: 1.15rem; color: #0f172a; }
+        .rich-editor h3 { font-size: 1rem; color: #0f172a; }
+        .rich-editor blockquote { border-left: 4px solid #fecaca; padding-left: 12px; color: #475569; background: #fff7f7; }
+        .rich-editor ul, .rich-editor ol { padding-left: 24px; }
+        .editor-plain-text { display: none; }
         .editor-helper { color: #64748b; font-size: 0.8rem; margin: 0 0 10px 0; line-height: 1.4; }
+        .review-notes ul, .review-notes ol { margin: 8px 0 8px 20px; }
+        .review-notes blockquote { border-left: 3px solid #fecaca; margin: 8px 0; padding-left: 10px; color: #475569; }
+        .review-notes h2, .review-notes h3 { margin: 10px 0 6px 0; color: #0f172a; }
 
         .chip-container { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
         .chip { background: #e2e8f0; color: #475569; padding: 6px 12px; border-radius: 16px; font-size: 0.85rem; cursor: pointer; transition: 0.2s; border: 1px solid transparent; }
@@ -85,15 +98,25 @@
 
             <div id="container-discovery" class="hidden" style="margin-top: 15px; padding-top: 20px; border-top: 1px solid #e2e8f0;">
                 <label for="input-notes">Instruksi Spesifik untuk AI (Opsional)</label>
-                <div class="editor-toolbar">
-                    <button type="button" class="toolbar-btn" data-format="bullet">• Bullet</button>
-                    <button type="button" class="toolbar-btn" data-format="number">1. Number</button>
-                    <button type="button" class="toolbar-btn" data-format="heading">Heading</button>
-                    <button type="button" class="toolbar-btn" data-format="quote">&gt; Quote</button>
-                    <button type="button" class="toolbar-btn" data-format="clear">Clear Prefix</button>
+                <div class="editor-shell">
+                    <div class="editor-toolbar">
+                        <button type="button" class="toolbar-btn" data-command="bold" title="Bold"><strong>B</strong></button>
+                        <button type="button" class="toolbar-btn" data-command="italic" title="Italic"><em>I</em></button>
+                        <button type="button" class="toolbar-btn" data-command="underline" title="Underline"><u>U</u></button>
+                        <span class="toolbar-separator" aria-hidden="true"></span>
+                        <button type="button" class="toolbar-btn" data-command="formatBlock" data-value="H2" title="Heading">H2</button>
+                        <button type="button" class="toolbar-btn" data-command="formatBlock" data-value="P" title="Paragraph">P</button>
+                        <span class="toolbar-separator" aria-hidden="true"></span>
+                        <button type="button" class="toolbar-btn" data-command="insertUnorderedList" title="Bullet List">• List</button>
+                        <button type="button" class="toolbar-btn" data-command="insertOrderedList" title="Numbered List">1. List</button>
+                        <button type="button" class="toolbar-btn" data-command="formatBlock" data-value="BLOCKQUOTE" title="Quote">&gt; Quote</button>
+                        <span class="toolbar-separator" aria-hidden="true"></span>
+                        <button type="button" class="toolbar-btn" data-command="removeFormat" data-clear-block="true" title="Clear Formatting">Clear</button>
+                    </div>
+                    <div id="notes-editor" class="rich-editor" contenteditable="true" data-placeholder="Tulis catatan, arahan, atau poin diskusi di sini..."></div>
                 </div>
-                <p class="editor-helper">Gunakan toolbar ini untuk menyusun catatan dalam format ringan. Bullet, numbering, heading, dan quote akan tetap dikirim sebagai plain text agar aman untuk server dan mudah diproses.</p>
-                <textarea id="input-notes" placeholder="Atau klik rekomendasi instruksi di bawah ini..."></textarea>
+                <p class="editor-helper">Editor ini terasa seperti toolbar dokumen ringan. Format visual tetap nyaman untuk pengguna, sementara sistem akan mengubahnya menjadi plain text terstruktur saat dikirim ke server.</p>
+                <textarea id="input-notes" class="editor-plain-text" aria-hidden="true" tabindex="-1"></textarea>
                 
                 <div id="suggestion-container" class="chip-container"></div>
             </div>
@@ -135,6 +158,7 @@
             selectScoreEngine: document.getElementById('select-score-engine'),
             scoreEngineHelper: document.getElementById('score-engine-helper'),
             inputNotes: document.getElementById('input-notes'),
+            notesEditor: document.getElementById('notes-editor'),
             suggestionContainer: document.getElementById('suggestion-container'),
             containerDiscovery: document.getElementById('container-discovery'),
             reviewText: document.getElementById('review-text'),
@@ -184,58 +208,153 @@
             return String(text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         }
 
-        function setTextareaValue(value, start, end) {
-            ui.inputNotes.value = value;
-            ui.inputNotes.focus();
-            ui.inputNotes.setSelectionRange(start, end);
-        }
+        function sanitizeEditorHtml(html) {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(`<div>${html || ''}</div>`, 'text/html');
+            const allowedTags = new Set(['DIV', 'P', 'BR', 'STRONG', 'B', 'EM', 'I', 'U', 'UL', 'OL', 'LI', 'H2', 'H3', 'BLOCKQUOTE']);
 
-        function applyLineFormatter(formatType) {
-            const textarea = ui.inputNotes;
-            const value = textarea.value;
-            const selectionStart = textarea.selectionStart;
-            const selectionEnd = textarea.selectionEnd;
-            const blockStart = value.lastIndexOf('\n', Math.max(0, selectionStart - 1)) + 1;
-            const nextNewline = value.indexOf('\n', selectionEnd);
-            const blockEnd = nextNewline === -1 ? value.length : nextNewline;
-            const selectedBlock = value.slice(blockStart, blockEnd);
-            const originalLines = selectedBlock.split('\n');
+            function sanitizeNode(node) {
+                if (node.nodeType === Node.TEXT_NODE) return;
+                if (node.nodeType !== Node.ELEMENT_NODE) {
+                    node.remove();
+                    return;
+                }
 
-            const clearPrefix = (line) => line.replace(/^(\s*)([-*]\s+|\d+\.\s+|#+\s+|>\s+)/, '$1');
-            let transformedLines = [...originalLines];
+                const tagName = node.tagName;
+                if (!allowedTags.has(tagName)) {
+                    const fragment = document.createDocumentFragment();
+                    while (node.firstChild) {
+                        fragment.appendChild(node.firstChild);
+                    }
+                    node.replaceWith(fragment);
+                    return;
+                }
 
-            if (formatType === 'bullet') {
-                transformedLines = originalLines.map(line => {
-                    if (!line.trim()) return '- ';
-                    if (/^\s*[-*]\s+/.test(line)) return line;
-                    return `- ${clearPrefix(line).trimStart()}`;
-                });
-            } else if (formatType === 'number') {
-                let counter = 1;
-                transformedLines = originalLines.map(line => {
-                    const cleanLine = clearPrefix(line).trimStart();
-                    const prefix = `${counter}. `;
-                    counter += 1;
-                    return cleanLine ? `${prefix}${cleanLine}` : prefix;
-                });
-            } else if (formatType === 'heading') {
-                transformedLines = originalLines.map(line => {
-                    const cleanLine = clearPrefix(line).trimStart();
-                    return cleanLine ? `## ${cleanLine}` : '## ';
-                });
-            } else if (formatType === 'quote') {
-                transformedLines = originalLines.map(line => {
-                    const cleanLine = clearPrefix(line).trimStart();
-                    return cleanLine ? `> ${cleanLine}` : '> ';
-                });
-            } else if (formatType === 'clear') {
-                transformedLines = originalLines.map(line => clearPrefix(line));
+                [...node.attributes].forEach(attr => node.removeAttribute(attr.name));
+                [...node.childNodes].forEach(child => sanitizeNode(child));
             }
 
-            const replacement = transformedLines.join('\n');
-            const updatedValue = `${value.slice(0, blockStart)}${replacement}${value.slice(blockEnd)}`;
-            const newSelectionEnd = blockStart + replacement.length;
-            setTextareaValue(updatedValue, blockStart, newSelectionEnd);
+            [...doc.body.childNodes].forEach(child => sanitizeNode(child));
+            return doc.body.innerHTML.trim();
+        }
+
+        function normalizeEditorStructure() {
+            const html = sanitizeEditorHtml(ui.notesEditor.innerHTML);
+            if (!html) {
+                ui.notesEditor.innerHTML = '';
+                return;
+            }
+            ui.notesEditor.innerHTML = html;
+        }
+
+        function serializeInline(node) {
+            if (node.nodeType === Node.TEXT_NODE) return node.textContent || '';
+            if (node.nodeType !== Node.ELEMENT_NODE) return '';
+
+            if (node.tagName === 'BR') return '\n';
+            if (node.tagName === 'UL' || node.tagName === 'OL') return '';
+
+            return [...node.childNodes].map(child => serializeInline(child)).join('');
+        }
+
+        function serializeList(node, depth = 0) {
+            const ordered = node.tagName === 'OL';
+            const lines = [];
+
+            [...node.children].forEach((item, index) => {
+                if (item.tagName !== 'LI') return;
+                const nestedLists = [...item.children].filter(child => child.tagName === 'UL' || child.tagName === 'OL');
+                const contentParts = [...item.childNodes]
+                    .filter(child => !nestedLists.includes(child))
+                    .map(child => serializeInline(child))
+                    .join('')
+                    .replace(/\s+/g, ' ')
+                    .trim();
+
+                const prefix = `${'  '.repeat(depth)}${ordered ? `${index + 1}.` : '-'}`;
+                lines.push(contentParts ? `${prefix} ${contentParts}` : prefix);
+
+                nestedLists.forEach(listNode => {
+                    const nested = serializeList(listNode, depth + 1);
+                    if (nested) lines.push(nested);
+                });
+            });
+
+            return lines.join('\n');
+        }
+
+        function serializeBlock(node) {
+            if (node.nodeType === Node.TEXT_NODE) {
+                return node.textContent.replace(/\s+/g, ' ').trim();
+            }
+            if (node.nodeType !== Node.ELEMENT_NODE) return '';
+
+            const tag = node.tagName;
+            if (tag === 'UL' || tag === 'OL') return serializeList(node);
+
+            const inlineText = [...node.childNodes].map(child => serializeInline(child)).join('').replace(/\s+/g, ' ').trim();
+
+            if (tag === 'H2' || tag === 'H3') {
+                return inlineText ? `## ${inlineText}` : '';
+            }
+            if (tag === 'BLOCKQUOTE') {
+                return inlineText
+                    .split('\n')
+                    .map(line => line.trim())
+                    .filter(Boolean)
+                    .map(line => `> ${line}`)
+                    .join('\n');
+            }
+            if (tag === 'P' || tag === 'DIV') {
+                return inlineText;
+            }
+            return inlineText;
+        }
+
+        function syncNotesState() {
+            const html = sanitizeEditorHtml(ui.notesEditor.innerHTML);
+            if (!html) {
+                ui.inputNotes.value = '';
+                return {
+                    html: '',
+                    text: '',
+                };
+            }
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(`<div>${html}</div>`, 'text/html');
+            const rootNode = doc.body.firstChild;
+            const lines = [...rootNode.childNodes]
+                .map(node => serializeBlock(node))
+                .filter(Boolean);
+            ui.inputNotes.value = lines.join('\n\n').replace(/\n{3,}/g, '\n\n').trim();
+            return {
+                html,
+                text: ui.inputNotes.value,
+            };
+        }
+
+        function executeEditorCommand(command, value = null, clearBlock = false) {
+            ui.notesEditor.focus();
+            document.execCommand('styleWithCSS', false, false);
+            document.execCommand(command, false, value);
+            if (clearBlock) {
+                document.execCommand('formatBlock', false, 'P');
+            }
+            normalizeEditorStructure();
+            syncNotesState();
+        }
+
+        function insertSuggestionText(text) {
+            ui.notesEditor.focus();
+            const currentText = syncNotesState().text.trim();
+            const prefix = currentText ? '\n' : '';
+            document.execCommand('insertText', false, `${prefix}${text}`);
+            normalizeEditorStructure();
+            syncNotesState();
+        }
+
+        function getNotesPayload() {
+            return syncNotesState();
         }
 
         function showJobStatus(message, tone = 'neutral') {
@@ -355,11 +474,7 @@
                     chip.className = 'chip';
                     chip.innerText = "+ " + text;
                     chip.onclick = () => {
-                        let currentText = ui.inputNotes.value.trim();
-                        if (currentText && !currentText.endsWith('.')) currentText += '. ';
-                        else if (currentText) currentText += ' ';
-                        ui.inputNotes.value = currentText + text;
-                        ui.inputNotes.focus();
+                        insertSuggestionText(text);
                     };
                     ui.suggestionContainer.appendChild(chip);
                 });
@@ -419,14 +534,43 @@
         };
 
         ui.toolbarButtons.forEach(button => {
+            button.addEventListener('mousedown', event => {
+                event.preventDefault();
+            });
             button.addEventListener('click', () => {
-                applyLineFormatter(button.dataset.format);
+                executeEditorCommand(
+                    button.dataset.command,
+                    button.dataset.value || null,
+                    button.dataset.clearBlock === 'true',
+                );
             });
         });
+
+        ui.notesEditor.addEventListener('input', () => {
+            syncNotesState();
+        });
+
+        ui.notesEditor.addEventListener('blur', () => {
+            normalizeEditorStructure();
+            syncNotesState();
+        });
+
+        ui.notesEditor.addEventListener('paste', event => {
+            event.preventDefault();
+            const text = (event.clipboardData || window.clipboardData).getData('text/plain');
+            document.execCommand('insertText', false, text);
+            normalizeEditorStructure();
+            syncNotesState();
+        });
+
+        ui.notesEditor.innerHTML = '';
+        syncNotesState();
         
         ui.btnReview.onclick = () => { 
             clearJobStatus();
-            const notes = ui.inputNotes.value.trim();
+            const notesPayload = getNotesPayload();
+            const notesText = notesPayload.text.trim();
+            const notesHtml = notesPayload.html.trim();
             let html = `
                 <div class="review-row"><span>Periode Analisis</span><span>${ui.selectTimeframe.value}</span></div>
                 <div class="review-row"><span>Filter Sentimen</span><span>${getSelectedLabel(ui.selectSentiment)}</span></div>
@@ -435,7 +579,7 @@
                 <div class="review-row"><span>Kerangka Laporan</span><span>Summary, Analisis, Customer Journey, dan Tindak Lanjut</span></div>
                 <div style="margin-top: 16px;">
                     <label style="margin-bottom:8px;">Instruksi Tambahan</label>
-                    <div class="review-notes">${notes ? escapeHtml(notes) : 'Tidak ada instruksi tambahan.'}</div>
+                    <div class="review-notes">${notesText ? notesHtml : 'Tidak ada instruksi tambahan.'}</div>
                 </div>
             `;
             ui.reviewText.innerHTML = html; 
@@ -454,13 +598,15 @@
             ui.btnGenerate.disabled = true; 
             document.getElementById('spinner').classList.add('active');
             showJobStatus('Permintaan laporan dikirim ke server. Menyiapkan antrian proses...');
+            const notesPayload = getNotesPayload();
             
             const payload = {
                 timeframe: ui.selectTimeframe.value,
                 sentiment: ui.selectSentiment.value,
                 segment: ui.selectSegment.value,
                 score_engine: ui.selectScoreEngine.value,
-                notes: ui.inputNotes.value
+                notes: notesPayload.text,
+                notes_html: notesPayload.html
             };
 
             fetch('/generate-job', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) })
