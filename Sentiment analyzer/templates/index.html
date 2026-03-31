@@ -27,11 +27,16 @@
         .field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
         .field-grid .full-width { grid-column: 1 / -1; }
         .helper { color: #64748b; font-size: 0.85rem; margin: -8px 0 14px 0; line-height: 1.4; }
-        .review-notes { background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; color: #475569; line-height: 1.5; }
+        .review-notes { background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; color: #475569; line-height: 1.5; white-space: pre-wrap; }
         .status-panel { display: none; margin: 18px 0 8px 0; border-radius: 10px; padding: 14px 16px; border: 1px solid #e2e8f0; background: #f8fafc; color: #475569; line-height: 1.5; }
         .status-panel.active { display: block; }
         .status-panel.error { border-color: #fecaca; background: #fef2f2; color: #991b1b; }
         .status-panel.success { border-color: #bbf7d0; background: #f0fdf4; color: #166534; }
+        .editor-toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+        .toolbar-btn { width: auto; margin: 0; padding: 8px 12px; border-radius: 999px; background: #f8fafc; color: #334155; border: 1px solid #cbd5e1; font-size: 0.85rem; font-weight: 600; }
+        .toolbar-btn:hover { background: #fff1f2; border-color: #cc0000; color: #991b1b; }
+        .toolbar-btn:disabled { background: #e2e8f0; color: #94a3b8; border-color: #cbd5e1; }
+        .editor-helper { color: #64748b; font-size: 0.8rem; margin: 0 0 10px 0; line-height: 1.4; }
 
         .chip-container { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
         .chip { background: #e2e8f0; color: #475569; padding: 6px 12px; border-radius: 16px; font-size: 0.85rem; cursor: pointer; transition: 0.2s; border: 1px solid transparent; }
@@ -80,6 +85,14 @@
 
             <div id="container-discovery" class="hidden" style="margin-top: 15px; padding-top: 20px; border-top: 1px solid #e2e8f0;">
                 <label for="input-notes">Instruksi Spesifik untuk AI (Opsional)</label>
+                <div class="editor-toolbar">
+                    <button type="button" class="toolbar-btn" data-format="bullet">• Bullet</button>
+                    <button type="button" class="toolbar-btn" data-format="number">1. Number</button>
+                    <button type="button" class="toolbar-btn" data-format="heading">Heading</button>
+                    <button type="button" class="toolbar-btn" data-format="quote">&gt; Quote</button>
+                    <button type="button" class="toolbar-btn" data-format="clear">Clear Prefix</button>
+                </div>
+                <p class="editor-helper">Gunakan toolbar ini untuk menyusun catatan dalam format ringan. Bullet, numbering, heading, dan quote akan tetap dikirim sebagai plain text agar aman untuk server dan mudah diproses.</p>
                 <textarea id="input-notes" placeholder="Atau klik rekomendasi instruksi di bawah ini..."></textarea>
                 
                 <div id="suggestion-container" class="chip-container"></div>
@@ -127,6 +140,7 @@
             reviewText: document.getElementById('review-text'),
             jobStatus: document.getElementById('job-status'),
             successMeta: document.getElementById('success-meta'),
+            toolbarButtons: Array.from(document.querySelectorAll('.toolbar-btn')),
             
             btnReview: document.getElementById('btn-review'),
             btnGenerate: document.getElementById('btn-generate'),
@@ -168,6 +182,60 @@
 
         function escapeHtml(text) {
             return String(text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+
+        function setTextareaValue(value, start, end) {
+            ui.inputNotes.value = value;
+            ui.inputNotes.focus();
+            ui.inputNotes.setSelectionRange(start, end);
+        }
+
+        function applyLineFormatter(formatType) {
+            const textarea = ui.inputNotes;
+            const value = textarea.value;
+            const selectionStart = textarea.selectionStart;
+            const selectionEnd = textarea.selectionEnd;
+            const blockStart = value.lastIndexOf('\n', Math.max(0, selectionStart - 1)) + 1;
+            const nextNewline = value.indexOf('\n', selectionEnd);
+            const blockEnd = nextNewline === -1 ? value.length : nextNewline;
+            const selectedBlock = value.slice(blockStart, blockEnd);
+            const originalLines = selectedBlock.split('\n');
+
+            const clearPrefix = (line) => line.replace(/^(\s*)([-*]\s+|\d+\.\s+|#+\s+|>\s+)/, '$1');
+            let transformedLines = [...originalLines];
+
+            if (formatType === 'bullet') {
+                transformedLines = originalLines.map(line => {
+                    if (!line.trim()) return '- ';
+                    if (/^\s*[-*]\s+/.test(line)) return line;
+                    return `- ${clearPrefix(line).trimStart()}`;
+                });
+            } else if (formatType === 'number') {
+                let counter = 1;
+                transformedLines = originalLines.map(line => {
+                    const cleanLine = clearPrefix(line).trimStart();
+                    const prefix = `${counter}. `;
+                    counter += 1;
+                    return cleanLine ? `${prefix}${cleanLine}` : prefix;
+                });
+            } else if (formatType === 'heading') {
+                transformedLines = originalLines.map(line => {
+                    const cleanLine = clearPrefix(line).trimStart();
+                    return cleanLine ? `## ${cleanLine}` : '## ';
+                });
+            } else if (formatType === 'quote') {
+                transformedLines = originalLines.map(line => {
+                    const cleanLine = clearPrefix(line).trimStart();
+                    return cleanLine ? `> ${cleanLine}` : '> ';
+                });
+            } else if (formatType === 'clear') {
+                transformedLines = originalLines.map(line => clearPrefix(line));
+            }
+
+            const replacement = transformedLines.join('\n');
+            const updatedValue = `${value.slice(0, blockStart)}${replacement}${value.slice(blockEnd)}`;
+            const newSelectionEnd = blockStart + replacement.length;
+            setTextareaValue(updatedValue, blockStart, newSelectionEnd);
         }
 
         function showJobStatus(message, tone = 'neutral') {
@@ -349,6 +417,12 @@
             updateScoreEngineHelper();
             updateReviewAvailability();
         };
+
+        ui.toolbarButtons.forEach(button => {
+            button.addEventListener('click', () => {
+                applyLineFormatter(button.dataset.format);
+            });
+        });
         
         ui.btnReview.onclick = () => { 
             clearJobStatus();
