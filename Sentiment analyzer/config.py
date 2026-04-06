@@ -17,6 +17,14 @@ OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
 EMBED_MODEL = os.getenv("EMBED_MODEL", "bge-m3:latest")
 DB_URI = os.getenv("DB_URI", f"sqlite:///{os.path.join(DATA_DIR, 'cx_feedback.db')}")
 CSV_PATH = os.getenv("CSV_PATH", os.path.join(DATA_DIR, "db.csv"))
+AUTH_DB_PATH = os.getenv("AUTH_DB_PATH", os.path.join(DATA_DIR, "auth.db"))
+APP_SECRET_KEY = os.getenv("APP_SECRET_KEY", "change-this-secret-before-deployment")
+ALLOW_SIGNUP = os.getenv("ALLOW_SIGNUP", "1").strip().lower() in {"1", "true", "yes"}
+SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "0").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
 REPORT_ARTIFACT_DIR = os.getenv(
     "REPORT_ARTIFACT_DIR",
     os.path.join(DATA_DIR, "generated_reports"),

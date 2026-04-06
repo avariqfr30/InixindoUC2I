@@ -1,15 +1,32 @@
 import io
 import logging
 import os
-from flask import Flask, jsonify, render_template, request, send_file
+import sqlite3
+from functools import wraps
+
+from flask import (
+    Flask,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    send_file,
+    session,
+    url_for,
+)
 from flask_cors import CORS
+from werkzeug.security import check_password_hash, generate_password_hash
 
 from config import (
+    ALLOW_SIGNUP,
     APP_MODE,
+    APP_SECRET_KEY,
+    AUTH_DB_PATH,
     DB_URI,
     DEFAULT_SCORE_ENGINE,
     SCORE_ENGINE_OPTIONS,
     SENTIMENT_OPTIONS,
+    SESSION_COOKIE_SECURE,
     SMART_SUGGESTIONS,
 )
 from core import KnowledgeBase, ReportGenerator
@@ -20,6 +37,10 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)
+app.secret_key = APP_SECRET_KEY
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = SESSION_COOKIE_SECURE
 
 kb = KnowledgeBase(DB_URI)
 generator = ReportGenerator(kb)
@@ -27,19 +48,169 @@ job_manager = ReportJobManager(generator)
 logger.info("Application started in %s mode.", APP_MODE)
 
 
+def _auth_connection():
+    connection = sqlite3.connect(AUTH_DB_PATH)
+    connection.row_factory = sqlite3.Row
+    return connection
+
+
+def _init_auth_db():
+    os.makedirs(os.path.dirname(AUTH_DB_PATH), exist_ok=True)
+    with _auth_connection() as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        connection.commit()
+
+
 def _request_payload(data):
-    payload = {
+    return {
         "timeframe": data.get("timeframe"),
         "notes": data.get("notes", ""),
         "sentiment": data.get("sentiment", "all"),
         "segment": data.get("segment", "all"),
         "score_engine": data.get("score_engine", DEFAULT_SCORE_ENGINE),
     }
-    return payload
+
+
+def _get_user_by_username(username):
+    clean_username = str(username or "").strip()
+    if not clean_username:
+        return None
+
+    with _auth_connection() as connection:
+        return connection.execute(
+            "SELECT id, username, password_hash FROM users WHERE username = ?",
+            (clean_username,),
+        ).fetchone()
+
+
+def _create_user(username, password):
+    with _auth_connection() as connection:
+        connection.execute(
+            "INSERT INTO users (username, password_hash) VALUES (?, ?)",
+            (username.strip(), generate_password_hash(password)),
+        )
+        connection.commit()
+
+
+def _user_count():
+    with _auth_connection() as connection:
+        row = connection.execute("SELECT COUNT(*) AS total FROM users").fetchone()
+        return int(row["total"]) if row else 0
+
+
+def _current_user():
+    username = session.get("username")
+    if isinstance(username, str) and username.strip():
+        return username.strip()
+    return None
+
+
+def login_required(view_func):
+    @wraps(view_func)
+    def wrapped_view(*args, **kwargs):
+        if _current_user():
+            return view_func(*args, **kwargs)
+
+        wants_json = request.path.startswith("/jobs/") or request.path in {
+            "/get-config",
+            "/generate",
+            "/generate-job",
+            "/refresh-knowledge",
+        } or request.is_json
+        if wants_json:
+            return jsonify({"error": "Authentication required."}), 401
+        return redirect(url_for("login"))
+
+    return wrapped_view
+
+
+_init_auth_db()
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if _current_user():
+        return redirect(url_for("home"))
+
+    error = None
+    if request.method == "POST":
+        username = (request.form.get("username") or "").strip()
+        password = request.form.get("password") or ""
+        user = _get_user_by_username(username)
+
+        if not user or not check_password_hash(user["password_hash"], password):
+            error = "Username atau password tidak valid."
+        else:
+            session.clear()
+            session["username"] = user["username"]
+            return redirect(url_for("home"))
+
+    return render_template(
+        "auth.html",
+        mode="login",
+        error=error,
+        allow_signup=ALLOW_SIGNUP,
+        user_count=_user_count(),
+    )
+
+
+@app.route("/signup", methods=["GET", "POST"])
+def signup():
+    if not ALLOW_SIGNUP:
+        return redirect(url_for("login"))
+
+    if _current_user():
+        return redirect(url_for("home"))
+
+    error = None
+    if request.method == "POST":
+        username = (request.form.get("username") or "").strip()
+        password = request.form.get("password") or ""
+        confirm_password = request.form.get("confirm_password") or ""
+
+        if len(username) < 4:
+            error = "Username minimal 4 karakter."
+        elif len(password) < 8:
+            error = "Password minimal 8 karakter."
+        elif password != confirm_password:
+            error = "Konfirmasi password tidak cocok."
+        elif _get_user_by_username(username):
+            error = "Username sudah dipakai."
+        else:
+            _create_user(username, password)
+            session.clear()
+            session["username"] = username
+            return redirect(url_for("home"))
+
+    return render_template(
+        "auth.html",
+        mode="signup",
+        error=error,
+        allow_signup=ALLOW_SIGNUP,
+        user_count=_user_count(),
+    )
+
+
+@app.route("/logout", methods=["POST"])
+@login_required
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
 
 @app.route("/")
+@login_required
 def home():
-    return render_template("index.html")
+    return render_template("index.html", current_user=_current_user())
 
 
 @app.route("/health")
@@ -82,6 +253,7 @@ def ready():
 
 
 @app.route("/get-config")
+@login_required
 def get_config():
     if kb.df is None or kb.df.empty:
         return jsonify(
@@ -109,11 +281,13 @@ def get_config():
             "score_engines": SCORE_ENGINE_OPTIONS,
             "default_score_engine": DEFAULT_SCORE_ENGINE,
             "suggestions": SMART_SUGGESTIONS,
+            "current_user": _current_user(),
         }
     )
 
 
 @app.route("/generate", methods=["POST"])
+@login_required
 def generate_report():
     data = request.get_json(silent=True) or {}
     payload = _request_payload(data)
@@ -123,11 +297,12 @@ def generate_report():
         return jsonify({"error": "Parameter 'timeframe' wajib diisi."}), 400
 
     logger.info(
-        "Generating report for timeframe='%s', sentiment='%s', segment='%s', score_engine='%s'.",
+        "Generating report for timeframe='%s', sentiment='%s', segment='%s', score_engine='%s' by user '%s'.",
         timeframe,
         payload["sentiment"],
         payload["segment"],
         payload["score_engine"],
+        _current_user(),
     )
     doc, filename, quality = generator.run(
         timeframe,
@@ -153,6 +328,7 @@ def generate_report():
 
 
 @app.route("/generate-job", methods=["POST"])
+@login_required
 def generate_report_job():
     data = request.get_json(silent=True) or {}
     payload = _request_payload(data)
@@ -166,12 +342,13 @@ def generate_report_job():
         return jsonify({"error": str(exc)}), 429
 
     logger.info(
-        "Queued report job %s for timeframe='%s', sentiment='%s', segment='%s', score_engine='%s'.",
+        "Queued report job %s for timeframe='%s', sentiment='%s', segment='%s', score_engine='%s' by user '%s'.",
         job["job_id"],
         payload["timeframe"],
         payload["sentiment"],
         payload["segment"],
         payload["score_engine"],
+        _current_user(),
     )
     return (
         jsonify(
@@ -186,6 +363,7 @@ def generate_report_job():
 
 
 @app.route("/jobs/<job_id>")
+@login_required
 def get_report_job(job_id):
     job = job_manager.get(job_id)
     if not job:
@@ -199,6 +377,7 @@ def get_report_job(job_id):
 
 
 @app.route("/download/<job_id>")
+@login_required
 def download_report(job_id):
     artifact = job_manager.artifact_for(job_id)
     if not artifact:
@@ -213,6 +392,7 @@ def download_report(job_id):
 
 
 @app.route("/refresh-knowledge", methods=["POST"])
+@login_required
 def refresh_knowledge():
     job_stats = job_manager.stats()
     if job_stats["jobs"]["queued"] or job_stats["jobs"]["running"]:
