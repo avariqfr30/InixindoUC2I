@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% if mode == "signup" %}Sign Up{% else %}Login{% endif %} | Feedback Intelligence</title>
+    <title>{% if mode == "signup" %}Daftar{% else %}Masuk{% endif %} | Feedback Intelligence</title>
     <style>
         body {
             margin: 0;
@@ -158,25 +158,25 @@
 <body>
     <div class="shell">
         <section class="hero">
-            <h1>Feedback Intelligence Access</h1>
+            <h1>Akses Feedback Intelligence</h1>
             <p>Lapisan ini sederhana, tapi cukup untuk menahan akses umum ke generator report, sinkronisasi data, dan unduhan dokumen.</p>
             <ul>
                 <li>Username dan password disimpan sebagai hash, bukan plain text.</li>
                 <li>Seluruh route utama aplikasi baru bisa diakses setelah login.</li>
                 <li>Health check tetap bisa dibaca untuk kebutuhan operasional server.</li>
             </ul>
-            <div class="pill">Users registered: {{ user_count }}</div>
+            <div class="pill">Jumlah akun terdaftar: {{ user_count }}</div>
         </section>
 
         <section class="panel">
             <div class="tabs">
-                <a class="tab {% if mode == 'login' %}active{% endif %}" href="{{ url_for('login') }}">Login</a>
+                <a class="tab {% if mode == 'login' %}active{% endif %}" href="{{ url_for('login') }}">Masuk</a>
                 {% if allow_signup %}
-                <a class="tab {% if mode == 'signup' %}active{% endif %}" href="{{ url_for('signup') }}">Sign Up</a>
+                <a class="tab {% if mode == 'signup' %}active{% endif %}" href="{{ url_for('signup') }}">Daftar</a>
                 {% endif %}
             </div>
 
-            <h2>{% if mode == "signup" %}Create Account{% else %}Welcome Back{% endif %}</h2>
+            <h2>{% if mode == "signup" %}Buat Akun{% else %}Selamat Datang Kembali{% endif %}</h2>
             <p class="sub">
                 {% if mode == "signup" %}
                 Buat akun dasar untuk mengakses aplikasi. Setelah akun awal terbentuk, Anda bisa mematikan signup lewat environment variable bila perlu.
@@ -194,23 +194,23 @@
                 <label for="username">Username</label>
                 <input id="username" name="username" type="text" minlength="4" maxlength="64" required>
 
-                <label for="password">Password</label>
+                <label for="password">Kata Sandi</label>
                 <input id="password" name="password" type="password" minlength="8" required>
 
-                <label for="confirm_password">Confirm Password</label>
+                <label for="confirm_password">Konfirmasi Kata Sandi</label>
                 <input id="confirm_password" name="confirm_password" type="password" minlength="8" required>
 
-                <button type="submit">Create Account</button>
+                <button type="submit">Buat Akun</button>
             </form>
             {% else %}
             <form method="post" action="{{ url_for('login') }}">
                 <label for="username">Username</label>
                 <input id="username" name="username" type="text" minlength="4" maxlength="64" required>
 
-                <label for="password">Password</label>
+                <label for="password">Kata Sandi</label>
                 <input id="password" name="password" type="password" minlength="8" required>
 
-                <button type="submit">Login</button>
+                <button type="submit">Masuk</button>
             </form>
             {% endif %}
 

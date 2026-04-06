@@ -82,9 +82,9 @@
 <body>
     <div class="card">
         <div class="topbar">
-            <div class="topbar-user">Signed in as <strong>{{ current_user or "User" }}</strong></div>
+            <div class="topbar-user">Masuk sebagai <strong>{{ current_user or "Pengguna" }}</strong></div>
             <form class="logout-form" method="post" action="/logout">
-                <button type="submit" class="logout-button">Logout</button>
+                <button type="submit" class="logout-button">Keluar</button>
             </form>
         </div>
         <div id="loader" style="text-align:center; padding: 40px;">

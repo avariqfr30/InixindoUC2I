@@ -127,7 +127,7 @@ def login_required(view_func):
             "/refresh-knowledge",
         } or request.is_json
         if wants_json:
-            return jsonify({"error": "Authentication required."}), 401
+            return jsonify({"error": "Silakan login terlebih dahulu."}), 401
         return redirect(url_for("login"))
 
     return wrapped_view
@@ -180,7 +180,7 @@ def signup():
         if len(username) < 4:
             error = "Username minimal 4 karakter."
         elif len(password) < 8:
-            error = "Password minimal 8 karakter."
+            error = "Kata sandi minimal 8 karakter."
         elif password != confirm_password:
             error = "Konfirmasi password tidak cocok."
         elif _get_user_by_username(username):
