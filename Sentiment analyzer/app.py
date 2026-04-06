@@ -34,6 +34,7 @@ from runtime import QueueCapacityError, ReportJobManager
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
+PASSWORD_HASH_METHOD = "pbkdf2:sha256"
 
 app = Flask(__name__)
 CORS(app)
@@ -96,7 +97,10 @@ def _create_user(username, password):
     with _auth_connection() as connection:
         connection.execute(
             "INSERT INTO users (username, password_hash) VALUES (?, ?)",
-            (username.strip(), generate_password_hash(password)),
+            (
+                username.strip(),
+                generate_password_hash(password, method=PASSWORD_HASH_METHOD),
+            ),
         )
         connection.commit()
 
@@ -107,10 +111,25 @@ def _user_count():
         return int(row["total"]) if row else 0
 
 
+def _verify_password(password_hash, password):
+    try:
+        return check_password_hash(password_hash, password)
+    except AttributeError:
+        if str(password_hash or "").startswith("scrypt:"):
+            logger.warning(
+                "Stored password hash uses scrypt, but this Python build does not support hashlib.scrypt."
+            )
+            return False
+        raise
+
+
 def _current_user():
     username = session.get("username")
     if isinstance(username, str) and username.strip():
-        return username.strip()
+        user = _get_user_by_username(username)
+        if user:
+            return user["username"]
+        session.clear()
     return None
 
 
@@ -136,6 +155,20 @@ def login_required(view_func):
 _init_auth_db()
 
 
+@app.after_request
+def apply_security_headers(response):
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "same-origin")
+
+    if request.endpoint not in {"health", "ready", "static"}:
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+
+    return response
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if _current_user():
@@ -147,8 +180,16 @@ def login():
         password = request.form.get("password") or ""
         user = _get_user_by_username(username)
 
-        if not user or not check_password_hash(user["password_hash"], password):
+        if not user:
             error = "Username atau password tidak valid."
+        elif not _verify_password(user["password_hash"], password):
+            if str(user["password_hash"]).startswith("scrypt:"):
+                error = (
+                    "Akun ini memakai format kata sandi lama yang tidak didukung di server ini. "
+                    "Silakan buat ulang akun atau reset akun lama."
+                )
+            else:
+                error = "Username atau password tidak valid."
         else:
             session.clear()
             session["username"] = user["username"]
