@@ -422,6 +422,29 @@
             ui.jobStatus.innerHTML = escapeHtml(message);
         }
 
+        function redirectToLogin(message) {
+            clearPolling();
+            if (message) {
+                sessionStorage.setItem('login_notice', message);
+            }
+            window.location.href = '/login';
+        }
+
+        function unwrapJsonResponse(response, fallbackMessage) {
+            return response.json()
+                .catch(() => ({}))
+                .then(data => {
+                    if (response.status === 401) {
+                        redirectToLogin(data.error || 'Sesi Anda sudah berakhir. Silakan masuk kembali.');
+                        throw new Error('__redirected__');
+                    }
+                    if (!response.ok) {
+                        throw new Error(data.error || fallbackMessage);
+                    }
+                    return data;
+                });
+        }
+
         function clearJobStatus() {
             ui.jobStatus.className = 'status-panel';
             ui.jobStatus.innerHTML = '';
@@ -477,11 +500,7 @@
 
         function pollJob(jobId) {
             fetch(`/jobs/${jobId}`)
-                .then(async response => {
-                    const data = await response.json();
-                    if (!response.ok) throw new Error(data.error || 'Status job tidak dapat dibaca.');
-                    return data;
-                })
+                .then(response => unwrapJsonResponse(response, 'Status job tidak dapat dibaca.'))
                 .then(job => {
                     if (job.status === 'queued') {
                         const queueMessage = job.queue_position > 0
@@ -509,6 +528,7 @@
                     failJob(job.error || 'Proses laporan gagal diselesaikan.');
                 })
                 .catch(err => {
+                    if (err.message === '__redirected__') return;
                     failJob(err.message);
                 });
         }
@@ -541,10 +561,7 @@
 
         function loadConfig() {
             fetch('/get-config')
-                .then(response => {
-                    if (!response.ok && response.status !== 500) throw new Error("Flask mati. Pastikan server berjalan.");
-                    return response.json();
-                })
+                .then(response => unwrapJsonResponse(response, "Flask mati. Pastikan server berjalan."))
                 .then(data => {
                     if (data.error) throw new Error(data.error);
                     
@@ -573,6 +590,7 @@
                     ui.configStep.classList.remove('hidden');
                 })
                 .catch(err => {
+                    if (err.message === '__redirected__') return;
                     if (err.message.includes("Failed to fetch")) {
                         ui.loaderText.innerHTML = `<span style="color: #cc0000; font-weight: bold;">Error: Jalankan server lalu buka melalui alamat internal aplikasi.</span>`;
                     } else {
@@ -638,30 +656,35 @@
             };
 
             fetch('/generate-job', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) })
-            .then(async response => {
-                const data = await response.json();
-                if (!response.ok) throw new Error(data.error || 'Gagal mengirim job laporan.');
-                return data;
-            })
+            .then(response => unwrapJsonResponse(response, 'Gagal mengirim job laporan.'))
             .then(job => {
                 appState.currentJobId = job.job_id;
                 showJobStatus(`Job ${job.job_id} berhasil dibuat. Laporan akan diproses di background server.`);
                 pollJob(job.job_id);
             })
             .catch(err => {
+                if (err.message === '__redirected__') return;
                 failJob(err.message);
             });
         };
         
         ui.btnRefresh.onclick = () => {
             fetch('/refresh-knowledge', {method: 'POST'})
-                .then(async response => {
-                    const data = await response.json();
-                    if (!response.ok) throw new Error(data.error || 'Sinkronisasi data gagal.');
+                .then(response => unwrapJsonResponse(response, 'Sinkronisasi data gagal.'))
+                .then(() => {
                     location.reload();
                 })
-                .catch(err => alert(err.message));
+                .catch(err => {
+                    if (err.message === '__redirected__') return;
+                    alert(err.message);
+                });
         };
+
+        window.addEventListener('pageshow', (event) => {
+            if (event.persisted) {
+                window.location.reload();
+            }
+        });
     </script>
 </body>
 </html>
