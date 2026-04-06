@@ -241,7 +241,7 @@ def signup():
     )
 
 
-@app.route("/logout", methods=["POST"])
+@app.route("/logout", methods=["GET", "POST"])
 @login_required
 def logout():
     session.clear()
