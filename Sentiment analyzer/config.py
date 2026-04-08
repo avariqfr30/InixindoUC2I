@@ -1,3 +1,4 @@
+import json
 import os
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -46,11 +47,104 @@ INTERNAL_API_FEEDBACK_ENDPOINT = os.getenv(
     "/feedback",
 )
 INTERNAL_API_TIMEOUT_SECONDS = int(os.getenv("INTERNAL_API_TIMEOUT_SECONDS", "20"))
+INTERNAL_API_AUTH_HEADER = os.getenv("INTERNAL_API_AUTH_HEADER", "Authorization").strip() or "Authorization"
+INTERNAL_API_AUTH_PREFIX = os.getenv("INTERNAL_API_AUTH_PREFIX", "Bearer").strip()
+INTERNAL_API_SOURCE_URL = os.getenv("INTERNAL_API_SOURCE_URL", "").strip()
+INTERNAL_API_SOURCE_METHOD = os.getenv("INTERNAL_API_SOURCE_METHOD", "GET").strip().upper() or "GET"
 ENABLE_VECTOR_INDEX = os.getenv("ENABLE_VECTOR_INDEX", "0").strip().lower() in {
     "1",
     "true",
     "yes",
 }
+
+
+def _load_json_object(env_name, fallback):
+    raw_value = os.getenv(env_name, "").strip()
+    if not raw_value:
+        return fallback
+    try:
+        parsed = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return fallback
+    return parsed if isinstance(parsed, dict) else fallback
+
+
+def _load_internal_api_endpoints():
+    defaults = {
+        "feedback": {
+            "path": INTERNAL_API_SOURCE_URL or INTERNAL_API_FEEDBACK_ENDPOINT,
+            "method": INTERNAL_API_SOURCE_METHOD if INTERNAL_API_SOURCE_URL else "GET",
+            "record_keys": ["items", "data", "results", "records", "feedback"],
+            "query_params": dict(INTERNAL_API_SOURCE_PARAMS),
+            "headers": dict(INTERNAL_API_SOURCE_HEADERS),
+            "auto_discover": True,
+        },
+        "services": {
+            "path": "/services",
+            "method": "GET",
+            "record_keys": ["items", "data", "results", "records", "services"],
+            "query_params": {},
+            "headers": {},
+            "auto_discover": True,
+        },
+        "stakeholders": {
+            "path": "/stakeholders",
+            "method": "GET",
+            "record_keys": ["items", "data", "results", "records", "stakeholders"],
+            "query_params": {},
+            "headers": {},
+            "auto_discover": True,
+        },
+        "operations": {
+            "path": "/operations",
+            "method": "GET",
+            "record_keys": ["items", "data", "results", "records", "operations"],
+            "query_params": {},
+            "headers": {},
+            "auto_discover": True,
+        },
+    }
+
+    overrides = _load_json_object("INTERNAL_API_ENDPOINTS_JSON", {})
+    merged = {}
+    for endpoint_name, default_spec in defaults.items():
+        override_spec = overrides.get(endpoint_name, {})
+        if isinstance(override_spec, dict):
+            merged[endpoint_name] = {**default_spec, **override_spec}
+        else:
+            merged[endpoint_name] = dict(default_spec)
+
+    for endpoint_name, override_spec in overrides.items():
+        if endpoint_name in merged or not isinstance(override_spec, dict):
+            continue
+        merged[endpoint_name] = {
+            "path": override_spec.get("path", f"/{endpoint_name}"),
+            "method": override_spec.get("method", "GET"),
+            "record_keys": override_spec.get(
+                "record_keys",
+                ["items", "data", "results", "records", endpoint_name],
+            ),
+            "query_params": override_spec.get("query_params", {}),
+            "headers": override_spec.get("headers", {}),
+            "auto_discover": bool(override_spec.get("auto_discover", True)),
+        }
+
+    return merged
+
+
+INTERNAL_API_DEFAULT_HEADERS = _load_json_object(
+    "INTERNAL_API_DEFAULT_HEADERS_JSON",
+    {},
+)
+INTERNAL_API_SOURCE_HEADERS = _load_json_object(
+    "INTERNAL_API_SOURCE_HEADERS_JSON",
+    {},
+)
+INTERNAL_API_SOURCE_PARAMS = _load_json_object(
+    "INTERNAL_API_SOURCE_PARAMS_JSON",
+    {},
+)
+INTERNAL_API_ENDPOINTS = _load_internal_api_endpoints()
 
 WRITER_FIRM_NAME = "Inixindo Jogja - Quality Assurance & CX Division"
 DEFAULT_COLOR = (204, 0, 0)
