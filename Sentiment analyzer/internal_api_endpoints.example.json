@@ -1,0 +1,29 @@
+{
+  "feedback": {
+    "path": "/feedback",
+    "method": "GET",
+    "record_keys": ["data", "records", "feedback"],
+    "query_params": {
+      "limit": 1000
+    },
+    "headers": {
+      "X-Client-App": "feedback-intelligence"
+    }
+  },
+  "operations": {
+    "path": "/operations/incidents",
+    "method": "GET",
+    "record_keys": ["data", "records", "operations"],
+    "query_params": {
+      "include_closed": true
+    },
+    "headers": {}
+  },
+  "stakeholders": {
+    "path": "/master/stakeholders",
+    "method": "GET",
+    "record_keys": ["data", "stakeholders"],
+    "query_params": {},
+    "headers": {}
+  }
+}

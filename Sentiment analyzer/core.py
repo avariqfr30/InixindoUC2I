@@ -4,6 +4,7 @@ import io
 import json
 import logging
 import os
+from pathlib import Path
 import re
 import threading
 import textwrap
@@ -43,10 +44,6 @@ from config import (
     EMBED_MODEL,
     ENABLE_VECTOR_INDEX,
     EXTERNAL_DATA_MODE,
-    INTERNAL_API_BASE_URL,
-    INTERNAL_API_FEEDBACK_ENDPOINT,
-    INTERNAL_API_KEY,
-    INTERNAL_API_TIMEOUT_SECONDS,
     INTERNAL_DATA_MODE,
     OLLAMA_HOST,
     OSINT_BASE_QUERIES,
@@ -62,6 +59,7 @@ from config import (
     SENTIMENT_OPTIONS,
     WRITER_FIRM_NAME,
 )
+from internal_api import InternalApiClient
 
 matplotlib.use("Agg")
 
@@ -133,31 +131,70 @@ class InternalDataProvider:
         return re.sub(r"[^a-z0-9]+", "_", str(value).strip().lower()).strip("_")
 
     @classmethod
+    def _column_variants(cls, column_name):
+        raw_name = str(column_name).strip()
+        normalized = cls._normalize_token(raw_name)
+        variants = {normalized}
+
+        for part in re.split(r"[.\[\]/\\]+", raw_name):
+            token = cls._normalize_token(part)
+            if token:
+                variants.add(token)
+
+        normalized_parts = [part for part in normalized.split("_") if part]
+        if normalized_parts:
+            variants.add(normalized_parts[-1])
+            if len(normalized_parts) >= 2:
+                variants.add("_".join(normalized_parts[-2:]))
+
+        return variants
+
+    @classmethod
+    def _find_matching_column(cls, columns, aliases):
+        alias_tokens = [cls._normalize_token(alias) for alias in aliases if cls._normalize_token(alias)]
+        best_match = None
+        best_score = -1
+
+        for column_name in columns:
+            variants = cls._column_variants(column_name)
+            score = 0
+            for alias_token in alias_tokens:
+                if alias_token in variants:
+                    score += 100
+                elif any(
+                    variant.endswith(f"_{alias_token}")
+                    or variant.startswith(f"{alias_token}_")
+                    or (len(alias_token) >= 4 and alias_token in variant)
+                    for variant in variants
+                ):
+                    score += 60
+            if score > best_score:
+                best_match = column_name
+                best_score = score
+
+        return best_match if best_score > 0 else None
+
+    @classmethod
     def normalize_dataframe(cls, raw_df):
         if raw_df is None:
             return pd.DataFrame(columns=list(CANONICAL_INTERNAL_COLUMNS))
 
         dataframe = raw_df.copy()
         dataframe.columns = [str(column).strip() for column in dataframe.columns]
-        normalized_lookup = {
-            cls._normalize_token(column): column for column in dataframe.columns
-        }
 
         rename_map = {}
         for canonical_name, aliases in COLUMN_ALIASES.items():
             if canonical_name in dataframe.columns:
                 continue
-            for alias in aliases:
-                matched_column = normalized_lookup.get(cls._normalize_token(alias))
-                if matched_column:
-                    rename_map[matched_column] = canonical_name
-                    break
+            matched_column = cls._find_matching_column(dataframe.columns, aliases)
+            if matched_column:
+                rename_map[matched_column] = canonical_name
 
         dataframe = dataframe.rename(columns=rename_map)
 
         feedback_dates = pd.Series(dtype="datetime64[ns]")
         for alias in DATE_COLUMN_ALIASES:
-            matched_column = normalized_lookup.get(cls._normalize_token(alias))
+            matched_column = cls._find_matching_column(dataframe.columns, (alias,))
             if matched_column:
                 feedback_dates = pd.to_datetime(
                     dataframe[matched_column],
@@ -169,7 +206,7 @@ class InternalDataProvider:
 
         if "Rentang Waktu" not in dataframe.columns:
             for alias in DATE_COLUMN_ALIASES:
-                matched_column = normalized_lookup.get(cls._normalize_token(alias))
+                matched_column = cls._find_matching_column(dataframe.columns, (alias,))
                 if not matched_column:
                     continue
                 parsed_dates = pd.to_datetime(
@@ -209,56 +246,21 @@ class InternalApiProvider(InternalDataProvider):
     source_name = "company_api"
 
     def __init__(self):
-        self.base_url = INTERNAL_API_BASE_URL
-        self.feedback_endpoint = INTERNAL_API_FEEDBACK_ENDPOINT
-        self.timeout_seconds = INTERNAL_API_TIMEOUT_SECONDS
-        self.api_key = INTERNAL_API_KEY
+        self.client = InternalApiClient()
+        self.dataset_name = "feedback"
 
-    def _headers(self):
-        headers = {"Accept": "application/json"}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-            headers["X-API-Key"] = self.api_key
-        return headers
-
-    def _extract_records(self, payload):
-        if isinstance(payload, list):
-            return payload
-        if not isinstance(payload, dict):
-            return None
-
-        for key in ("items", "data", "results", "records", "feedback"):
-            value = payload.get(key)
-            records = self._extract_records(value)
-            if records is not None:
-                return records
-        return None
+    def load_dataset(self, dataset_name, extra_params=None):
+        raw_df = pd.DataFrame(
+            self.client.fetch_records(dataset_name, extra_params=extra_params)
+        )
+        if raw_df.empty:
+            raise ValueError(
+                f"Internal API returned no records for endpoint '{dataset_name}'."
+            )
+        return self.normalize_dataframe(raw_df)
 
     def load_feedback_data(self):
-        if not self.base_url:
-            raise RuntimeError("INTERNAL_API_BASE_URL is not configured.")
-
-        endpoint = self.feedback_endpoint
-        if not endpoint.startswith("/"):
-            endpoint = f"/{endpoint}"
-
-        response = requests.get(
-            f"{self.base_url}{endpoint}",
-            headers=self._headers(),
-            timeout=self.timeout_seconds,
-        )
-        response.raise_for_status()
-
-        payload = response.json()
-        records = self._extract_records(payload)
-        if records is None:
-            raise ValueError("Unsupported internal API payload format.")
-
-        raw_df = pd.DataFrame(records)
-        if raw_df.empty:
-            raise ValueError("Internal API returned no feedback records.")
-
-        return self.normalize_dataframe(raw_df)
+        return self.load_dataset(self.dataset_name)
 
 class KnowledgeBase:
     def __init__(self, db_uri):

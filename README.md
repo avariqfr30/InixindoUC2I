@@ -152,6 +152,38 @@ Pada `APP_MODE=hybrid`, aplikasi akan mengambil data internal dari API perusahaa
 
 Data internal yang berhasil diambil akan disalin ke `cx_feedback.db` (SQLite) sebagai cache lokal, lalu diproses ke ChromaDB.
 
+Untuk mempermudah penambahan endpoint internal lain di kemudian hari, konfigurasi endpoint sekarang bisa diatur secara deklaratif lewat `INTERNAL_API_ENDPOINTS_JSON`. Struktur default sudah menyiapkan registry untuk `feedback`, `services`, `stakeholders`, dan `operations`, sehingga penambahan endpoint baru tidak perlu mengubah provider utama selama pola payload masih konsisten.
+
+Jika nanti perusahaan hanya memberi satu URL penuh, misalnya `https://xxx.com/api/tag`, aplikasi juga bisa langsung diarahkan ke endpoint tersebut tanpa membuat provider baru:
+
+```bash
+APP_MODE=hybrid
+INTERNAL_API_SOURCE_URL=https://xxx.com/api/tag
+INTERNAL_API_SOURCE_METHOD=GET
+INTERNAL_API_SOURCE_PARAMS_JSON='{"limit":1000}'
+INTERNAL_API_SOURCE_HEADERS_JSON='{"X-Client-App":"feedback-intelligence"}'
+```
+
+Layer internal API sekarang akan:
+* menerima endpoint bernama atau URL penuh,
+* mencoba menemukan list record yang paling relevan di dalam JSON secara otomatis,
+* me-*flatten* object JSON bertingkat menjadi kolom yang bisa dibaca workflow,
+* memetakan field hasil flatten ke kolom kanonik seperti `Rating`, `Komentar`, `Tanggal Feedback`, dan `Tipe Stakeholder`.
+
+Contoh file referensi tersedia di:
+
+* `Sentiment analyzer/internal_api_endpoints.example.json`
+
+Untuk melihat endpoint yang sudah terdaftar atau mencoba fetch ke API internal:
+
+```bash
+cd "Sentiment analyzer"
+python3 inspect_internal_api.py
+python3 inspect_internal_api.py feedback
+python3 inspect_internal_api.py feedback --fetch
+python3 inspect_internal_api.py https://xxx.com/api/tag --fetch
+```
+
 ### 6. Menjalankan Aplikasi
 ```bash
 python app.py
