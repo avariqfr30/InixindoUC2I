@@ -160,8 +160,22 @@ Jika nanti perusahaan hanya memberi satu URL penuh, misalnya `https://xxx.com/ap
 APP_MODE=hybrid
 INTERNAL_API_SOURCE_URL=https://xxx.com/api/tag
 INTERNAL_API_SOURCE_METHOD=GET
+INTERNAL_API_AUTH_MODE=api_key
 INTERNAL_API_SOURCE_PARAMS_JSON='{"limit":1000}'
 INTERNAL_API_SOURCE_HEADERS_JSON='{"X-Client-App":"feedback-intelligence"}'
+```
+
+Untuk endpoint yang memakai username/password via Basic Auth:
+
+```bash
+APP_MODE=hybrid
+INTERNAL_API_SOURCE_URL=https://xxx.com/api/tag
+INTERNAL_API_SOURCE_METHOD=POST
+INTERNAL_API_SOURCE_BODY_MODE=json
+INTERNAL_API_AUTH_MODE=basic
+INTERNAL_API_USERNAME=your_username
+INTERNAL_API_PASSWORD=your_password
+INTERNAL_API_SOURCE_PARAMS_JSON='{}'
 ```
 
 Layer internal API sekarang akan:
@@ -182,6 +196,7 @@ python3 inspect_internal_api.py
 python3 inspect_internal_api.py feedback
 python3 inspect_internal_api.py feedback --fetch
 python3 inspect_internal_api.py https://xxx.com/api/tag --fetch
+python3 inspect_internal_api.py https://xxx.com/api/tag --method POST --body-mode json --params-json '{}'
 ```
 
 ### 6. Menjalankan Aplikasi

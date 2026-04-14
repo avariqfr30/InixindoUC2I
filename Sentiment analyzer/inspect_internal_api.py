@@ -17,12 +17,13 @@ def load_json_object(raw_value):
     return parsed
 
 
-def build_target(target, method, params_json, headers_json, record_keys, auto_discover):
+def build_target(target, method, body_mode, params_json, headers_json, record_keys, auto_discover):
     if target.startswith(("http://", "https://")) or method or params_json or headers_json or record_keys:
         return EndpointSpec(
             name="ad_hoc",
             path=target,
             method=(method or "GET").strip().upper(),
+            body_mode=body_mode,
             query_params=load_json_object(params_json),
             headers=load_json_object(headers_json),
             record_keys=tuple(record_keys or ["items", "data", "results", "records", "feedback"]),
@@ -36,6 +37,7 @@ def main():
     parser.add_argument("target", nargs="?", help="Endpoint name or full URL, e.g. feedback or https://example.com/api/feedback")
     parser.add_argument("--fetch", action="store_true", help="Fetch the endpoint and print a short interpretation summary.")
     parser.add_argument("--method", help="HTTP method for ad-hoc URLs, e.g. GET or POST")
+    parser.add_argument("--body-mode", choices=("json", "form"), default="json", help="Request body mode for non-GET ad-hoc URLs")
     parser.add_argument("--params-json", help="JSON object sent as query params for GET or request body for non-GET")
     parser.add_argument("--headers-json", help="Extra per-endpoint headers as JSON")
     parser.add_argument("--record-key", action="append", dest="record_keys", help="Preferred JSON keys used to find the record list. Repeatable.")
@@ -50,6 +52,7 @@ def main():
     target = build_target(
         args.target,
         args.method,
+        args.body_mode,
         args.params_json,
         args.headers_json,
         args.record_keys,

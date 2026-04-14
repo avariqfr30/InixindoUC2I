@@ -7,13 +7,16 @@ from typing import Any
 import requests
 
 from config import (
+    INTERNAL_API_AUTH_MODE,
     INTERNAL_API_AUTH_HEADER,
     INTERNAL_API_AUTH_PREFIX,
     INTERNAL_API_BASE_URL,
     INTERNAL_API_DEFAULT_HEADERS,
     INTERNAL_API_ENDPOINTS,
     INTERNAL_API_KEY,
+    INTERNAL_API_PASSWORD,
     INTERNAL_API_TIMEOUT_SECONDS,
+    INTERNAL_API_USERNAME,
 )
 
 logger = logging.getLogger(__name__)
@@ -42,6 +45,7 @@ class EndpointSpec:
     name: str
     path: str
     method: str = "GET"
+    body_mode: str = "json"
     record_keys: tuple[str, ...] = ("items", "data", "results", "records")
     query_params: dict[str, Any] = field(default_factory=dict)
     headers: dict[str, str] = field(default_factory=dict)
@@ -53,6 +57,7 @@ class EndpointSpec:
             name=name,
             path=str(mapping.get("path", f"/{name}")).strip() or f"/{name}",
             method=str(mapping.get("method", "GET")).strip().upper() or "GET",
+            body_mode=str(mapping.get("body_mode", "json")).strip().lower() or "json",
             record_keys=tuple(mapping.get("record_keys") or ("items", "data", "results", "records", name)),
             query_params=dict(mapping.get("query_params") or {}),
             headers=dict(mapping.get("headers") or {}),
@@ -66,16 +71,22 @@ class InternalApiClient:
         base_url=INTERNAL_API_BASE_URL,
         api_key=INTERNAL_API_KEY,
         timeout_seconds=INTERNAL_API_TIMEOUT_SECONDS,
+        auth_mode=INTERNAL_API_AUTH_MODE,
         auth_header=INTERNAL_API_AUTH_HEADER,
         auth_prefix=INTERNAL_API_AUTH_PREFIX,
+        username=INTERNAL_API_USERNAME,
+        password=INTERNAL_API_PASSWORD,
         default_headers=None,
         endpoints=None,
     ):
         self.base_url = (base_url or "").rstrip("/")
         self.api_key = api_key or ""
         self.timeout_seconds = int(timeout_seconds)
+        self.auth_mode = (auth_mode or "api_key").strip().lower()
         self.auth_header = auth_header or "Authorization"
         self.auth_prefix = auth_prefix or ""
+        self.username = username or ""
+        self.password = password or ""
         self.default_headers = dict(default_headers or INTERNAL_API_DEFAULT_HEADERS)
         endpoint_mappings = endpoints or INTERNAL_API_ENDPOINTS
         self.endpoints = {
@@ -117,6 +128,8 @@ class InternalApiClient:
 
     def _build_headers(self, endpoint):
         headers = {"Accept": "application/json", **self.default_headers, **endpoint.headers}
+        if self.auth_mode == "basic":
+            return headers
         if self.api_key:
             auth_value = self.api_key
             if self.auth_prefix:
@@ -124,6 +137,13 @@ class InternalApiClient:
             headers[self.auth_header] = auth_value
             headers.setdefault("X-API-Key", self.api_key)
         return headers
+
+    def _build_auth(self):
+        if self.auth_mode != "basic":
+            return None
+        if not self.username:
+            raise RuntimeError("INTERNAL_API_USERNAME is required for basic auth mode.")
+        return (self.username, self.password)
 
     @classmethod
     def _extract_by_keys(cls, payload, record_keys):
@@ -250,11 +270,17 @@ class InternalApiClient:
             "headers": self._build_headers(endpoint),
             "timeout": self.timeout_seconds,
         }
+        auth = self._build_auth()
+        if auth is not None:
+            request_kwargs["auth"] = auth
         if endpoint.method == "GET":
             request_kwargs["params"] = params
             response = requests.get(url, **request_kwargs)
         else:
-            request_kwargs["json"] = params
+            if endpoint.body_mode == "form":
+                request_kwargs["data"] = params
+            else:
+                request_kwargs["json"] = params
             response = requests.request(endpoint.method, url, **request_kwargs)
         response.raise_for_status()
         return response.json()
@@ -291,6 +317,7 @@ class InternalApiClient:
             "name": endpoint.name,
             "path": endpoint.path,
             "method": endpoint.method,
+            "body_mode": endpoint.body_mode,
             "resolved_url": self._resolve_url(endpoint) if self.base_url or self._is_absolute_url(endpoint.path) else endpoint.path,
             "record_keys": list(endpoint.record_keys),
             "query_params": dict(endpoint.query_params),
