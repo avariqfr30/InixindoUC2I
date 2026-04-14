@@ -47,10 +47,14 @@ INTERNAL_API_FEEDBACK_ENDPOINT = os.getenv(
     "/feedback",
 )
 INTERNAL_API_TIMEOUT_SECONDS = int(os.getenv("INTERNAL_API_TIMEOUT_SECONDS", "20"))
+INTERNAL_API_AUTH_MODE = os.getenv("INTERNAL_API_AUTH_MODE", "api_key").strip().lower()
 INTERNAL_API_AUTH_HEADER = os.getenv("INTERNAL_API_AUTH_HEADER", "Authorization").strip() or "Authorization"
 INTERNAL_API_AUTH_PREFIX = os.getenv("INTERNAL_API_AUTH_PREFIX", "Bearer").strip()
+INTERNAL_API_USERNAME = os.getenv("INTERNAL_API_USERNAME", "").strip()
+INTERNAL_API_PASSWORD = os.getenv("INTERNAL_API_PASSWORD", "")
 INTERNAL_API_SOURCE_URL = os.getenv("INTERNAL_API_SOURCE_URL", "").strip()
 INTERNAL_API_SOURCE_METHOD = os.getenv("INTERNAL_API_SOURCE_METHOD", "GET").strip().upper() or "GET"
+INTERNAL_API_SOURCE_BODY_MODE = os.getenv("INTERNAL_API_SOURCE_BODY_MODE", "json").strip().lower() or "json"
 ENABLE_VECTOR_INDEX = os.getenv("ENABLE_VECTOR_INDEX", "0").strip().lower() in {
     "1",
     "true",
@@ -74,6 +78,7 @@ def _load_internal_api_endpoints():
         "feedback": {
             "path": INTERNAL_API_SOURCE_URL or INTERNAL_API_FEEDBACK_ENDPOINT,
             "method": INTERNAL_API_SOURCE_METHOD if INTERNAL_API_SOURCE_URL else "GET",
+            "body_mode": INTERNAL_API_SOURCE_BODY_MODE,
             "record_keys": ["items", "data", "results", "records", "feedback"],
             "query_params": dict(INTERNAL_API_SOURCE_PARAMS),
             "headers": dict(INTERNAL_API_SOURCE_HEADERS),
@@ -82,6 +87,7 @@ def _load_internal_api_endpoints():
         "services": {
             "path": "/services",
             "method": "GET",
+            "body_mode": "json",
             "record_keys": ["items", "data", "results", "records", "services"],
             "query_params": {},
             "headers": {},
@@ -90,6 +96,7 @@ def _load_internal_api_endpoints():
         "stakeholders": {
             "path": "/stakeholders",
             "method": "GET",
+            "body_mode": "json",
             "record_keys": ["items", "data", "results", "records", "stakeholders"],
             "query_params": {},
             "headers": {},
@@ -98,6 +105,7 @@ def _load_internal_api_endpoints():
         "operations": {
             "path": "/operations",
             "method": "GET",
+            "body_mode": "json",
             "record_keys": ["items", "data", "results", "records", "operations"],
             "query_params": {},
             "headers": {},
@@ -120,6 +128,7 @@ def _load_internal_api_endpoints():
         merged[endpoint_name] = {
             "path": override_spec.get("path", f"/{endpoint_name}"),
             "method": override_spec.get("method", "GET"),
+            "body_mode": override_spec.get("body_mode", "json"),
             "record_keys": override_spec.get(
                 "record_keys",
                 ["items", "data", "results", "records", endpoint_name],
