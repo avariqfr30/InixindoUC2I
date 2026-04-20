@@ -31,6 +31,8 @@ rsync -avz --delete \
   --exclude '__pycache__/' \
   --exclude '.pytest_cache/' \
   --exclude '.mypy_cache/' \
+  --exclude 'profiles/*.env' \
+  --exclude 'internal_connector.production.json' \
   --exclude 'data/auth.db' \
   --exclude 'data/cx_feedback.db' \
   --exclude 'data/report_jobs.json' \

@@ -59,6 +59,7 @@ from config import (
     SENTIMENT_OPTIONS,
     WRITER_FIRM_NAME,
 )
+from internal_connector import load_internal_connector
 from internal_api import InternalApiClient
 
 matplotlib.use("Agg")
@@ -248,6 +249,22 @@ class InternalApiProvider(InternalDataProvider):
     def __init__(self):
         self.client = InternalApiClient()
         self.dataset_name = "feedback"
+        self.connector = load_internal_connector()
+
+    def _load_via_connector(self):
+        if not self.connector or not self.connector.enabled:
+            return None
+
+        interpreted = self.client.interpret_payload(self.connector.to_endpoint_spec())
+        raw_df = pd.DataFrame(interpreted["records"])
+        if raw_df.empty:
+            raise ValueError(
+                f"Internal connector '{self.connector.name}' returned no records."
+            )
+
+        mapped_df = self.connector.apply_field_map(raw_df)
+        normalized_df = self.normalize_dataframe(mapped_df)
+        return normalized_df
 
     def load_dataset(self, dataset_name, extra_params=None):
         raw_df = pd.DataFrame(
@@ -260,6 +277,9 @@ class InternalApiProvider(InternalDataProvider):
         return self.normalize_dataframe(raw_df)
 
     def load_feedback_data(self):
+        connector_df = self._load_via_connector()
+        if connector_df is not None:
+            return connector_df
         return self.load_dataset(self.dataset_name)
 
 class KnowledgeBase:

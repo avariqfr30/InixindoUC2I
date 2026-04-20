@@ -46,6 +46,7 @@ class EndpointSpec:
     path: str
     method: str = "GET"
     body_mode: str = "json"
+    record_path: str = ""
     record_keys: tuple[str, ...] = ("items", "data", "results", "records")
     query_params: dict[str, Any] = field(default_factory=dict)
     headers: dict[str, str] = field(default_factory=dict)
@@ -58,6 +59,7 @@ class EndpointSpec:
             path=str(mapping.get("path", f"/{name}")).strip() or f"/{name}",
             method=str(mapping.get("method", "GET")).strip().upper() or "GET",
             body_mode=str(mapping.get("body_mode", "json")).strip().lower() or "json",
+            record_path=str(mapping.get("record_path", "")).strip(),
             record_keys=tuple(mapping.get("record_keys") or ("items", "data", "results", "records", name)),
             query_params=dict(mapping.get("query_params") or {}),
             headers=dict(mapping.get("headers") or {}),
@@ -144,6 +146,34 @@ class InternalApiClient:
         if not self.username:
             raise RuntimeError("INTERNAL_API_USERNAME is required for basic auth mode.")
         return (self.username, self.password)
+
+    @staticmethod
+    def _extract_by_path(payload, record_path):
+        if not record_path:
+            return None
+
+        current = payload
+        tokens = []
+        for chunk in record_path.split("."):
+            if not chunk:
+                continue
+            parts = re.findall(r"([^.\\[\\]]+)|\\[(\\d+)\\]", chunk)
+            for key_token, index_token in parts:
+                tokens.append(key_token if key_token else int(index_token))
+
+        for token in tokens:
+            if isinstance(token, int):
+                if not isinstance(current, list) or token >= len(current):
+                    return None
+                current = current[token]
+            else:
+                if not isinstance(current, dict) or token not in current:
+                    return None
+                current = current[token]
+
+        if isinstance(current, list) and all(isinstance(item, dict) for item in current):
+            return current
+        return None
 
     @classmethod
     def _extract_by_keys(cls, payload, record_keys):
@@ -288,7 +318,11 @@ class InternalApiClient:
     def interpret_payload(self, endpoint_ref, extra_params=None):
         endpoint = self.get_endpoint(endpoint_ref)
         payload = self.request_endpoint(endpoint, extra_params=extra_params)
-        records, record_path = self._extract_by_keys(payload, endpoint.record_keys)
+        records = self._extract_by_path(payload, endpoint.record_path)
+        record_path = endpoint.record_path if records is not None else None
+
+        if records is None:
+            records, record_path = self._extract_by_keys(payload, endpoint.record_keys)
 
         if records is None and endpoint.auto_discover:
             records, record_path = self._discover_records(payload, endpoint.record_keys)
@@ -318,6 +352,7 @@ class InternalApiClient:
             "path": endpoint.path,
             "method": endpoint.method,
             "body_mode": endpoint.body_mode,
+            "record_path": endpoint.record_path,
             "resolved_url": self._resolve_url(endpoint) if self.base_url or self._is_absolute_url(endpoint.path) else endpoint.path,
             "record_keys": list(endpoint.record_keys),
             "query_params": dict(endpoint.query_params),

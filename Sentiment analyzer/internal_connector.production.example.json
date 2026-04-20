@@ -1,0 +1,41 @@
+{
+  "name": "feedback_production",
+  "enabled": true,
+  "endpoint_name": "feedback",
+  "url": "https://replace-me.invalid/api/resource/dataset-result",
+  "method": "POST",
+  "body_mode": "json",
+  "request_data": {
+    "dataset_code": "FeedbackDataset"
+  },
+  "headers": {},
+  "record_path": "data.dataset_result",
+  "record_keys": [
+    "dataset_result",
+    "items",
+    "data",
+    "results",
+    "records"
+  ],
+  "auto_discover": false,
+  "field_map": {
+    "stakeholder_type": "Tipe Stakeholder",
+    "service_name": "Layanan",
+    "feedback_date": "Tanggal Feedback",
+    "rating": "Rating",
+    "comment": "Komentar",
+    "source_name": "Sumber Feedback",
+    "channel_name": "Kanal Feedback",
+    "timeframe": "Rentang Waktu",
+    "location": "Lokasi",
+    "instructor_type": "Tipe Instruktur",
+    "customer_journey": "Customer Journey Hint"
+  },
+  "required_fields": [
+    "Tipe Stakeholder",
+    "Layanan",
+    "Tanggal Feedback",
+    "Rating",
+    "Komentar"
+  ]
+}
