@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP_ROOT="$SCRIPT_DIR"
+PROFILES_DIR="$APP_ROOT/profiles"
+CONNECTOR_EXAMPLE="$APP_ROOT/internal_connector.production.example.json"
+CONNECTOR_TARGET="$APP_ROOT/internal_connector.production.json"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  ./appctl init-profile <demo|production>
+  ./appctl validate <demo|production>
+  ./appctl start <demo|production>
+
+What it does:
+  init-profile   create editable runtime config files from the bundled examples
+  validate       verify the chosen profile before running the app
+  start          launch the app with the chosen profile through Waitress
+USAGE
+}
+
+require_profile() {
+  local profile="${1:-}"
+  case "$profile" in
+    demo|production)
+      printf '%s\n' "$profile"
+      ;;
+    *)
+      echo "Unsupported profile: ${profile:-<empty>}" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+}
+
+profile_env_path() {
+  local profile="$1"
+  printf '%s/%s.env\n' "$PROFILES_DIR" "$profile"
+}
+
+profile_env_example_path() {
+  local profile="$1"
+  printf '%s/%s.env.example\n' "$PROFILES_DIR" "$profile"
+}
+
+init_profile() {
+  local profile="$1"
+  local env_target env_example
+  env_target="$(profile_env_path "$profile")"
+  env_example="$(profile_env_example_path "$profile")"
+
+  if [[ ! -f "$env_example" ]]; then
+    echo "Profile example not found: $env_example" >&2
+    exit 1
+  fi
+
+  if [[ -f "$env_target" ]]; then
+    echo "Runtime profile already exists: $env_target"
+  else
+    cp "$env_example" "$env_target"
+    echo "Created runtime profile: $env_target"
+  fi
+
+  if [[ "$profile" == "production" ]]; then
+    if [[ -f "$CONNECTOR_TARGET" ]]; then
+      echo "Runtime connector already exists: $CONNECTOR_TARGET"
+    else
+      cp "$CONNECTOR_EXAMPLE" "$CONNECTOR_TARGET"
+      echo "Created runtime connector: $CONNECTOR_TARGET"
+    fi
+  fi
+}
+
+load_profile_env() {
+  local profile="$1"
+  local env_path
+  env_path="$(profile_env_path "$profile")"
+
+  if [[ ! -f "$env_path" ]]; then
+    echo "Runtime profile not found: $env_path" >&2
+    echo "Run ./appctl init-profile $profile first." >&2
+    exit 1
+  fi
+
+  export APP_ROOT
+  export APP_PROFILE="$profile"
+  export PROFILE_ENV_FILE="$env_path"
+  set -a
+  # shellcheck disable=SC1090
+  source "$env_path"
+  set +a
+}
+
+validate_profile() {
+  local profile="$1"
+  load_profile_env "$profile"
+  python3 "$APP_ROOT/validate_internal_connector.py"
+}
+
+start_profile() {
+  local profile="$1"
+  load_profile_env "$profile"
+  exec "$APP_ROOT/run_pilot.sh"
+}
+
+main() {
+  local command="${1:-}"
+  local profile
+
+  case "$command" in
+    init-profile)
+      profile="$(require_profile "${2:-}")"
+      init_profile "$profile"
+      ;;
+    validate)
+      profile="$(require_profile "${2:-}")"
+      validate_profile "$profile"
+      ;;
+    start)
+      profile="$(require_profile "${2:-}")"
+      start_profile "$profile"
+      ;;
+    -h|--help|help|"")
+      usage
+      ;;
+    *)
+      echo "Unknown command: $command" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"

@@ -4,7 +4,36 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-export APP_MODE="${APP_MODE:-demo}"
+export APP_ROOT="${APP_ROOT:-$SCRIPT_DIR}"
+export APP_PROFILE="${APP_PROFILE:-demo}"
+export PROFILE_ENV_FILE="${PROFILE_ENV_FILE:-}"
+
+if [[ -n "$PROFILE_ENV_FILE" ]]; then
+  if [[ ! -f "$PROFILE_ENV_FILE" ]]; then
+    echo "Profile env file not found: $PROFILE_ENV_FILE" >&2
+    exit 1
+  fi
+  set -a
+  # shellcheck disable=SC1090
+  source "$PROFILE_ENV_FILE"
+  set +a
+fi
+
+if [[ -z "${APP_MODE:-}" ]]; then
+  case "$APP_PROFILE" in
+    demo)
+      export APP_MODE="demo"
+      ;;
+    production)
+      export APP_MODE="hybrid"
+      ;;
+    *)
+      echo "Unsupported APP_PROFILE: $APP_PROFILE" >&2
+      exit 1
+      ;;
+  esac
+fi
+
 export HOST="${HOST:-0.0.0.0}"
 export PORT="${PORT:-8000}"
 export WAITRESS_THREADS="${WAITRESS_THREADS:-8}"

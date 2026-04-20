@@ -3,11 +3,21 @@ import os
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
+PROFILES_DIR = os.path.join(BASE_DIR, "profiles")
 
 SUPPORTED_APP_MODES = {"demo", "hybrid"}
-APP_MODE = os.getenv("APP_MODE", "demo").strip().lower()
+SUPPORTED_APP_PROFILES = {"demo", "production"}
+APP_PROFILE = os.getenv("APP_PROFILE", "demo").strip().lower()
+if APP_PROFILE not in SUPPORTED_APP_PROFILES:
+    APP_PROFILE = "demo"
+
+_PROFILE_DEFAULT_MODE = {
+    "demo": "demo",
+    "production": "hybrid",
+}
+APP_MODE = os.getenv("APP_MODE", _PROFILE_DEFAULT_MODE[APP_PROFILE]).strip().lower()
 if APP_MODE not in SUPPORTED_APP_MODES:
-    APP_MODE = "demo"
+    APP_MODE = _PROFILE_DEFAULT_MODE[APP_PROFILE]
 
 DEMO_MODE = APP_MODE == "demo"
 INTERNAL_DATA_MODE = "csv" if DEMO_MODE else "api"
@@ -55,6 +65,10 @@ INTERNAL_API_PASSWORD = os.getenv("INTERNAL_API_PASSWORD", "")
 INTERNAL_API_SOURCE_URL = os.getenv("INTERNAL_API_SOURCE_URL", "").strip()
 INTERNAL_API_SOURCE_METHOD = os.getenv("INTERNAL_API_SOURCE_METHOD", "GET").strip().upper() or "GET"
 INTERNAL_API_SOURCE_BODY_MODE = os.getenv("INTERNAL_API_SOURCE_BODY_MODE", "json").strip().lower() or "json"
+INTERNAL_CONNECTOR_PATH = os.getenv(
+    "INTERNAL_CONNECTOR_PATH",
+    os.path.join(BASE_DIR, "internal_connector.production.json"),
+)
 ENABLE_VECTOR_INDEX = os.getenv("ENABLE_VECTOR_INDEX", "0").strip().lower() in {
     "1",
     "true",

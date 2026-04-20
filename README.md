@@ -15,10 +15,25 @@ Alih-alih membaca *feedback* secara manual, sistem ini menormalkan data, menghit
 
 ## Prasyarat Sistem
 
-* **Python 3.9+** (Untuk pengembangan lokal tanpa Docker).
-* **Ollama**: Opsional, dibutuhkan bila `ENABLE_VECTOR_INDEX=1` dan Anda ingin membangun embedding index lokal.
-* **Serper API**: Membutuhkan `SERPER_API_KEY` untuk mengaktifkan modul OSINT.
-* **Docker & Docker Compose** (Untuk *deployment* ke server *cloud* seperti AWS).
+* **Python 3.9+**
+* **Ollama**: Opsional, hanya dibutuhkan bila `ENABLE_VECTOR_INDEX=1`.
+* **Serper API**: Dibutuhkan bila ingin mengaktifkan OSINT eksternal.
+
+## Jalur Operasional yang Disarankan
+
+Untuk mempermudah perpindahan dari development ke production, gunakan dua profil operasional yang terpisah:
+
+* **`demo`**: memakai dataset demo lokal untuk presentasi, UAT ringan, dan stress test.
+* **`production`**: memakai connector JSON + endpoint API internal perusahaan.
+
+Operator tidak perlu mengubah kode. Jalur yang disiapkan sekarang adalah:
+
+1. siapkan file profil runtime,
+2. siapkan connector runtime bila memakai profile `production`,
+3. jalankan validasi satu perintah,
+4. start aplikasi.
+
+Semua itu dibungkus lewat script `appctl`.
 
 ## Instalasi Lokal (Development)
 
@@ -43,48 +58,49 @@ pip install flask flask-cors pandas chromadb ollama matplotlib python-docx markd
 ```
 
 ### 3. Konfigurasi Sistem
-Atur *environment variable* sesuai mode yang ingin dijalankan:
-
-* **Demo mode**: `APP_MODE=demo`
-* **Hybrid mode**: `APP_MODE=hybrid`
-* **Routing AI**: Pastikan `OLLAMA_HOST` mengarah ke endpoint Ollama yang aktif.
-* **OSINT**: Isi `SERPER_API_KEY` jika ingin mengaktifkan benchmark eksternal.
-* **Internal API**: Untuk `APP_MODE=hybrid`, isi `INTERNAL_API_BASE_URL`, dan jika perlu `INTERNAL_API_KEY` serta `INTERNAL_API_FEEDBACK_ENDPOINT`.
-* **Vector index opsional**: Set `ENABLE_VECTOR_INDEX=1` bila ingin membangun embedding index. Secara default dimatikan agar startup dan eksekusi laporan lebih cepat dan lebih ringan.
-
-Contoh menjalankan aplikasi dari command line:
-
-```bash
-# Demo mode: data internal dari CSV lokal, OSINT tetap aktif jika SERPER_API_KEY diisi
-APP_MODE=demo python app.py
-
-# Hybrid mode: data internal dari API perusahaan, benchmark eksternal tetap lewat OSINT
-APP_MODE=hybrid \
-INTERNAL_API_BASE_URL=https://internal.example.com \
-INTERNAL_API_KEY=your_api_key \
-python app.py
-```
-
-Untuk shared pilot internal, jalankan aplikasi dengan Waitress:
+Gunakan script kontrol berikut dari folder aplikasi:
 
 ```bash
 cd "Sentiment analyzer"
-APP_MODE=demo ./run_pilot.sh
 ```
 
-Atau dengan pengaturan yang lebih eksplisit:
+Inisialisasi profil runtime:
 
 ```bash
-cd "Sentiment analyzer"
-APP_MODE=hybrid \
-HOST=0.0.0.0 \
-PORT=8000 \
-WAITRESS_THREADS=8 \
-WAITRESS_CONNECTION_LIMIT=100 \
-WAITRESS_CHANNEL_TIMEOUT=240 \
-REPORT_JOB_WORKERS=3 \
-REPORT_MAX_PENDING_JOBS=24 \
-./run_pilot.sh
+./appctl init-profile demo
+./appctl init-profile production
+```
+
+File yang akan dibuat:
+
+* `profiles/demo.env`
+* `profiles/production.env`
+* `internal_connector.production.json` untuk profil production
+
+Setelah itu:
+
+* edit `profiles/demo.env` bila perlu mengganti port/thread demo,
+* edit `profiles/production.env` untuk secret, auth, dan tuning runtime,
+* edit `internal_connector.production.json` untuk endpoint API, request body, record path, dan field map.
+
+Validasi profil sebelum menjalankan aplikasi:
+
+```bash
+./appctl validate demo
+./appctl validate production
+```
+
+Jalankan aplikasi:
+
+```bash
+./appctl start demo
+./appctl start production
+```
+
+Jika Anda masih ingin menjalankan langsung tanpa `appctl`, `run_pilot.sh` sekarang bisa membaca `PROFILE_ENV_FILE`:
+
+```bash
+PROFILE_ENV_FILE="$(pwd)/profiles/demo.env" ./run_pilot.sh
 ```
 
 Setelah aktif, karyawan dapat membuka aplikasi dari browser mereka menggunakan:
@@ -143,7 +159,7 @@ cd "Sentiment analyzer"
 APP_MODE=demo RESEED_DEMO_DATA=1 ./run_pilot.sh
 ```
 
-Pada `APP_MODE=hybrid`, aplikasi akan mengambil data internal dari API perusahaan. Endpoint tersebut minimal perlu mengembalikan data feedback dalam format JSON yang memuat padanan untuk kolom berikut:
+Pada profil production, aplikasi akan mengambil data internal dari API perusahaan. Endpoint tersebut minimal perlu mengembalikan data feedback dalam format JSON yang memuat padanan untuk kolom berikut:
 * `Tipe Stakeholder`
 * `Layanan`
 * `Rentang Waktu` atau tanggal feedback
@@ -152,9 +168,16 @@ Pada `APP_MODE=hybrid`, aplikasi akan mengambil data internal dari API perusahaa
 
 Data internal yang berhasil diambil akan disalin ke `cx_feedback.db` (SQLite) sebagai cache lokal, lalu diproses ke ChromaDB.
 
-Untuk mempermudah penambahan endpoint internal lain di kemudian hari, konfigurasi endpoint sekarang bisa diatur secara deklaratif lewat `INTERNAL_API_ENDPOINTS_JSON`. Struktur default sudah menyiapkan registry untuk `feedback`, `services`, `stakeholders`, dan `operations`, sehingga penambahan endpoint baru tidak perlu mengubah provider utama selama pola payload masih konsisten.
+Untuk operator production, jalur yang sekarang disarankan adalah **connector spec**, bukan menumpuk banyak environment variable. File `internal_connector.production.json` menjadi satu sumber kebenaran untuk:
 
-Jika nanti perusahaan hanya memberi satu URL penuh, misalnya `https://xxx.com/api/tag`, aplikasi juga bisa langsung diarahkan ke endpoint tersebut tanpa membuat provider baru:
+* endpoint URL,
+* method,
+* request body,
+* record path,
+* field mapping,
+* required fields.
+
+Jika nanti perusahaan hanya memberi satu URL penuh, misalnya `https://xxx.com/api/tag`, aplikasinya tetap bisa diarahkan ke endpoint tersebut:
 
 ```bash
 APP_MODE=hybrid
@@ -187,6 +210,7 @@ Layer internal API sekarang akan:
 Contoh file referensi tersedia di:
 
 * `Sentiment analyzer/internal_api_endpoints.example.json`
+* `Sentiment analyzer/internal_connector.production.example.json`
 
 Untuk melihat endpoint yang sudah terdaftar atau mencoba fetch ke API internal:
 
@@ -207,19 +231,28 @@ Akses UI *Analyzer* melalui browser di `http://127.0.0.1:8000`.
 
 ---
 
-## Deployment ke Production (AWS / Cloud)
+## Deployment ke Production / VPS
 
-Aplikasi ini sepenuhnya *Dockerized* dan siap untuk metode *Lift and Shift* ke server produksi (misal: AWS EC2).
+Jalur deployment yang aktif saat ini adalah:
 
-1.  Siapkan VM/Instance di *cloud environment* Anda.
-2.  Salin seluruh *source code* ke dalam server.
-3.  Jalankan perintah berikut:
+* **Waitress**
+* **systemd**
+* **nginx reverse proxy**
 
-```bash
-docker-compose up -d --build
-```
+Ini lebih sesuai dengan kebutuhan pilot internal dan VPS tunggal dibanding memaksakan Docker padahal runtime saat ini memang dijalankan langsung dengan Python virtualenv.
 
-Arsitektur Docker dapat disesuaikan nanti untuk deployment produksi. Untuk pilot internal yang ringan dan cepat dibagikan, launcher saat ini langsung memakai **Waitress** agar jalur eksekusinya sederhana dan stabil untuk koneksi paralel dari browser karyawan.
+Alur aman yang direkomendasikan:
+
+1. simpan runtime config rahasia di file VPS terpisah atau `profiles/*.env` yang tidak ikut ter-*sync*,
+2. simpan `internal_connector.production.json` versi runtime di VPS,
+3. jalankan `./appctl validate production`,
+4. start atau restart service,
+5. cek `/health` dan `/ready`.
+
+File runtime berikut sengaja diperlakukan sebagai konfigurasi lokal dan tidak ikut didorong ulang oleh deploy script:
+
+* `Sentiment analyzer/profiles/*.env`
+* `Sentiment analyzer/internal_connector.production.json`
 
 ## Catatan Operasional untuk VPS Simulation
 
