@@ -844,9 +844,22 @@ class FeedbackAnalyticsEngine:
         return rows
 
     def _score_engine_metrics(self, dataframe, score_engine):
+        normalized_engine = self._normalize_score_engine(score_engine)
+        if normalized_engine == "experience_index":
+            return self._score_engine_metrics_experience_index(dataframe)
+        return self._score_engine_metrics_single(dataframe, normalized_engine)
+
+    def _score_engine_metrics_single(self, dataframe, score_engine):
         profile = self._score_engine_profile(score_engine)
         if dataframe.empty:
-            return {"label": profile["label"], "current_score": 0.0, "projected_score": 0.0, "delta": 0.0, "direction": "stabil", "theme_rows": []}
+            return {
+                "label": profile["label"],
+                "current_score": 0.0,
+                "projected_score": 0.0,
+                "delta": 0.0,
+                "direction": "stabil",
+                "theme_rows": [],
+            }
 
         avg_rating = dataframe["Rating Numeric"].mean()
         base_score = ((avg_rating / 5) * 100) if pd.notna(avg_rating) else 0.0
@@ -886,7 +899,121 @@ class FeedbackAnalyticsEngine:
         direction = "naik" if delta > 0 else "turun" if delta < 0 else "stabil"
 
         theme_rows.sort(key=lambda item: (item["priority_score"], item["negative_hits"]), reverse=True)
-        return {"label": profile["label"], "current_score": round(current_score, 1), "projected_score": round(projected_score, 1), "delta": delta, "direction": direction, "theme_rows": theme_rows}
+        return {
+            "label": profile["label"],
+            "current_score": round(float(current_score), 1),
+            "projected_score": round(float(projected_score), 1),
+            "delta": round(float(delta), 1),
+            "direction": direction,
+            "theme_rows": theme_rows,
+        }
+
+    def _score_engine_metrics_experience_index(self, dataframe):
+        profile = self._score_engine_profile("experience_index")
+        if dataframe.empty:
+            return {
+                "label": profile["label"],
+                "current_score": 0.0,
+                "projected_score": 0.0,
+                "delta": 0.0,
+                "direction": "stabil",
+                "theme_rows": [],
+                "component_breakdown": [],
+            }
+
+        component_weights = profile.get(
+            "component_weights",
+            {"learning_score": 0.5, "service_score": 0.3, "facility_score": 0.2},
+        )
+
+        component_metrics = {}
+        for component_id, weight in component_weights.items():
+            normalized_component = self._normalize_score_engine(component_id)
+            if normalized_component == "experience_index" or weight <= 0:
+                continue
+            component_metrics[normalized_component] = {
+                "weight": float(weight),
+                "metrics": self._score_engine_metrics_single(dataframe, normalized_component),
+            }
+
+        if not component_metrics:
+            return self._score_engine_metrics_single(dataframe, "experience_index")
+
+        total_component_weight = sum(item["weight"] for item in component_metrics.values()) or 1.0
+        current_score = sum(
+            item["metrics"]["current_score"] * item["weight"]
+            for item in component_metrics.values()
+        ) / total_component_weight
+        projected_score = sum(
+            item["metrics"]["projected_score"] * item["weight"]
+            for item in component_metrics.values()
+        ) / total_component_weight
+
+        delta = round(projected_score - current_score, 1)
+        if abs(delta) < 0.6:
+            delta = 0.0
+        projected_score = self._clamp(current_score + delta)
+        direction = "naik" if delta > 0 else "turun" if delta < 0 else "stabil"
+
+        rolled_theme_rows = {}
+        for component_id, component_payload in component_metrics.items():
+            weight = component_payload["weight"]
+            for row in component_payload["metrics"]["theme_rows"]:
+                theme_id = row["theme_id"]
+                aggregate = rolled_theme_rows.setdefault(
+                    theme_id,
+                    {
+                        "theme_id": theme_id,
+                        "label": row["label"],
+                        "weight": profile["theme_weights"].get(theme_id, 0.0),
+                        "total_hits": 0.0,
+                        "positive_hits": 0.0,
+                        "negative_hits": 0.0,
+                        "priority_score": 0.0,
+                        "prescription": row["prescription"],
+                    },
+                )
+                aggregate["total_hits"] += row["total_hits"] * weight
+                aggregate["positive_hits"] += row["positive_hits"] * weight
+                aggregate["negative_hits"] += row["negative_hits"] * weight
+                aggregate["priority_score"] += row["priority_score"] * weight
+
+        theme_rows = []
+        for item in rolled_theme_rows.values():
+            effective_weight = item["weight"] if item["weight"] > 0 else 0.01
+            item["priority_score"] = round(item["priority_score"] * effective_weight, 1)
+            item["total_hits"] = int(round(item["total_hits"]))
+            item["positive_hits"] = int(round(item["positive_hits"]))
+            item["negative_hits"] = int(round(item["negative_hits"]))
+            theme_rows.append(item)
+
+        theme_rows.sort(
+            key=lambda item: (item["priority_score"], item["negative_hits"]),
+            reverse=True,
+        )
+
+        component_breakdown = []
+        for component_id, item in component_metrics.items():
+            component_breakdown.append(
+                {
+                    "component_id": component_id,
+                    "label": item["metrics"]["label"],
+                    "weight": round(item["weight"], 3),
+                    "current_score": round(float(item["metrics"]["current_score"]), 1),
+                    "projected_score": round(float(item["metrics"]["projected_score"]), 1),
+                }
+            )
+        component_breakdown.sort(key=lambda item: item["weight"], reverse=True)
+
+        return {
+            "label": profile["label"],
+            "current_score": round(float(current_score), 1),
+            "projected_score": round(float(projected_score), 1),
+            "delta": round(float(delta), 1),
+            "direction": direction,
+            "theme_rows": theme_rows,
+            "component_breakdown": component_breakdown,
+        }
 
     def _build_analysis_context(self, timeframe_df, timeframe, sentiment, segment, score_engine):
         normalized_sentiment = self._normalize_sentiment_filter(sentiment)
@@ -1102,6 +1229,7 @@ class FeedbackAnalyticsEngine:
             [
                 ["Periode analisis", timeframe], ["Cakupan analisis", scope_text], ["Total feedback tervalidasi", f"{total_rows} record"],
                 ["Rata-rata rating", f"{round(avg_rating, 2) if pd.notna(avg_rating) else 0.0} dari 5"], [context["score_profile"]["label"], f"{score_metrics['current_score']} / 100"],
+                ["Sumber parameter skor", context["score_profile"].get("parameter_source", "Model internal")],
                 ["Kelengkapan field inti", f"{governance['completeness_pct']}%"], ["Jumlah sumber feedback", governance["source_count"]], ["Jumlah kanal feedback", governance["channel_count"]],
             ],
         )
@@ -1231,6 +1359,14 @@ class FeedbackAnalyticsEngine:
         top_segment_risk = stakeholder_risks[0] if stakeholder_risks else None
         predictive_intro = f"Analisis prediktif membaca risiko yang kemungkinan berkembang apabila pola feedback saat ini berlanjut dalam jangka pendek. {self._projection_sentence(context)} {'Layanan yang paling layak diprioritaskan untuk pengawasan adalah ' + top_service_risk['label'] + '.' if top_service_risk else 'Belum ada layanan dengan pola risiko yang cukup kuat untuk diprioritaskan.'} {'Segmen yang paling perlu dipantau adalah ' + top_segment_risk['label'] + '.' if top_segment_risk else 'Belum ada segmen dengan paparan risiko yang dominan.'}"
         score_projection_table = self._markdown_table(["Score Engine", "Nilai Saat Ini", "Arah Proyeksi", "Nilai Proyeksi", "Horizon", "Estimasi Waktu"], [[context["score_profile"]["label"], score_metrics["current_score"], score_metrics["direction"].title(), score_metrics["projected_score"], context["horizon_text"], self._forecast_calendar_reference(context["timeframe"])]])
+        component_breakdown = score_metrics.get("component_breakdown", [])
+        component_table = self._markdown_table(
+            ["Komponen", "Bobot", "Skor Saat Ini", "Skor Proyeksi"],
+            [
+                [item["label"], f"{round(item['weight'] * 100, 1)}%", item["current_score"], item["projected_score"]]
+                for item in component_breakdown
+            ],
+        )
         service_risk_table = self._markdown_table(["Layanan", "Level Risiko", "Rata-rata Rating", "Proporsi Negatif", "Volume"], [[item["label"], self._risk_severity(item["risk_score"]).title(), item["average_rating"], f"{item['negative_ratio']}%", item["volume"]] for item in service_risks])
         stakeholder_risk_table = self._markdown_table(["Segmen", "Level Risiko", "Rata-rata Rating", "Proporsi Negatif", "Volume"], [[item["label"], self._risk_severity(item["risk_score"]).title(), item["average_rating"], f"{item['negative_ratio']}%", item["volume"]] for item in stakeholder_risks])
         journey_projection_table = self._markdown_table(["Tahap Customer Journey", "Rating Rata-rata", "Negatif", "Positif", "Tema Dominan"], [[item["stage_label"], item["average_rating"], f"{item['negative_share']}%", f"{item['positive_share']}%", item["dominant_theme"]] for item in journey_rows])
@@ -1240,7 +1376,7 @@ class FeedbackAnalyticsEngine:
 
         return "\n".join([
             "## 3.1 Risiko Jangka Pendek Jika Pola Saat Ini Berlanjut", predictive_intro, "", "Prediksi pada dokumen ini tidak dimaksudkan sebagai forecast statistik jangka panjang, melainkan sebagai early warning berbasis pola rating, proporsi sentimen negatif, dan konsentrasi volume feedback. Dengan pendekatan ini, manajemen dapat lebih cepat memutuskan layanan mana yang perlu ditangani lebih dahulu.", "",
-            score_projection_table, "", projection_chart_line, "", service_risk_table, "", *risk_lines, "", "## 3.2 Prediksi Segmen dan Layanan yang Paling Rentan", "Selain layanan, pemantauan juga perlu diarahkan pada segmen pelanggan yang memperlihatkan kombinasi antara volume feedback tinggi dan kualitas pengalaman yang menurun. Segmen seperti ini biasanya lebih cepat mempengaruhi reputasi, retensi, dan peluang repeat engagement.", "",
+            score_projection_table, "", component_table if component_breakdown else "", "", projection_chart_line, "", service_risk_table, "", *risk_lines, "", "## 3.2 Prediksi Segmen dan Layanan yang Paling Rentan", "Selain layanan, pemantauan juga perlu diarahkan pada segmen pelanggan yang memperlihatkan kombinasi antara volume feedback tinggi dan kualitas pengalaman yang menurun. Segmen seperti ini biasanya lebih cepat mempengaruhi reputasi, retensi, dan peluang repeat engagement.", "",
             stakeholder_risk_table, "", *segment_lines, "", "### Pembacaan customer journey ke depan", journey_projection_table, "", *journey_lines, "", "### Area operasional yang perlu diawasi", operational_projection_table, "", *operational_lines, "",
             "## 3.3 Tren Eksternal yang Berpotensi Memperbesar Risiko", "Sinyal eksternal digunakan sebagai benchmark untuk membaca apakah tantangan yang muncul berasal murni dari kondisi internal atau juga diperkuat oleh perubahan ekspektasi pasar. Bila tren eksternal bergerak ke arah yang sama dengan keluhan pelanggan internal, maka urgensi intervensi meningkat.", "",
             osint_table, "", *osint_lines[:6],

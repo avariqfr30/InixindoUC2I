@@ -12,6 +12,24 @@ Alih-alih membaca *feedback* secara manual, sistem ini menormalkan data, menghit
 * **Enterprise OSINT**: Menarik tren pasar dan benchmark publik sebagai konteks eksternal.
 * **Fast Report Pipeline**: Laporan disusun terutama dari analytics terstruktur agar lebih stabil untuk eksekusi paralel banyak pengguna.
 * **Async Report Jobs for Pilot/VPS**: Jalur generate laporan dapat diproses sebagai background job dengan status polling, sehingga lebih aman untuk dipakai beberapa pengguna sekaligus pada satu server internal.
+* **Scoring Parameterized**: Bobot `Learning Score`, `Service Score`, `Facility Score`, dan formula `Experience Index` mengikuti parameter tabel resmi (berbasis `Feedback Score.xlsx`).
+
+## Model Scoring
+
+Model scoring sekarang mengikuti parameter yang Anda berikan:
+
+* `Learning Score`: bobot indikator delivery, engagement, relevance, dan learning outcome.
+* `Service Score`: bobot indikator attitude, responsiveness, competence, transport, dan souvenir.
+* `Facility Score`: bobot indikator classroom comfort, equipment, supporting facilities, dan accessibility.
+* `Experience Index`: dihitung dari gabungan komponen:
+  * `Learning Score` = 50%
+  * `Service Score` = 30%
+  * `Facility Score` = 20%
+
+Implementasi parameter ada di:
+
+* `Sentiment analyzer/config.py` (`SCORE_ENGINE_PARAMETER_TABLES`, `SCORE_ENGINE_PROFILES`)
+* `Sentiment analyzer/core.py` (`_score_engine_metrics_single`, `_score_engine_metrics_experience_index`)
 
 ## Prasyarat Sistem
 
