@@ -1183,6 +1183,40 @@ class FeedbackAnalyticsEngine:
             return f"{score_label} diproyeksikan naik dari {metrics['current_score']} menjadi sekitar {metrics['projected_score']} dalam {horizon_text}, atau {calendar_reference}, jika momentum yang ada dapat dipertahankan."
         return f"{score_label} diproyeksikan relatif stabil di kisaran {metrics['projected_score']} dalam {horizon_text}, atau {calendar_reference}, namun tetap perlu dipantau agar tidak bergeser ketika volume feedback bertambah."
 
+    @staticmethod
+    def _score_component_formula(components, key_name):
+        if not components:
+            return 0.0, ""
+        total = 0.0
+        terms = []
+        for item in components:
+            weight = float(item.get("weight", 0.0))
+            score_value = float(item.get(key_name, 0.0))
+            total += weight * score_value
+            terms.append(f"({round(weight * 100, 1)}% x {score_value})")
+        return round(total, 2), " + ".join(terms)
+
+    def _experience_formula_details(self, context):
+        if context.get("score_engine") != "experience_index":
+            return None
+        components = context.get("score_metrics", {}).get("component_breakdown") or []
+        if not components:
+            return None
+
+        current_calc, current_formula = self._score_component_formula(components, "current_score")
+        projected_calc, projected_formula = self._score_component_formula(components, "projected_score")
+        weight_summary = ", ".join(
+            f"{item['label']} {round(float(item['weight']) * 100, 1)}%"
+            for item in components
+        )
+        return {
+            "weight_summary": weight_summary,
+            "current_calc": current_calc,
+            "current_formula": current_formula,
+            "projected_calc": projected_calc,
+            "projected_formula": projected_formula,
+        }
+
     def _descriptive_markdown(self, timeframe_df, timeframe, notes, context):
         governance = self._governance_summary(timeframe_df)
         total_rows = governance["total_rows"]
@@ -1360,6 +1394,7 @@ class FeedbackAnalyticsEngine:
         predictive_intro = f"Analisis prediktif membaca risiko yang kemungkinan berkembang apabila pola feedback saat ini berlanjut dalam jangka pendek. {self._projection_sentence(context)} {'Layanan yang paling layak diprioritaskan untuk pengawasan adalah ' + top_service_risk['label'] + '.' if top_service_risk else 'Belum ada layanan dengan pola risiko yang cukup kuat untuk diprioritaskan.'} {'Segmen yang paling perlu dipantau adalah ' + top_segment_risk['label'] + '.' if top_segment_risk else 'Belum ada segmen dengan paparan risiko yang dominan.'}"
         score_projection_table = self._markdown_table(["Score Engine", "Nilai Saat Ini", "Arah Proyeksi", "Nilai Proyeksi", "Horizon", "Estimasi Waktu"], [[context["score_profile"]["label"], score_metrics["current_score"], score_metrics["direction"].title(), score_metrics["projected_score"], context["horizon_text"], self._forecast_calendar_reference(context["timeframe"])]])
         component_breakdown = score_metrics.get("component_breakdown", [])
+        experience_formula = self._experience_formula_details(context)
         component_table = self._markdown_table(
             ["Komponen", "Bobot", "Skor Saat Ini", "Skor Proyeksi"],
             [
@@ -1367,6 +1402,20 @@ class FeedbackAnalyticsEngine:
                 for item in component_breakdown
             ],
         )
+        formula_table = self._markdown_table(
+            ["Parameter", "Perhitungan"],
+            [
+                ["Komposisi Bobot", experience_formula["weight_summary"]],
+                [
+                    "Rumus Skor Saat Ini",
+                    f"{experience_formula['current_formula']} = {experience_formula['current_calc']} (dibulatkan menjadi {score_metrics['current_score']})",
+                ],
+                [
+                    "Rumus Skor Proyeksi",
+                    f"{experience_formula['projected_formula']} = {experience_formula['projected_calc']} (dibulatkan menjadi {score_metrics['projected_score']})",
+                ],
+            ],
+        ) if experience_formula else ""
         service_risk_table = self._markdown_table(["Layanan", "Level Risiko", "Rata-rata Rating", "Proporsi Negatif", "Volume"], [[item["label"], self._risk_severity(item["risk_score"]).title(), item["average_rating"], f"{item['negative_ratio']}%", item["volume"]] for item in service_risks])
         stakeholder_risk_table = self._markdown_table(["Segmen", "Level Risiko", "Rata-rata Rating", "Proporsi Negatif", "Volume"], [[item["label"], self._risk_severity(item["risk_score"]).title(), item["average_rating"], f"{item['negative_ratio']}%", item["volume"]] for item in stakeholder_risks])
         journey_projection_table = self._markdown_table(["Tahap Customer Journey", "Rating Rata-rata", "Negatif", "Positif", "Tema Dominan"], [[item["stage_label"], item["average_rating"], f"{item['negative_share']}%", f"{item['positive_share']}%", item["dominant_theme"]] for item in journey_rows])
@@ -1376,7 +1425,9 @@ class FeedbackAnalyticsEngine:
 
         return "\n".join([
             "## 3.1 Risiko Jangka Pendek Jika Pola Saat Ini Berlanjut", predictive_intro, "", "Prediksi pada dokumen ini tidak dimaksudkan sebagai forecast statistik jangka panjang, melainkan sebagai early warning berbasis pola rating, proporsi sentimen negatif, dan konsentrasi volume feedback. Dengan pendekatan ini, manajemen dapat lebih cepat memutuskan layanan mana yang perlu ditangani lebih dahulu.", "",
-            score_projection_table, "", component_table if component_breakdown else "", "", projection_chart_line, "", service_risk_table, "", *risk_lines, "", "## 3.2 Prediksi Segmen dan Layanan yang Paling Rentan", "Selain layanan, pemantauan juga perlu diarahkan pada segmen pelanggan yang memperlihatkan kombinasi antara volume feedback tinggi dan kualitas pengalaman yang menurun. Segmen seperti ini biasanya lebih cepat mempengaruhi reputasi, retensi, dan peluang repeat engagement.", "",
+            score_projection_table, "", component_table if component_breakdown else "", "",
+            "### Penjelasan Perhitungan Experience Index" if experience_formula else "", f"Experience Index pada laporan ini dihitung dari bobot komponen: {experience_formula['weight_summary']}." if experience_formula else "", "", formula_table if experience_formula else "", "",
+            projection_chart_line, "", service_risk_table, "", *risk_lines, "", "## 3.2 Prediksi Segmen dan Layanan yang Paling Rentan", "Selain layanan, pemantauan juga perlu diarahkan pada segmen pelanggan yang memperlihatkan kombinasi antara volume feedback tinggi dan kualitas pengalaman yang menurun. Segmen seperti ini biasanya lebih cepat mempengaruhi reputasi, retensi, dan peluang repeat engagement.", "",
             stakeholder_risk_table, "", *segment_lines, "", "### Pembacaan customer journey ke depan", journey_projection_table, "", *journey_lines, "", "### Area operasional yang perlu diawasi", operational_projection_table, "", *operational_lines, "",
             "## 3.3 Tren Eksternal yang Berpotensi Memperbesar Risiko", "Sinyal eksternal digunakan sebagai benchmark untuk membaca apakah tantangan yang muncul berasal murni dari kondisi internal atau juga diperkuat oleh perubahan ekspektasi pasar. Bila tren eksternal bergerak ke arah yang sama dengan keluhan pelanggan internal, maka urgensi intervensi meningkat.", "",
             osint_table, "", *osint_lines[:6],
@@ -1528,13 +1579,33 @@ class FeedbackAnalyticsEngine:
         top_issue = next((theme for theme in self._theme_hits(timeframe_df) if theme["negative_hits"] > 0), None)
         focus_text = notes.strip() if notes and notes.strip() else "Tidak ada fokus tambahan dari pengguna."
         dominant_journey, score_metrics = context["dominant_journey"], context["score_metrics"]
+        experience_formula = self._experience_formula_details(context)
         top_location = self._series_counts_for_column(timeframe_df, "Lokasi", limit=1)
         top_instructor_type = self._series_counts_for_column(timeframe_df, "Tipe Instruktur", limit=1)
 
         risk_statement = f"- Risiko teratas saat ini ada pada layanan {top_risk[0]['label']} dengan proporsi sinyal negatif {top_risk[0]['negative_ratio']}%." if top_risk else "- Belum ada layanan dengan risiko dominan yang teridentifikasi."
         executive_intro = f"Laporan ini merangkum kondisi pengalaman pelanggan untuk periode {timeframe} berdasarkan {total_rows} feedback tervalidasi. Analisis saat ini dibaca pada {context['scope_text']} dengan fokus pada {context['score_profile']['narrative_focus']}. Secara umum, rata-rata rating berada pada level {round(avg_rating, 2) if pd.notna(avg_rating) else 0.0} dari 5, yang menunjukkan kualitas layanan {self._rating_assessment(avg_rating)}. Proporsi sentimen negatif tercatat sebesar {negative_share}% ({negative_count} feedback), sehingga kondisi ini {self._negative_share_assessment(negative_share)}."
         meeting_context = f"Untuk kebutuhan rapat internal, perhatian utama sebaiknya diarahkan pada layanan {top_risk[0]['label'] if top_risk else self._primary_label(top_service, 'yang memiliki volume feedback terbesar')} serta pada isu {top_issue['label'] if top_issue else 'konsistensi kualitas layanan'}. {self._projection_sentence(context)} Fokus tambahan yang diminta pengguna: {focus_text}"
-        snapshot_table = self._markdown_table(["Indikator Kunci", "Nilai"], [["Total feedback dianalisis", f"{total_rows} record"], ["Cakupan analisis", context["scope_text"]], [context["score_profile"]["label"], f"{score_metrics['current_score']} / 100"], ["Rata-rata rating", f"{round(avg_rating, 2) if pd.notna(avg_rating) else 0.0} dari 5"], ["Proporsi sentimen negatif", f"{negative_share}%"], ["Layanan dengan volume terbesar", self._primary_label(top_service, "Belum terpetakan")], ["Segmen dengan volume terbesar", self._primary_label(top_stakeholder, "Belum terpetakan")], ["Lokasi pelatihan dominan", self._primary_label(top_location, "Belum terpetakan")], ["Tipe instruktur dominan", self._primary_label(top_instructor_type, "Belum terpetakan")], ["Kelengkapan field inti", f"{governance['completeness_pct']}%"]])
+        snapshot_rows = [
+            ["Total feedback dianalisis", f"{total_rows} record"],
+            ["Cakupan analisis", context["scope_text"]],
+            [context["score_profile"]["label"], f"{score_metrics['current_score']} / 100"],
+            ["Rata-rata rating", f"{round(avg_rating, 2) if pd.notna(avg_rating) else 0.0} dari 5"],
+            ["Proporsi sentimen negatif", f"{negative_share}%"],
+            ["Layanan dengan volume terbesar", self._primary_label(top_service, "Belum terpetakan")],
+            ["Segmen dengan volume terbesar", self._primary_label(top_stakeholder, "Belum terpetakan")],
+            ["Lokasi pelatihan dominan", self._primary_label(top_location, "Belum terpetakan")],
+            ["Tipe instruktur dominan", self._primary_label(top_instructor_type, "Belum terpetakan")],
+            ["Kelengkapan field inti", f"{governance['completeness_pct']}%"],
+        ]
+        if experience_formula:
+            snapshot_rows.extend(
+                [
+                    ["Formula Experience Index", experience_formula["weight_summary"]],
+                    ["Perhitungan Skor Saat Ini", f"{experience_formula['current_formula']} = {experience_formula['current_calc']} (dibulatkan menjadi {score_metrics['current_score']})"],
+                ]
+            )
+        snapshot_table = self._markdown_table(["Indikator Kunci", "Nilai"], snapshot_rows)
         meeting_agenda = [f"- Apakah layanan {top_risk[0]['label']} memerlukan intervensi prioritas lintas fungsi pada 30 hari ke depan?" if top_risk else "- Apakah perusahaan perlu memperluas pengumpulan feedback agar risiko layanan lebih mudah dibaca?", f"- Bagaimana tindak lanjut yang paling tepat untuk tema {top_issue['label']} agar tidak berkembang menjadi keluhan berulang?" if top_issue else "- Kekuatan layanan mana yang paling layak distandardisasi dan direplikasi?", f"- Tahap customer journey mana yang paling perlu dikoreksi lebih dulu, mengingat titik gesekan terbesar saat ini berada pada {dominant_journey['stage_label']}?" if dominant_journey else "- Tahap customer journey mana yang paling perlu dipetakan lebih rinci pada periode berikutnya?", "- Apakah tata kelola sumber, kanal, dan owner tindak lanjut sudah cukup jelas untuk mendukung evaluasi periodik berikutnya?"]
 
         return "\n".join([
