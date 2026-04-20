@@ -47,7 +47,7 @@ from config import (
     INTERNAL_DATA_MODE,
     OLLAMA_HOST,
     OSINT_BASE_QUERIES,
-    OSINT_CACHE_PATH,
+    OSINT_CACHE_DIR,
     OSINT_CACHE_TTL_SECONDS,
     OSINT_MAX_SIGNALS,
     OSINT_RECENCY,
@@ -72,9 +72,8 @@ logger = logging.getLogger(__name__)
 class InsightSchema(BaseModel):
     insight: str = Field(description="The extracted insight in Indonesian. 'NOT_FOUND' if missing.")
 
-# Initialize ultra-fast disk caching for OSINT
-osint_cache_dir = Path(OSINT_CACHE_PATH).parent / '.osint_cache' if hasattr(OSINT_CACHE_PATH, "parent") else os.path.dirname(OSINT_CACHE_PATH) + '/.osint_cache'
-osint_cache = dc.Cache(str(osint_cache_dir))
+# Initialize disk cache for OSINT (single source of truth: OSINT_CACHE_DIR)
+osint_cache = dc.Cache(str(Path(OSINT_CACHE_DIR)))
 # ==========================================
 
 CANONICAL_INTERNAL_COLUMNS = (
@@ -411,10 +410,46 @@ class KnowledgeBase:
 class Researcher:
     SERPER_ENDPOINT = "https://google.serper.dev/search"
     INVALID_API_KEYS = {"", "YOUR_SERPER_API_KEY", "masukkan_api_key_serper_anda_disini"}
+    MACRO_TRENDS_CACHE_VERSION = "macro_trends_v2"
+    NON_CACHEABLE_MESSAGES = {
+        "Data OSINT eksternal tidak tersedia (SERPER_API_KEY belum diatur).",
+        "Tidak ada tren eksternal yang berhasil dimuat.",
+        "Tidak ada sinyal OSINT eksternal yang dapat digunakan untuk benchmark periode ini.",
+    }
 
     @staticmethod
     def _is_enabled():
         return (SERPER_API_KEY or "").strip() not in Researcher.INVALID_API_KEYS
+
+    @staticmethod
+    def _normalize_cache_token(value):
+        return re.sub(r"\s+", " ", str(value or "").strip().lower())
+
+    @classmethod
+    def _normalize_query(cls, query):
+        return cls._normalize_cache_token(query)
+
+    @classmethod
+    def _macro_trends_cache_key(cls, timeframe, notes, score_engine_label, llm_model):
+        key_payload = {
+            "version": cls.MACRO_TRENDS_CACHE_VERSION,
+            "timeframe": cls._normalize_cache_token(timeframe),
+            "notes": cls._normalize_cache_token(notes),
+            "score_engine_label": cls._normalize_cache_token(score_engine_label),
+            "llm_model": cls._normalize_cache_token(llm_model),
+        }
+        key_raw = json.dumps(key_payload, ensure_ascii=False, sort_keys=True)
+        key_hash = hashlib.sha256(key_raw.encode("utf-8")).hexdigest()
+        return f"osint:macro:{key_hash}"
+
+    @classmethod
+    def _is_cacheable_macro_result(cls, result):
+        if not isinstance(result, str):
+            return False
+        stripped = result.strip()
+        if not stripped:
+            return False
+        return stripped not in cls.NON_CACHEABLE_MESSAGES
 
     @staticmethod
     def fetch_full_markdown(url):
@@ -474,8 +509,12 @@ class Researcher:
 
     @staticmethod
     def _search_serper(query, max_results=OSINT_RESULTS_PER_QUERY):
+        normalized_query = Researcher._normalize_query(query)
+        if not normalized_query:
+            raise ValueError("OSINT query kosong setelah normalisasi.")
+
         payload = {
-            "q": query,
+            "q": normalized_query,
             "num": max_results,
             "gl": OSINT_SEARCH_REGION,
             "hl": OSINT_SEARCH_LANGUAGE,
@@ -557,9 +596,21 @@ class Researcher:
 
     @staticmethod
     def _run_query_batch(queries, max_signals=OSINT_MAX_SIGNALS):
+        normalized_queries = []
+        seen_queries = set()
+        for query in queries:
+            normalized_query = Researcher._normalize_query(query)
+            if not normalized_query or normalized_query in seen_queries:
+                continue
+            seen_queries.add(normalized_query)
+            normalized_queries.append(normalized_query)
+
+        if not normalized_queries:
+            return []
+
         collected = []
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, max(1, len(queries)))) as pool:
-            future_map = {pool.submit(Researcher._search_serper, query): query for query in queries}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, max(1, len(normalized_queries)))) as pool:
+            future_map = {pool.submit(Researcher._search_serper, query): query for query in normalized_queries}
             for future in concurrent.futures.as_completed(future_map):
                 query = future_map[future]
                 try:
@@ -569,14 +620,25 @@ class Researcher:
                     logger.warning("OSINT query gagal (%s): %s", query, exc)
 
         deduplicated = Researcher._deduplicate_items(collected)
-        ranked = Researcher._score_items(deduplicated, " ".join(queries))
+        ranked = Researcher._score_items(deduplicated, " ".join(normalized_queries))
         return ranked[:max_signals]
 
-    @staticmethod
-    @osint_cache.memoize(expire=OSINT_CACHE_TTL_SECONDS)
-    def get_macro_trends(timeframe, notes="", score_engine_label="Experience Index"):
+    @classmethod
+    def get_macro_trends(cls, timeframe, notes="", score_engine_label="Experience Index"):
         scope = timeframe or "periode terbaru"
         compact_notes = re.sub(r"\s+", " ", notes).strip()
+        llm_model = os.getenv("LLM_MODEL", "gpt-oss:120b-cloud")
+        cache_key = cls._macro_trends_cache_key(
+            timeframe=scope,
+            notes=compact_notes,
+            score_engine_label=score_engine_label,
+            llm_model=llm_model,
+        )
+
+        cached_result = osint_cache.get(cache_key)
+        if isinstance(cached_result, str) and cached_result.strip():
+            return cached_result
+
         contextual_query = (
             f"benchmark sentimen pelanggan pelatihan dan konsultasi IT Indonesia {scope} {score_engine_label}"
         )
@@ -585,11 +647,11 @@ class Researcher:
 
         queries = [f"{query} {scope}" for query in OSINT_BASE_QUERIES] + [contextual_query]
 
-        if not Researcher._is_enabled():
+        if not cls._is_enabled():
             return "Data OSINT eksternal tidak tersedia (SERPER_API_KEY belum diatur)."
 
         try:
-            findings = Researcher._run_query_batch(queries)
+            findings = cls._run_query_batch(queries)
 
             # --- DEEP SCRAPE THE #1 RESULT ---
             deep_insight_text = ""
@@ -597,13 +659,16 @@ class Researcher:
                 top_link = findings[0]["url"]
                 logger.info("Deep scraping OSINT for macro trends: %s", top_link)
                 goal = "What are the latest macro trends, challenges, or benchmarks regarding IT training, consulting, and customer expectations in Indonesia?"
-                insight = Researcher.extract_insight_with_llm(top_link, goal)
+                insight = cls.extract_insight_with_llm(top_link, goal)
                 if insight:
-                    source = Researcher._source_domain(top_link)
+                    source = cls._source_domain(top_link)
                     deep_insight_text = f"**Insight Mendalam (via {source}):** {insight}\n\n"
 
-            brief = Researcher._format_osint_brief(findings, "Sinyal OSINT Makro (Indonesia)")
-            return deep_insight_text + brief
+            brief = cls._format_osint_brief(findings, "Sinyal OSINT Makro (Indonesia)")
+            result = deep_insight_text + brief
+            if cls._is_cacheable_macro_result(result):
+                osint_cache.set(cache_key, result, expire=OSINT_CACHE_TTL_SECONDS)
+            return result
         except Exception as exc:
             logger.warning("OSINT macro trends failed: %s", exc)
             return "Tidak ada tren eksternal yang berhasil dimuat."

@@ -371,6 +371,10 @@ OSINT_CACHE_PATH = os.getenv(
     "OSINT_CACHE_PATH",
     os.path.join(DATA_DIR, "osint_cache.json"),
 )
+OSINT_CACHE_DIR = os.getenv(
+    "OSINT_CACHE_DIR",
+    os.path.join(os.path.dirname(OSINT_CACHE_PATH), ".osint_cache"),
+)
 OSINT_CACHE_TTL_SECONDS = int(os.getenv("OSINT_CACHE_TTL_SECONDS", "21600"))
 OSINT_BASE_QUERIES = [
     "tren pelatihan IT corporate Indonesia",
