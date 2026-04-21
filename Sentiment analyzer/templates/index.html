@@ -65,6 +65,7 @@
         .topbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 22px; }
         .topbar-user { color: #64748b; font-size: 0.95rem; }
         .topbar-user strong { color: #0f172a; }
+        .session-meta { margin-top: 4px; font-size: 0.82rem; color: #64748b; }
         .logout-form { margin: 0; }
         .logout-button { width: auto; margin: 0; padding: 10px 16px; background: white; color: #475569; border: 1px solid #cbd5e1; }
         .logout-button:hover { background: #f8fafc; }
@@ -82,7 +83,10 @@
 <body>
     <div class="card">
         <div class="topbar">
-            <div class="topbar-user">Masuk sebagai <strong>{{ current_user or "Pengguna" }}</strong></div>
+            <div class="topbar-user">
+                Masuk sebagai <strong>{{ current_user or "Pengguna" }}</strong>
+                <div id="session-meta" class="session-meta"></div>
+            </div>
             <form class="logout-form" method="post" action="/logout">
                 <button type="submit" class="logout-button">Keluar</button>
             </form>
@@ -582,6 +586,15 @@
                     ui.selectSegment.value = (appState.segments[0] || {}).id || 'all';
                     ui.selectScoreEngine.value = data.default_score_engine || ((appState.scoreEngines[0] || {}).id || '');
                     updateScoreEngineHelper();
+
+                    const sessionMetaElement = document.getElementById('session-meta');
+                    if (sessionMetaElement && data.session) {
+                        const idleMinutes = Math.max(1, Math.round((data.session.idle_timeout_seconds || 0) / 60));
+                        const activeForUser = data.session.active_for_user || 0;
+                        const maxPerUser = data.session.max_active_per_user || 0;
+                        const capLabel = maxPerUser > 0 ? `${activeForUser}/${maxPerUser}` : `${activeForUser}`;
+                        sessionMetaElement.textContent = `Sesi aktif akun ini: ${capLabel} | Timeout idle: ${idleMinutes} menit`;
+                    }
                     
                     renderSuggestions(data.suggestions);
                     updateReviewAvailability();
