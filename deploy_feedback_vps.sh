@@ -31,8 +31,15 @@ rsync -avz --delete \
   --exclude '__pycache__/' \
   --exclude '.pytest_cache/' \
   --exclude '.mypy_cache/' \
+  --exclude '*.example.*' \
   --exclude 'profiles/*.env' \
+  --exclude 'profiles/*.env.example' \
   --exclude 'internal_connector.production.json' \
+  --exclude 'internal_connector.production.example.json' \
+  --exclude 'internal_api_endpoints.example.json' \
+  --exclude 'seed_demo_data.py' \
+  --exclude 'inspect_internal_api.py' \
+  --exclude 'validate_internal_connector.py' \
   --exclude 'data/auth.db' \
   --exclude 'data/cx_feedback.db' \
   --exclude 'data/report_jobs.json' \
@@ -47,6 +54,13 @@ ssh "${SSH_OPTS[@]}" "$REMOTE_HOST" "
   python3 -m venv '$REMOTE_VENV_DIR'
   source '$REMOTE_VENV_DIR/bin/activate'
   cd '$REMOTE_APP_DIR'
+  rm -f \
+    profiles/*.env.example \
+    internal_connector.production.example.json \
+    internal_api_endpoints.example.json \
+    seed_demo_data.py \
+    inspect_internal_api.py \
+    validate_internal_connector.py
   pip install -r requirements.txt >/tmp/${SERVICE_NAME}_pip.log 2>&1 || { cat /tmp/${SERVICE_NAME}_pip.log; exit 1; }
   sudo systemctl restart '$SERVICE_NAME'
   sudo systemctl status '$SERVICE_NAME' --no-pager -l | sed -n '1,20p'
