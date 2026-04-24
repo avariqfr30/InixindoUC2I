@@ -303,6 +303,12 @@ Environment variable tambahan yang berguna untuk simulasi VPS:
 * `REPORT_JOB_RETENTION_SECONDS`: masa simpan metadata dan file report sebelum dibersihkan.
 * `REPORT_ARTIFACT_DIR`: direktori penyimpanan file report hasil generate.
 * `OSINT_CACHE_TTL_SECONDS`: masa hidup cache OSINT agar query benchmark tidak selalu memukul layanan eksternal.
+* `OSINT_QUERY_WORKERS`: jumlah query OSINT paralel untuk pencarian eksternal.
+* `OSINT_DEEP_SCRAPE_MAX_CHARS`: batas teks sumber eksternal yang dibaca untuk insight mendalam.
+* `OSINT_TRUSTED_DOMAINS`: daftar domain prioritas untuk menaikkan kualitas ranking sumber.
+* `OSINT_BLOCKED_DOMAINS`: daftar domain yang tidak boleh masuk ke sinyal OSINT.
 * `SESSION_IDLE_TIMEOUT_SECONDS`: batas idle session sebelum pengguna wajib login ulang.
 * `SESSION_MAX_ACTIVE_PER_USER`: batas jumlah session aktif per akun untuk mengurangi penyalahgunaan akun bersama.
 * `SESSION_MAX_ACTIVE_TOTAL`: batas total session aktif aplikasi agar beban login tetap terkendali.
+
+File runtime seperti `data/*.db`, `data/report_jobs.json`, dan `data/.osint_cache/` dihasilkan oleh aplikasi dan tidak perlu dikomit. Dataset demo utama tetap berada di `data/db.csv`.

@@ -23,6 +23,7 @@ from bs4 import BeautifulSoup, NavigableString, Tag
 from chromadb.config import Settings
 from chromadb.utils import embedding_functions
 from docx import Document
+from docx.enum.table import WD_TABLE_ALIGNMENT, WD_CELL_VERTICAL_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
@@ -47,13 +48,17 @@ from config import (
     INTERNAL_DATA_MODE,
     OLLAMA_HOST,
     OSINT_BASE_QUERIES,
+    OSINT_BLOCKED_DOMAINS,
     OSINT_CACHE_DIR,
     OSINT_CACHE_TTL_SECONDS,
+    OSINT_DEEP_SCRAPE_MAX_CHARS,
     OSINT_MAX_SIGNALS,
+    OSINT_QUERY_WORKERS,
     OSINT_RECENCY,
     OSINT_RESULTS_PER_QUERY,
     OSINT_SEARCH_LANGUAGE,
     OSINT_SEARCH_REGION,
+    OSINT_TRUSTED_DOMAINS,
     SCORE_ENGINE_PROFILES,
     SERPER_API_KEY,
     SENTIMENT_OPTIONS,
@@ -410,11 +415,15 @@ class KnowledgeBase:
 class Researcher:
     SERPER_ENDPOINT = "https://google.serper.dev/search"
     INVALID_API_KEYS = {"", "YOUR_SERPER_API_KEY", "masukkan_api_key_serper_anda_disini"}
-    MACRO_TRENDS_CACHE_VERSION = "macro_trends_v2"
+    MACRO_TRENDS_CACHE_VERSION = "macro_trends_v3"
     NON_CACHEABLE_MESSAGES = {
         "Data OSINT eksternal tidak tersedia (SERPER_API_KEY belum diatur).",
         "Tidak ada tren eksternal yang berhasil dimuat.",
         "Tidak ada sinyal OSINT eksternal yang dapat digunakan untuk benchmark periode ini.",
+    }
+    QUERY_STOPWORDS = {
+        "yang", "dengan", "untuk", "pada", "dari", "dan", "atau", "dalam",
+        "this", "that", "from", "with", "into", "latest", "trends",
     }
 
     @staticmethod
@@ -428,6 +437,65 @@ class Researcher:
     @classmethod
     def _normalize_query(cls, query):
         return cls._normalize_cache_token(query)
+
+    @staticmethod
+    def _source_domain(url):
+        try:
+            netloc = urlparse(url).netloc.lower()
+            return netloc.replace("www.", "") if netloc else "unknown"
+        except Exception:
+            return "unknown"
+
+    @staticmethod
+    def _normalize_url(url):
+        try:
+            parsed = urlparse(url)
+            domain = parsed.netloc.lower().replace("www.", "")
+            path = re.sub(r"/+$", "", parsed.path or "/")
+            return f"{domain}{path}"
+        except Exception:
+            return str(url or "").strip().lower()
+
+    @staticmethod
+    def _domain_matches(domain, candidates):
+        clean_domain = (domain or "").lower().replace("www.", "")
+        return any(
+            clean_domain == candidate or clean_domain.endswith(f".{candidate}")
+            for candidate in candidates
+            if candidate
+        )
+
+    @classmethod
+    def _source_quality_score(cls, url):
+        domain = cls._source_domain(url)
+        if cls._domain_matches(domain, OSINT_BLOCKED_DOMAINS):
+            return -10
+        if cls._domain_matches(domain, OSINT_TRUSTED_DOMAINS):
+            return 4
+        if domain.endswith(".go.id") or domain.endswith(".ac.id") or domain.endswith(".org"):
+            return 2
+        if domain.endswith(".edu") or domain.endswith(".gov"):
+            return 2
+        return 0
+
+    @staticmethod
+    def _freshness_score(date_text):
+        value = str(date_text or "").strip().lower()
+        if not value:
+            return 0
+        current_year = datetime.now().year
+        if re.search(r"\b(jam|hour|minute|menit|hari|day|today|yesterday)\b", value):
+            return 2
+        if re.search(r"\b(minggu|week|bulan|month)\b", value):
+            return 1.5
+        year_match = re.search(r"\b(20\d{2})\b", value)
+        if year_match:
+            year = int(year_match.group(1))
+            if year >= current_year - 1:
+                return 1
+            if year <= current_year - 3:
+                return -1
+        return 0
 
     @classmethod
     def _macro_trends_cache_key(cls, timeframe, notes, score_engine_label, llm_model):
@@ -454,13 +522,15 @@ class Researcher:
     @staticmethod
     def fetch_full_markdown(url):
         """Fetches the clean markdown text of any URL using Jina Reader."""
-        if not url: return ""
+        if not url:
+            return ""
         try:
             jina_url = f"https://r.jina.ai/{url}"
             headers = {'User-Agent': 'Mozilla/5.0'}
             response = requests.get(jina_url, headers=headers, timeout=12)
             if response.status_code == 200:
-                return response.text[:6000] 
+                text = re.sub(r"\n{3,}", "\n\n", response.text).strip()
+                return text[:OSINT_DEEP_SCRAPE_MAX_CHARS]
             return ""
         except Exception as e:
             logger.warning("Failed to fetch full markdown for %s: %s", url, e)
@@ -549,15 +619,20 @@ class Researcher:
                 "query": query, "title": entry.get("title", "Tanpa Judul"), "snippet": entry.get("snippet", "").strip(),
                 "url": entry.get("link", "").strip(), "date": entry.get("date", "").strip(), "source_type": "news", "position": position
             })
-        return [item for item in items if item["url"]]
+        return [
+            item
+            for item in items
+            if item["url"] and Researcher._source_quality_score(item["url"]) > -10
+        ]
 
     @staticmethod
     def _deduplicate_items(items):
         seen_keys = set()
         unique_items = []
         for item in items:
-            key = item["url"] or f"{item['title']}::{item['snippet']}"
-            if key in seen_keys: continue
+            key = Researcher._normalize_url(item["url"]) or f"{item['title']}::{item['snippet']}"
+            if key in seen_keys:
+                continue
             seen_keys.add(key)
             unique_items.append(item)
         return unique_items
@@ -565,24 +640,20 @@ class Researcher:
     @staticmethod
     def _score_items(items, context_text):
         keywords = {
-            token.lower() for token in re.findall(r"[A-Za-z]{4,}", context_text)
-            if token.lower() not in {"yang", "dengan", "untuk", "pada", "from", "this"}
+            token.lower()
+            for token in re.findall(r"[A-Za-z]{4,}", context_text)
+            if token.lower() not in Researcher.QUERY_STOPWORDS
         }
         for item in items:
             corpus = f"{item['title']} {item['snippet']}".lower()
             coverage_score = sum(1 for keyword in keywords if keyword in corpus)
-            freshness_bonus = 1 if item["source_type"] == "news" else 0
+            source_quality = Researcher._source_quality_score(item["url"])
+            freshness_bonus = Researcher._freshness_score(item.get("date"))
+            type_bonus = 1 if item["source_type"] == "news" else 0
             ranking_penalty = (item["position"] - 1) * 0.05
-            item["score"] = coverage_score + freshness_bonus - ranking_penalty
+            item["source_quality"] = source_quality
+            item["score"] = coverage_score + source_quality + freshness_bonus + type_bonus - ranking_penalty
         return sorted(items, key=lambda value: value["score"], reverse=True)
-
-    @staticmethod
-    def _source_domain(url):
-        try:
-            netloc = urlparse(url).netloc.lower()
-            return netloc.replace("www.", "") if netloc else "unknown"
-        except Exception:
-            return "unknown"
 
     @staticmethod
     def _format_osint_brief(items, title):
@@ -591,7 +662,14 @@ class Researcher:
         lines = [f"{title}:"]
         for index, item in enumerate(items, start=1):
             date_part = f" | tanggal={item['date']}" if item["date"] else ""
-            lines.append((f"{index}. {item['title']} | {item['snippet']} | sumber={Researcher._source_domain(item['url'])}{date_part} | url={item['url']}").strip())
+            source = Researcher._source_domain(item["url"])
+            quality_part = f" | kualitas_sumber={item.get('source_quality', 0)}"
+            lines.append(
+                (
+                    f"{index}. {item['title']} | {item['snippet']} | "
+                    f"sumber={source}{date_part}{quality_part} | url={item['url']}"
+                ).strip()
+            )
         return "\n".join(lines)
 
     @staticmethod
@@ -609,7 +687,8 @@ class Researcher:
             return []
 
         collected = []
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, max(1, len(normalized_queries)))) as pool:
+        max_workers = min(OSINT_QUERY_WORKERS, max(1, len(normalized_queries)))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
             future_map = {pool.submit(Researcher._search_serper, query): query for query in normalized_queries}
             for future in concurrent.futures.as_completed(future_map):
                 query = future_map[future]
@@ -1688,9 +1767,19 @@ class StyleEngine:
         style.font.bold = bold
 
     @staticmethod
+    def _configure_paragraph_format(paragraph_format, before=0, after=6, line_spacing=1.08):
+        paragraph_format.space_before = Pt(before)
+        paragraph_format.space_after = Pt(after)
+        paragraph_format.line_spacing_rule = WD_LINE_SPACING.MULTIPLE
+        paragraph_format.line_spacing = line_spacing
+
+    @staticmethod
     def apply_document_styles(doc, theme_color):
         for section in doc.sections:
-            section.top_margin, section.bottom_margin, section.left_margin, section.right_margin = Cm(2.54), Cm(2.54), Cm(2.54), Cm(2.54)
+            section.top_margin = Cm(2.2)
+            section.bottom_margin = Cm(2.0)
+            section.left_margin = Cm(2.35)
+            section.right_margin = Cm(2.35)
             footer_paragraph = section.footer.paragraphs[0] if section.footer.paragraphs else section.footer.add_paragraph()
             footer_paragraph.clear()
             footer_paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
@@ -1701,25 +1790,29 @@ class StyleEngine:
         normal_style = doc.styles["Normal"]
         StyleEngine._configure_text_style(normal_style, "Calibri", 11, (33, 37, 41))
         normal_format = normal_style.paragraph_format
-        normal_format.alignment, normal_format.line_spacing_rule, normal_format.line_spacing, normal_format.space_after = WD_ALIGN_PARAGRAPH.JUSTIFY, WD_LINE_SPACING.MULTIPLE, 1.15, Pt(8)
+        normal_format.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+        StyleEngine._configure_paragraph_format(normal_format, after=6, line_spacing=1.08)
 
         heading_1 = doc.styles["Heading 1"]
         StyleEngine._configure_text_style(heading_1, "Calibri", 16, theme_color, True)
-        heading_1.paragraph_format.space_before, heading_1.paragraph_format.space_after = Pt(18), Pt(8)
+        StyleEngine._configure_paragraph_format(heading_1.paragraph_format, before=16, after=6, line_spacing=1.0)
+        heading_1.paragraph_format.keep_with_next = True
 
         heading_2 = doc.styles["Heading 2"]
         StyleEngine._configure_text_style(heading_2, "Calibri", 13, (0, 0, 0), True)
-        heading_2.paragraph_format.space_before, heading_2.paragraph_format.space_after = Pt(14), Pt(6)
+        StyleEngine._configure_paragraph_format(heading_2.paragraph_format, before=10, after=4, line_spacing=1.0)
+        heading_2.paragraph_format.keep_with_next = True
 
         heading_3 = doc.styles["Heading 3"]
         StyleEngine._configure_text_style(heading_3, "Calibri", 12, (54, 54, 54), True)
-        heading_3.paragraph_format.space_before, heading_3.paragraph_format.space_after = Pt(10), Pt(4)
+        StyleEngine._configure_paragraph_format(heading_3.paragraph_format, before=8, after=3, line_spacing=1.0)
+        heading_3.paragraph_format.keep_with_next = True
 
         for list_style_name in ("List Bullet", "List Bullet 2", "List Bullet 3", "List Number", "List Number 2", "List Number 3"):
             if list_style_name in doc.styles:
                 list_style = doc.styles[list_style_name]
                 StyleEngine._configure_text_style(list_style, "Calibri", 11, (33, 37, 41))
-                list_style.paragraph_format.space_after = Pt(4)
+                StyleEngine._configure_paragraph_format(list_style.paragraph_format, after=3, line_spacing=1.0)
 
 class ChartEngine:
     @staticmethod
@@ -1818,6 +1911,58 @@ class DocumentBuilder:
     LIST_STYLES = {"ul": ["List Bullet", "List Bullet 2", "List Bullet 3"], "ol": ["List Number", "List Number 2", "List Number 3"]}
 
     @staticmethod
+    def _format_paragraph(paragraph, alignment=None, before=0, after=6, line_spacing=1.08):
+        if alignment is not None:
+            paragraph.alignment = alignment
+        paragraph.paragraph_format.space_before = Pt(before)
+        paragraph.paragraph_format.space_after = Pt(after)
+        paragraph.paragraph_format.line_spacing_rule = WD_LINE_SPACING.MULTIPLE
+        paragraph.paragraph_format.line_spacing = line_spacing
+        return paragraph
+
+    @staticmethod
+    def _add_spacer(doc, height=6):
+        paragraph = doc.add_paragraph()
+        paragraph.paragraph_format.space_after = Pt(height)
+        paragraph.paragraph_format.line_spacing = 1.0
+        return paragraph
+
+    @staticmethod
+    def _add_picture(doc, image, width):
+        paragraph = doc.add_paragraph()
+        DocumentBuilder._format_paragraph(paragraph, alignment=WD_ALIGN_PARAGRAPH.CENTER, after=8)
+        paragraph.add_run().add_picture(image, width=width)
+
+    @staticmethod
+    def _set_cell_shading(cell, fill):
+        shading = OxmlElement("w:shd")
+        shading.set(qn("w:fill"), fill)
+        cell._tc.get_or_add_tcPr().append(shading)
+
+    @staticmethod
+    def _format_table(table):
+        table.alignment = WD_TABLE_ALIGNMENT.CENTER
+        table.autofit = True
+        for row_index, row in enumerate(table.rows):
+            for cell in row.cells:
+                cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
+                for paragraph in cell.paragraphs:
+                    DocumentBuilder._format_paragraph(
+                        paragraph,
+                        alignment=WD_ALIGN_PARAGRAPH.LEFT,
+                        after=2,
+                        line_spacing=1.0,
+                    )
+                    for run in paragraph.runs:
+                        run.font.name = "Calibri"
+                        run.font.size = Pt(9)
+                if row_index == 0:
+                    DocumentBuilder._set_cell_shading(cell, "F3F4F6")
+                    for paragraph in cell.paragraphs:
+                        for run in paragraph.runs:
+                            run.bold = True
+
+    @staticmethod
     def _resolve_list_style(doc, list_tag, level):
         style_candidates = DocumentBuilder.LIST_STYLES.get(list_tag, ["List Bullet"])
         return style_candidates[min(level, len(style_candidates) - 1)] if style_candidates[min(level, len(style_candidates) - 1)] in doc.styles else style_candidates[0]
@@ -1843,7 +1988,7 @@ class DocumentBuilder:
         style_name = DocumentBuilder._resolve_list_style(doc, list_node.name, level)
         for list_item in list_node.find_all("li", recursive=False):
             paragraph = doc.add_paragraph(style=style_name)
-            paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            DocumentBuilder._format_paragraph(paragraph, alignment=WD_ALIGN_PARAGRAPH.LEFT, after=3, line_spacing=1.0)
             for child in list_item.contents:
                 if isinstance(child, Tag) and child.name in {"ul", "ol"}: continue
                 DocumentBuilder._append_inline_runs(paragraph, child)
@@ -1865,6 +2010,8 @@ class DocumentBuilder:
                 if col_index < len(cells): table_row[col_index].text = cells[col_index].get_text(" ", strip=True)
                 if row_index == 0 and col_index < len(cells) and cells[col_index].name == "th":
                     for run in table_row[col_index].paragraphs[0].runs: run.bold = True
+        DocumentBuilder._format_table(table)
+        DocumentBuilder._add_spacer(doc, height=4)
 
     @staticmethod
     def parse_html_to_docx(doc, html_content):
@@ -1876,7 +2023,7 @@ class DocumentBuilder:
                 continue
             if element.name == "p":
                 paragraph = doc.add_paragraph()
-                paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+                DocumentBuilder._format_paragraph(paragraph, alignment=WD_ALIGN_PARAGRAPH.JUSTIFY)
                 for child in element.children: DocumentBuilder._append_inline_runs(paragraph, child)
                 continue
             if element.name in {"ul", "ol"}:
@@ -1892,15 +2039,15 @@ class DocumentBuilder:
             stripped_line = line.strip()
             if stripped_line.startswith("[[CHART:") and stripped_line.endswith("]]"):
                 image = ChartEngine.create_bar_chart(stripped_line.replace("[[CHART:", "").replace("]]", "").strip(), theme_color)
-                if image: doc.add_paragraph().add_run().add_picture(image, width=Inches(5.5))
+                if image: DocumentBuilder._add_picture(doc, image, width=Inches(5.5))
                 continue
             if stripped_line.startswith("[[PIE:") and stripped_line.endswith("]]"):
                 image = ChartEngine.create_pie_chart(stripped_line.replace("[[PIE:", "").replace("]]", "").strip(), theme_color)
-                if image: doc.add_paragraph().add_run().add_picture(image, width=Inches(5.4))
+                if image: DocumentBuilder._add_picture(doc, image, width=Inches(5.4))
                 continue
             if stripped_line.startswith("[[FLOW:") and stripped_line.endswith("]]"):
                 image = ChartEngine.create_flowchart(stripped_line.replace("[[FLOW:", "").replace("]]", "").strip(), theme_color)
-                if image: doc.add_paragraph().add_run().add_picture(image, width=Inches(6.5))
+                if image: DocumentBuilder._add_picture(doc, image, width=Inches(6.5))
                 continue
             clean_lines.append(line)
 
@@ -1911,37 +2058,45 @@ class DocumentBuilder:
     def add_table_of_contents(doc):
         doc.add_heading("DAFTAR ISI", level=1)
         toc_paragraph = doc.add_paragraph()
+        DocumentBuilder._format_paragraph(toc_paragraph, alignment=WD_ALIGN_PARAGRAPH.LEFT, after=8)
         append_field(toc_paragraph, 'TOC \\o "1-3" \\h \\z \\u')
         note = doc.add_paragraph("Perbarui field di Microsoft Word agar daftar isi otomatis terisi.")
-        note.runs[0].italic, note.runs[0].font.size, note.alignment = True, Pt(9), WD_ALIGN_PARAGRAPH.LEFT
+        DocumentBuilder._format_paragraph(note, alignment=WD_ALIGN_PARAGRAPH.LEFT, after=6)
+        note.runs[0].italic, note.runs[0].font.size = True, Pt(9)
         doc.add_page_break()
 
     @staticmethod
     def create_cover(doc, timeframe, theme_color=DEFAULT_COLOR):
         StyleEngine.apply_document_styles(doc, theme_color)
-        for _ in range(5): doc.add_paragraph()
+        for _ in range(4):
+            DocumentBuilder._add_spacer(doc, height=8)
 
         confidentiality = doc.add_paragraph("S T R I C T L Y   C O N F I D E N T I A L")
-        confidentiality.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        DocumentBuilder._format_paragraph(confidentiality, alignment=WD_ALIGN_PARAGRAPH.CENTER, after=10)
         confidentiality.runs[0].font.size, confidentiality.runs[0].font.color.rgb, confidentiality.runs[0].font.bold = Pt(10), RGBColor(128, 128, 128), True
 
-        doc.add_paragraph()
+        DocumentBuilder._add_spacer(doc, height=8)
         report_title = doc.add_paragraph("HOLISTIC CUSTOMER EXPERIENCE REPORT")
-        report_title.alignment, report_title.runs[0].font.name, report_title.runs[0].font.size = WD_ALIGN_PARAGRAPH.CENTER, "Calibri", Pt(20)
+        DocumentBuilder._format_paragraph(report_title, alignment=WD_ALIGN_PARAGRAPH.CENTER, after=4, line_spacing=1.0)
+        report_title.runs[0].font.name, report_title.runs[0].font.size = "Calibri", Pt(20)
 
         company_name = doc.add_paragraph("INIXINDO JOGJA")
-        company_name.alignment, company_name.runs[0].font.name, company_name.runs[0].font.bold, company_name.runs[0].font.size, company_name.runs[0].font.color.rgb = WD_ALIGN_PARAGRAPH.CENTER, "Calibri", True, Pt(32), RGBColor(*theme_color)
+        DocumentBuilder._format_paragraph(company_name, alignment=WD_ALIGN_PARAGRAPH.CENTER, after=14, line_spacing=1.0)
+        company_name.runs[0].font.name, company_name.runs[0].font.bold, company_name.runs[0].font.size, company_name.runs[0].font.color.rgb = "Calibri", True, Pt(32), RGBColor(*theme_color)
 
-        doc.add_paragraph()
         period_text = doc.add_paragraph(f"Periode Evaluasi Laporan: {timeframe}")
-        period_text.alignment, period_text.runs[0].font.size = WD_ALIGN_PARAGRAPH.CENTER, Pt(13)
+        DocumentBuilder._format_paragraph(period_text, alignment=WD_ALIGN_PARAGRAPH.CENTER, after=4, line_spacing=1.0)
+        period_text.runs[0].font.size = Pt(13)
 
         generated_text = doc.add_paragraph(f"Tanggal Generasi: {datetime.now().strftime('%d %B %Y')}")
-        generated_text.alignment, generated_text.runs[0].font.size, generated_text.runs[0].font.color.rgb = WD_ALIGN_PARAGRAPH.CENTER, Pt(11), RGBColor(128, 128, 128)
+        DocumentBuilder._format_paragraph(generated_text, alignment=WD_ALIGN_PARAGRAPH.CENTER, after=18, line_spacing=1.0)
+        generated_text.runs[0].font.size, generated_text.runs[0].font.color.rgb = Pt(11), RGBColor(128, 128, 128)
 
-        for _ in range(8): doc.add_paragraph()
+        for _ in range(6):
+            DocumentBuilder._add_spacer(doc, height=8)
         prepared_for = doc.add_paragraph(f"Prepared for Executive Board by:\n{WRITER_FIRM_NAME}")
-        prepared_for.alignment, prepared_for.runs[0].font.bold = WD_ALIGN_PARAGRAPH.CENTER, True
+        DocumentBuilder._format_paragraph(prepared_for, alignment=WD_ALIGN_PARAGRAPH.CENTER, after=0, line_spacing=1.0)
+        prepared_for.runs[0].font.bold = True
 
         doc.add_page_break()
         DocumentBuilder.add_table_of_contents(doc)

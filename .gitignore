@@ -208,5 +208,11 @@ __marimo__/
 
 Sentiment analyzer/profiles/*.env
 Sentiment analyzer/internal_connector.production.json
+Sentiment analyzer/data/*.db
+Sentiment analyzer/data/*.db-shm
+Sentiment analyzer/data/*.db-wal
+Sentiment analyzer/data/report_jobs.json
+Sentiment analyzer/data/generated_reports/
+Sentiment analyzer/data/.osint_cache/
 
 .DS_Store
