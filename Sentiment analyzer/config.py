@@ -91,6 +91,12 @@ def _load_json_object(env_name, fallback):
     return parsed if isinstance(parsed, dict) else fallback
 
 
+def _load_csv_list(env_name, fallback):
+    raw_value = os.getenv(env_name, "").strip()
+    values = raw_value.split(",") if raw_value else fallback
+    return [str(value).strip().lower() for value in values if str(value).strip()]
+
+
 def _load_internal_api_endpoints():
     defaults = {
         "feedback": {
@@ -371,6 +377,39 @@ OSINT_SEARCH_LANGUAGE = "id"
 OSINT_RESULTS_PER_QUERY = 5
 OSINT_MAX_SIGNALS = 10
 OSINT_RECENCY = "qdr:y"
+OSINT_QUERY_WORKERS = int(os.getenv("OSINT_QUERY_WORKERS", "4"))
+OSINT_DEEP_SCRAPE_MAX_CHARS = int(os.getenv("OSINT_DEEP_SCRAPE_MAX_CHARS", "5000"))
+OSINT_TRUSTED_DOMAINS = tuple(
+    _load_csv_list(
+        "OSINT_TRUSTED_DOMAINS",
+        [
+            "bps.go.id",
+            "kominfo.go.id",
+            "worldbank.org",
+            "mckinsey.com",
+            "deloitte.com",
+            "pwc.com",
+            "idc.com",
+            "gartner.com",
+            "coursera.org",
+            "skillsoft.com",
+            "trainingindustry.com",
+        ],
+    )
+)
+OSINT_BLOCKED_DOMAINS = tuple(
+    _load_csv_list(
+        "OSINT_BLOCKED_DOMAINS",
+        [
+            "facebook.com",
+            "instagram.com",
+            "tiktok.com",
+            "pinterest.com",
+            "shopee.co.id",
+            "tokopedia.com",
+        ],
+    )
+)
 OSINT_CACHE_PATH = os.getenv(
     "OSINT_CACHE_PATH",
     os.path.join(DATA_DIR, "osint_cache.json"),
@@ -385,6 +424,8 @@ OSINT_BASE_QUERIES = [
     "ekspektasi peserta training IT terhadap instruktur fasilitas dan kurikulum Indonesia",
     "tantangan transformasi digital dan peningkatan kompetensi SDM Indonesia",
     "tren kebutuhan sertifikasi cloud cyber security data dan AI di Indonesia",
+    "benchmark corporate learning customer experience Indonesia",
+    "digital talent skill gap Indonesia enterprise training",
 ]
 
 DATA_ACQUISITION_POLICY = {
