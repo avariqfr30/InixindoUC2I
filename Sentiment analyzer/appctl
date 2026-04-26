@@ -12,11 +12,13 @@ usage() {
 Usage:
   ./appctl init-profile <demo|production>
   ./appctl validate <demo|production>
+  ./appctl inspect-api <demo|production> [inspect_internal_api.py args...]
   ./appctl start <demo|production>
 
 What it does:
   init-profile   create editable runtime config files from the bundled examples
   validate       verify the chosen profile before running the app
+  inspect-api    inspect a live API or saved APIDog JSON using the chosen profile
   start          launch the app with the chosen profile through Waitress
 USAGE
 }
@@ -99,6 +101,13 @@ validate_profile() {
   python3 "$APP_ROOT/validate_internal_connector.py"
 }
 
+inspect_api() {
+  local profile="$1"
+  shift
+  load_profile_env "$profile"
+  python3 "$APP_ROOT/inspect_internal_api.py" "$@"
+}
+
 start_profile() {
   local profile="$1"
   load_profile_env "$profile"
@@ -117,6 +126,11 @@ main() {
     validate)
       profile="$(require_profile "${2:-}")"
       validate_profile "$profile"
+      ;;
+    inspect-api)
+      profile="$(require_profile "${2:-}")"
+      shift 2
+      inspect_api "$profile" "$@"
       ;;
     start)
       profile="$(require_profile "${2:-}")"
