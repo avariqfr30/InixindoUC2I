@@ -1,53 +1,51 @@
 import io
-import hashlib
 import logging
 import os
-import secrets
-import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from functools import wraps
 
 from flask import (
     Flask,
-    g,
     jsonify,
     redirect,
     render_template,
     request,
     send_file,
-    session,
     url_for,
 )
 from flask_cors import CORS
-from werkzeug.security import check_password_hash, generate_password_hash
 
+from auth_service import (
+    ActiveSessionCapacityError,
+    create_user,
+    current_user,
+    get_user_by_username,
+    init_auth_db,
+    logout_current_session,
+    session_capacity_snapshot,
+    session_stats_for_username,
+    start_authenticated_session,
+    user_count,
+    verify_password,
+)
 from config import (
     ALLOW_SIGNUP,
     APP_MODE,
     APP_SECRET_KEY,
-    AUTH_DB_PATH,
     DB_URI,
     DEFAULT_SCORE_ENGINE,
     SCORE_ENGINE_OPTIONS,
     SENTIMENT_OPTIONS,
-    SESSION_ACTIVITY_TOUCH_SECONDS,
     SESSION_COOKIE_SECURE,
     SESSION_IDLE_TIMEOUT_SECONDS,
-    SESSION_MAX_ACTIVE_PER_USER,
-    SESSION_MAX_ACTIVE_TOTAL,
     SMART_SUGGESTIONS,
 )
-from core import KnowledgeBase, ReportGenerator
+from data_pipeline import KnowledgeBase
+from report_engine import ReportGenerator
 from runtime import QueueCapacityError, ReportJobManager
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
-PASSWORD_HASH_METHOD = "pbkdf2:sha256"
-SESSION_ID_BYTES = 32
-
-
-class ActiveSessionCapacityError(RuntimeError):
-    pass
 
 app = Flask(__name__)
 CORS(app)
@@ -63,313 +61,6 @@ job_manager = ReportJobManager(generator)
 logger.info("Application started in %s mode.", APP_MODE)
 
 
-def _auth_connection():
-    connection = sqlite3.connect(AUTH_DB_PATH)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA foreign_keys = ON")
-    return connection
-
-
-def _utc_now():
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-
-def _utc_in(seconds):
-    return (
-        datetime.now(timezone.utc).replace(microsecond=0) + timedelta(seconds=seconds)
-    ).isoformat().replace("+00:00", "Z")
-
-
-def _parse_utc_timestamp(raw_value):
-    value = str(raw_value or "").strip()
-    if not value:
-        return None
-
-    normalized = value.replace("Z", "+00:00")
-    try:
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
-
-
-def _hash_fingerprint(raw_value):
-    clean = str(raw_value or "").strip()
-    if not clean:
-        return None
-    digest = hashlib.sha256(f"{APP_SECRET_KEY}|{clean}".encode("utf-8")).hexdigest()
-    return digest[:24]
-
-
-def _request_ip():
-    forwarded = (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
-    return forwarded or (request.remote_addr or "").strip()
-
-
-def _cleanup_stale_sessions(connection, now_iso=None):
-    reference_time = now_iso or _utc_now()
-    connection.execute(
-        """
-        DELETE FROM user_sessions
-        WHERE revoked_at IS NOT NULL OR expires_at <= ?
-        """,
-        (reference_time,),
-    )
-
-
-def _count_active_sessions(connection, now_iso, user_id=None):
-    if user_id is None:
-        row = connection.execute(
-            """
-            SELECT COUNT(*) AS total
-            FROM user_sessions
-            WHERE revoked_at IS NULL AND expires_at > ?
-            """,
-            (now_iso,),
-        ).fetchone()
-    else:
-        row = connection.execute(
-            """
-            SELECT COUNT(*) AS total
-            FROM user_sessions
-            WHERE user_id = ? AND revoked_at IS NULL AND expires_at > ?
-            """,
-            (user_id, now_iso),
-        ).fetchone()
-    return int(row["total"]) if row else 0
-
-
-def _session_stats_for_user(user_id):
-    now_iso = _utc_now()
-    with _auth_connection() as connection:
-        _cleanup_stale_sessions(connection, now_iso)
-        total_active = _count_active_sessions(connection, now_iso)
-        user_active = _count_active_sessions(connection, now_iso, user_id=user_id)
-        connection.commit()
-        return {
-            "total_active": total_active,
-            "user_active": user_active,
-            "max_total": SESSION_MAX_ACTIVE_TOTAL,
-            "max_per_user": SESSION_MAX_ACTIVE_PER_USER,
-        }
-
-
-def _session_capacity_snapshot():
-    now_iso = _utc_now()
-    with _auth_connection() as connection:
-        _cleanup_stale_sessions(connection, now_iso)
-        total_active = _count_active_sessions(connection, now_iso)
-        connection.commit()
-    return {
-        "total_active": total_active,
-        "max_total": SESSION_MAX_ACTIVE_TOTAL,
-        "max_per_user": SESSION_MAX_ACTIVE_PER_USER,
-        "idle_timeout_seconds": SESSION_IDLE_TIMEOUT_SECONDS,
-    }
-
-
-def _session_stats_for_username(username):
-    user = _get_user_by_username(username)
-    if not user:
-        return {
-            "total_active": 0,
-            "user_active": 0,
-            "max_total": SESSION_MAX_ACTIVE_TOTAL,
-            "max_per_user": SESSION_MAX_ACTIVE_PER_USER,
-        }
-    return _session_stats_for_user(int(user["id"]))
-
-
-def _issue_session(user):
-    now_iso = _utc_now()
-    expires_at = _utc_in(SESSION_IDLE_TIMEOUT_SECONDS)
-    new_session_id = secrets.token_urlsafe(SESSION_ID_BYTES)
-    user_id = int(user["id"])
-    ip_hash = _hash_fingerprint(_request_ip())
-    user_agent_hash = _hash_fingerprint(request.headers.get("User-Agent"))
-    revoked_count = 0
-
-    with _auth_connection() as connection:
-        _cleanup_stale_sessions(connection, now_iso)
-
-        active_user_sessions = connection.execute(
-            """
-            SELECT session_id
-            FROM user_sessions
-            WHERE user_id = ? AND revoked_at IS NULL AND expires_at > ?
-            ORDER BY last_seen_at ASC, created_at ASC
-            """,
-            (user_id, now_iso),
-        ).fetchall()
-
-        if SESSION_MAX_ACTIVE_PER_USER > 0:
-            overflow = len(active_user_sessions) - SESSION_MAX_ACTIVE_PER_USER + 1
-            if overflow > 0:
-                sessions_to_remove = [
-                    (row["session_id"],) for row in active_user_sessions[:overflow]
-                ]
-                revoked_count = overflow
-                connection.executemany(
-                    "DELETE FROM user_sessions WHERE session_id = ?",
-                    sessions_to_remove,
-                )
-
-        if SESSION_MAX_ACTIVE_TOTAL > 0:
-            active_total = _count_active_sessions(connection, now_iso)
-            if active_total >= SESSION_MAX_ACTIVE_TOTAL:
-                raise ActiveSessionCapacityError(
-                    "Batas sesi aktif sudah tercapai. Coba lagi beberapa saat lagi atau logout dari perangkat lain."
-                )
-
-        connection.execute(
-            """
-            INSERT INTO user_sessions (
-                session_id,
-                user_id,
-                username,
-                created_at,
-                last_seen_at,
-                expires_at,
-                revoked_at,
-                revocation_reason,
-                ip_hash,
-                user_agent_hash
-            )
-            VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)
-            """,
-            (
-                new_session_id,
-                user_id,
-                user["username"],
-                now_iso,
-                now_iso,
-                expires_at,
-                ip_hash,
-                user_agent_hash,
-            ),
-        )
-        connection.commit()
-
-    return new_session_id, revoked_count
-
-
-def _revoke_session(session_id, reason="logout"):
-    clean_session_id = str(session_id or "").strip()
-    if not clean_session_id:
-        return
-    with _auth_connection() as connection:
-        connection.execute(
-            """
-            UPDATE user_sessions
-            SET revoked_at = ?, revocation_reason = ?
-            WHERE session_id = ?
-            """,
-            (_utc_now(), reason, clean_session_id),
-        )
-        connection.commit()
-
-
-def _touch_session(username, session_id):
-    clean_username = str(username or "").strip()
-    clean_session_id = str(session_id or "").strip()
-    if not clean_username or not clean_session_id:
-        return None
-
-    now_iso = _utc_now()
-    with _auth_connection() as connection:
-        _cleanup_stale_sessions(connection, now_iso)
-        active_session = connection.execute(
-            """
-            SELECT s.user_id, s.username, s.last_seen_at
-            FROM user_sessions AS s
-            INNER JOIN users AS u ON u.id = s.user_id
-            WHERE s.username = ? AND s.session_id = ? AND s.revoked_at IS NULL AND s.expires_at > ?
-            LIMIT 1
-            """,
-            (clean_username, clean_session_id, now_iso),
-        ).fetchone()
-        if not active_session:
-            connection.commit()
-            return None
-
-        should_touch = True
-        if SESSION_ACTIVITY_TOUCH_SECONDS > 0:
-            last_seen = _parse_utc_timestamp(active_session["last_seen_at"])
-            if last_seen is not None:
-                elapsed = (datetime.now(timezone.utc) - last_seen).total_seconds()
-                should_touch = elapsed >= SESSION_ACTIVITY_TOUCH_SECONDS
-
-        if should_touch:
-            connection.execute(
-                """
-                UPDATE user_sessions
-                SET last_seen_at = ?, expires_at = ?
-                WHERE session_id = ?
-                """,
-                (now_iso, _utc_in(SESSION_IDLE_TIMEOUT_SECONDS), clean_session_id),
-            )
-        connection.commit()
-        return active_session["username"]
-
-
-def _start_authenticated_session(user):
-    session_id, revoked_count = _issue_session(user)
-    session.clear()
-    session.permanent = True
-    session["username"] = user["username"]
-    session["sid"] = session_id
-    return revoked_count
-
-
-def _init_auth_db():
-    os.makedirs(os.path.dirname(AUTH_DB_PATH), exist_ok=True)
-    with _auth_connection() as connection:
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT NOT NULL UNIQUE,
-                password_hash TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-            """
-        )
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS user_sessions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT NOT NULL UNIQUE,
-                user_id INTEGER NOT NULL,
-                username TEXT NOT NULL,
-                created_at TIMESTAMP NOT NULL,
-                last_seen_at TIMESTAMP NOT NULL,
-                expires_at TIMESTAMP NOT NULL,
-                revoked_at TIMESTAMP,
-                revocation_reason TEXT,
-                ip_hash TEXT,
-                user_agent_hash TEXT,
-                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-            )
-            """
-        )
-        connection.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_user_sessions_active_lookup
-            ON user_sessions (username, session_id, expires_at, revoked_at)
-            """
-        )
-        connection.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_user_sessions_expiry
-            ON user_sessions (expires_at, revoked_at)
-            """
-        )
-        _cleanup_stale_sessions(connection)
-        connection.commit()
-
-
 def _request_payload(data):
     return {
         "timeframe": data.get("timeframe"),
@@ -380,71 +71,10 @@ def _request_payload(data):
     }
 
 
-def _get_user_by_username(username):
-    clean_username = str(username or "").strip()
-    if not clean_username:
-        return None
-
-    with _auth_connection() as connection:
-        return connection.execute(
-            "SELECT id, username, password_hash FROM users WHERE username = ?",
-            (clean_username,),
-        ).fetchone()
-
-
-def _create_user(username, password):
-    clean_username = username.strip()
-    with _auth_connection() as connection:
-        connection.execute(
-            "INSERT INTO users (username, password_hash) VALUES (?, ?)",
-            (
-                clean_username,
-                generate_password_hash(password, method=PASSWORD_HASH_METHOD),
-            ),
-        )
-        connection.commit()
-    return _get_user_by_username(clean_username)
-
-
-def _user_count():
-    with _auth_connection() as connection:
-        row = connection.execute("SELECT COUNT(*) AS total FROM users").fetchone()
-        return int(row["total"]) if row else 0
-
-
-def _verify_password(password_hash, password):
-    try:
-        return check_password_hash(password_hash, password)
-    except AttributeError:
-        if str(password_hash or "").startswith("scrypt:"):
-            logger.warning(
-                "Stored password hash uses scrypt, but this Python build does not support hashlib.scrypt."
-            )
-            return False
-        raise
-
-
-def _current_user():
-    if hasattr(g, "_current_user_cached"):
-        return g._current_user_cached
-
-    username = session.get("username")
-    session_id = session.get("sid")
-    if isinstance(username, str) and username.strip() and isinstance(session_id, str):
-        active_username = _touch_session(username, session_id)
-        if active_username:
-            g._current_user_cached = active_username
-            return active_username
-
-    session.clear()
-    g._current_user_cached = None
-    return None
-
-
 def login_required(view_func):
     @wraps(view_func)
     def wrapped_view(*args, **kwargs):
-        if _current_user():
+        if current_user():
             return view_func(*args, **kwargs)
 
         wants_json = request.path.startswith("/jobs/") or request.path in {
@@ -460,8 +90,7 @@ def login_required(view_func):
     return wrapped_view
 
 
-_init_auth_db()
-
+init_auth_db()
 
 @app.after_request
 def apply_security_headers(response):
@@ -479,18 +108,18 @@ def apply_security_headers(response):
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
-    if _current_user():
+    if current_user():
         return redirect(url_for("home"))
 
     error = None
     if request.method == "POST":
         username = (request.form.get("username") or "").strip()
         password = request.form.get("password") or ""
-        user = _get_user_by_username(username)
+        user = get_user_by_username(username)
 
         if not user:
             error = "Username atau password tidak valid."
-        elif not _verify_password(user["password_hash"], password):
+        elif not verify_password(user["password_hash"], password):
             if str(user["password_hash"]).startswith("scrypt:"):
                 error = (
                     "Akun ini memakai format kata sandi lama yang tidak didukung di server ini. "
@@ -500,7 +129,7 @@ def login():
                 error = "Username atau password tidak valid."
         else:
             try:
-                revoked_count = _start_authenticated_session(user)
+                revoked_count = start_authenticated_session(user)
                 if revoked_count:
                     logger.info(
                         "User '%s' login replaced %s previous active session(s).",
@@ -516,7 +145,7 @@ def login():
         mode="login",
         error=error,
         allow_signup=ALLOW_SIGNUP,
-        user_count=_user_count(),
+        user_count=user_count(),
     )
 
 
@@ -525,7 +154,7 @@ def signup():
     if not ALLOW_SIGNUP:
         return redirect(url_for("login"))
 
-    if _current_user():
+    if current_user():
         return redirect(url_for("home"))
 
     error = None
@@ -540,12 +169,12 @@ def signup():
             error = "Kata sandi minimal 8 karakter."
         elif password != confirm_password:
             error = "Konfirmasi password tidak cocok."
-        elif _get_user_by_username(username):
+        elif get_user_by_username(username):
             error = "Username sudah dipakai."
         else:
-            created_user = _create_user(username, password)
+            created_user = create_user(username, password)
             try:
-                _start_authenticated_session(created_user)
+                start_authenticated_session(created_user)
                 return redirect(url_for("home"))
             except ActiveSessionCapacityError as exc:
                 error = str(exc)
@@ -555,22 +184,21 @@ def signup():
         mode="signup",
         error=error,
         allow_signup=ALLOW_SIGNUP,
-        user_count=_user_count(),
+        user_count=user_count(),
     )
 
 
 @app.route("/logout", methods=["GET", "POST"])
 @login_required
 def logout():
-    _revoke_session(session.get("sid"), reason="manual_logout")
-    session.clear()
+    logout_current_session()
     return redirect(url_for("login"))
 
 
 @app.route("/")
 @login_required
 def home():
-    return render_template("index.html", current_user=_current_user())
+    return render_template("index.html", current_user=current_user())
 
 
 @app.route("/health")
@@ -592,7 +220,7 @@ def health():
 def ready():
     data_ready = kb.df is not None and not kb.df.empty
     job_stats = job_manager.stats()
-    session_stats = _session_capacity_snapshot()
+    session_stats = session_capacity_snapshot()
     ready_state = data_ready and job_stats["artifact_dir_writable"]
     status_code = 200 if ready_state else 503
     return (
@@ -638,8 +266,8 @@ def get_config():
         for value in kb.df["Tipe Stakeholder"].fillna("").astype(str).str.strip().unique().tolist()
         if value
     )
-    current_user = _current_user()
-    session_stats = _session_stats_for_username(current_user)
+    active_user = current_user()
+    session_stats = session_stats_for_username(active_user)
 
     return jsonify(
         {
@@ -650,7 +278,7 @@ def get_config():
             "score_engines": SCORE_ENGINE_OPTIONS,
             "default_score_engine": DEFAULT_SCORE_ENGINE,
             "suggestions": SMART_SUGGESTIONS,
-            "current_user": current_user,
+            "current_user": active_user,
             "session": {
                 "idle_timeout_seconds": SESSION_IDLE_TIMEOUT_SECONDS,
                 "active_for_user": session_stats["user_active"],
@@ -677,7 +305,7 @@ def generate_report():
         payload["sentiment"],
         payload["segment"],
         payload["score_engine"],
-        _current_user(),
+        current_user(),
     )
     doc, filename, quality = generator.run(
         timeframe,
@@ -723,7 +351,7 @@ def generate_report_job():
         payload["sentiment"],
         payload["segment"],
         payload["score_engine"],
-        _current_user(),
+        current_user(),
     )
     return (
         jsonify(
