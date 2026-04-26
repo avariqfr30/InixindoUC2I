@@ -30,7 +30,7 @@ class InternalConnectorSpec:
     headers: dict[str, str] = field(default_factory=dict)
     record_path: str = ""
     record_keys: tuple[str, ...] = ("items", "data", "results", "records", "feedback")
-    auto_discover: bool = False
+    auto_discover: bool = True
     field_map: dict[str, str] = field(default_factory=dict)
     required_fields: tuple[str, ...] = DEFAULT_REQUIRED_FIELDS
 
@@ -47,7 +47,7 @@ class InternalConnectorSpec:
             headers=dict(mapping.get("headers") or {}),
             record_path=str(mapping.get("record_path", "")).strip(),
             record_keys=tuple(mapping.get("record_keys") or ("items", "data", "results", "records", "feedback")),
-            auto_discover=bool(mapping.get("auto_discover", False)),
+            auto_discover=bool(mapping.get("auto_discover", True)),
             field_map=dict(mapping.get("field_map") or {}),
             required_fields=tuple(mapping.get("required_fields") or DEFAULT_REQUIRED_FIELDS),
         )

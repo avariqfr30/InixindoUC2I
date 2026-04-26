@@ -195,28 +195,32 @@ Untuk operator production, jalur yang sekarang disarankan adalah **connector spe
 * field mapping,
 * required fields.
 
-Jika nanti perusahaan hanya memberi satu URL penuh, misalnya `https://xxx.com/api/tag`, aplikasinya tetap bisa diarahkan ke endpoint tersebut:
+Workflow paling mudah untuk handover APIDog:
 
 ```bash
-APP_MODE=hybrid
-INTERNAL_API_SOURCE_URL=https://xxx.com/api/tag
-INTERNAL_API_SOURCE_METHOD=GET
-INTERNAL_API_AUTH_MODE=api_key
-INTERNAL_API_SOURCE_PARAMS_JSON='{"limit":1000}'
-INTERNAL_API_SOURCE_HEADERS_JSON='{"X-Client-App":"feedback-intelligence"}'
+# 1. Export atau simpan contoh response JSON dari APIDog.
+#    Contoh path: /tmp/apidog-feedback-response.json
+
+# 2. Minta aplikasi membaca struktur JSON dan membuat connector runtime.
+cd "Sentiment analyzer"
+./appctl inspect-api production \
+  https://api-company.example/feedback \
+  --file /tmp/apidog-feedback-response.json \
+  --write-connector
+
+# 3. Edit internal_connector.production.json jika URL, method, token, atau field_map masih perlu disesuaikan.
+
+# 4. Validasi sebelum start/restart service.
+./appctl validate production
 ```
 
-Untuk endpoint yang memakai username/password via Basic Auth:
+Untuk endpoint APIDog/live API yang memakai Bearer token, isi `profiles/production.env` seperti ini:
 
-```bash
-APP_MODE=hybrid
-INTERNAL_API_SOURCE_URL=https://xxx.com/api/tag
-INTERNAL_API_SOURCE_METHOD=POST
-INTERNAL_API_SOURCE_BODY_MODE=json
-INTERNAL_API_AUTH_MODE=basic
-INTERNAL_API_USERNAME=your_username
-INTERNAL_API_PASSWORD=your_password
-INTERNAL_API_SOURCE_PARAMS_JSON='{}'
+```env
+INTERNAL_API_AUTH_MODE=api_key
+INTERNAL_API_AUTH_HEADER=Authorization
+INTERNAL_API_AUTH_PREFIX=Bearer
+INTERNAL_API_KEY=your_token_here
 ```
 
 Layer internal API sekarang akan:
@@ -224,13 +228,14 @@ Layer internal API sekarang akan:
 * mencoba menemukan list record yang paling relevan di dalam JSON secara otomatis,
 * me-*flatten* object JSON bertingkat menjadi kolom yang bisa dibaca workflow,
 * memetakan field hasil flatten ke kolom kanonik seperti `Rating`, `Komentar`, `Tanggal Feedback`, dan `Tipe Stakeholder`.
+* memberi ringkasan field wajib agar operator tahu apakah response JSON sudah siap menjadi knowledge base.
 
 Contoh file referensi tersedia di:
 
 * `Sentiment analyzer/internal_api_endpoints.example.json`
 * `Sentiment analyzer/internal_connector.production.example.json`
 
-Untuk melihat endpoint yang sudah terdaftar atau mencoba fetch ke API internal:
+Untuk melihat endpoint yang sudah terdaftar, mencoba fetch API internal, atau mengecek response APIDog dari file:
 
 ```bash
 cd "Sentiment analyzer"
@@ -239,6 +244,8 @@ python3 inspect_internal_api.py feedback
 python3 inspect_internal_api.py feedback --fetch
 python3 inspect_internal_api.py https://xxx.com/api/tag --fetch
 python3 inspect_internal_api.py https://xxx.com/api/tag --method POST --body-mode json --params-json '{}'
+python3 inspect_internal_api.py https://xxx.com/api/tag --file /tmp/apidog-feedback-response.json
+./appctl inspect-api production https://xxx.com/api/tag --file /tmp/apidog-feedback-response.json --write-connector
 ```
 
 ### 6. Menjalankan Aplikasi

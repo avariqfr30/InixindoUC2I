@@ -105,6 +105,17 @@ class InternalApiClient:
     def _normalize_token(value):
         return re.sub(r"[^a-z0-9]+", "_", str(value).strip().lower()).strip("_")
 
+    @staticmethod
+    def _redact_mapping(mapping):
+        redacted = {}
+        for key, value in dict(mapping or {}).items():
+            token = InternalApiClient._normalize_token(key)
+            if any(secret_word in token for secret_word in ("authorization", "token", "key", "secret", "password")):
+                redacted[key] = "***redacted***"
+            else:
+                redacted[key] = value
+        return redacted
+
     def available_endpoints(self):
         return sorted(self.endpoints.keys())
 
@@ -318,6 +329,10 @@ class InternalApiClient:
     def interpret_payload(self, endpoint_ref, extra_params=None):
         endpoint = self.get_endpoint(endpoint_ref)
         payload = self.request_endpoint(endpoint, extra_params=extra_params)
+        return self.interpret_payload_object(endpoint, payload)
+
+    def interpret_payload_object(self, endpoint_ref, payload):
+        endpoint = self.get_endpoint(endpoint_ref)
         records = self._extract_by_path(payload, endpoint.record_path)
         record_path = endpoint.record_path if records is not None else None
 
@@ -355,7 +370,7 @@ class InternalApiClient:
             "record_path": endpoint.record_path,
             "resolved_url": self._resolve_url(endpoint) if self.base_url or self._is_absolute_url(endpoint.path) else endpoint.path,
             "record_keys": list(endpoint.record_keys),
-            "query_params": dict(endpoint.query_params),
-            "headers": dict(endpoint.headers),
+            "query_params": self._redact_mapping(endpoint.query_params),
+            "headers": self._redact_mapping(endpoint.headers),
             "auto_discover": endpoint.auto_discover,
         }

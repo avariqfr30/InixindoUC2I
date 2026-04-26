@@ -1,23 +1,22 @@
 {
-  "name": "feedback_production",
+  "name": "apidog_feedback",
   "enabled": true,
   "endpoint_name": "feedback",
-  "url": "https://replace-me.invalid/api/resource/dataset-result",
-  "method": "POST",
+  "url": "https://replace-me.invalid/api/feedback",
+  "method": "GET",
   "body_mode": "json",
-  "request_data": {
-    "dataset_code": "FeedbackDataset"
-  },
+  "request_data": {},
   "headers": {},
-  "record_path": "data.dataset_result",
+  "record_path": "",
   "record_keys": [
     "dataset_result",
     "items",
     "data",
     "results",
-    "records"
+    "records",
+    "feedback"
   ],
-  "auto_discover": false,
+  "auto_discover": true,
   "field_map": {
     "stakeholder_type": "Tipe Stakeholder",
     "service_name": "Layanan",
