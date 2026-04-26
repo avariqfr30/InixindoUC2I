@@ -255,6 +255,9 @@ class InternalApiProvider(InternalDataProvider):
         self.dataset_name = "feedback"
         self.connector = load_internal_connector()
 
+    def _reload_connector(self):
+        self.connector = load_internal_connector()
+
     def _load_via_connector(self):
         if not self.connector or not self.connector.enabled:
             return None
@@ -281,6 +284,7 @@ class InternalApiProvider(InternalDataProvider):
         return self.normalize_dataframe(raw_df)
 
     def load_feedback_data(self):
+        self._reload_connector()
         connector_df = self._load_via_connector()
         if connector_df is not None:
             return connector_df

@@ -198,19 +198,17 @@ Untuk operator production, jalur yang sekarang disarankan adalah **connector spe
 Workflow paling mudah untuk handover APIDog:
 
 ```bash
-# 1. Export atau simpan contoh response JSON dari APIDog.
-#    Contoh path: /tmp/apidog-feedback-response.json
-
-# 2. Minta aplikasi membaca struktur JSON dan membuat connector runtime.
 cd "Sentiment analyzer"
-./appctl inspect-api production \
+
+# Live endpoint: fetch, auto-discover JSON records, write connector, then validate.
+./appctl connect-api production https://api-company.example/feedback
+
+# Saved APIDog response: inspect JSON shape first, write connector, then validate.
+./appctl connect-api production \
   https://api-company.example/feedback \
-  --file /tmp/apidog-feedback-response.json \
-  --write-connector
+  --file /tmp/apidog-feedback-response.json
 
-# 3. Edit internal_connector.production.json jika URL, method, token, atau field_map masih perlu disesuaikan.
-
-# 4. Validasi sebelum start/restart service.
+# When using --file, run validation after the live endpoint and credentials are ready.
 ./appctl validate production
 ```
 
@@ -222,6 +220,8 @@ INTERNAL_API_AUTH_HEADER=Authorization
 INTERNAL_API_AUTH_PREFIX=Bearer
 INTERNAL_API_KEY=your_token_here
 ```
+
+Setelah connector tersimpan, profile `production` akan memakai endpoint tersebut sebagai internal knowledge base. Pada start atau `POST /refresh-knowledge`, aplikasi akan mengambil data API, menormalisasi field, menulis cache ke `cx_feedback.db`, lalu memperbarui index pengetahuan bila `ENABLE_VECTOR_INDEX=1`.
 
 Layer internal API sekarang akan:
 * menerima endpoint bernama atau URL penuh,
@@ -246,6 +246,7 @@ python3 inspect_internal_api.py https://xxx.com/api/tag --fetch
 python3 inspect_internal_api.py https://xxx.com/api/tag --method POST --body-mode json --params-json '{}'
 python3 inspect_internal_api.py https://xxx.com/api/tag --file /tmp/apidog-feedback-response.json
 ./appctl inspect-api production https://xxx.com/api/tag --file /tmp/apidog-feedback-response.json --write-connector
+./appctl connect-api production https://xxx.com/api/tag
 ```
 
 ### 6. Menjalankan Aplikasi

@@ -3,6 +3,15 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_ROOT="$SCRIPT_DIR"
+APP_BASE_DIR="$(dirname "$APP_ROOT")"
+APP_VENV_DIR="${APP_VENV_DIR:-$APP_BASE_DIR/venv}"
+if [[ -n "${PYTHON_BIN:-}" ]]; then
+  APP_PYTHON="$PYTHON_BIN"
+elif [[ -x "$APP_VENV_DIR/bin/python3" ]]; then
+  APP_PYTHON="$APP_VENV_DIR/bin/python3"
+else
+  APP_PYTHON="python3"
+fi
 PROFILES_DIR="$APP_ROOT/profiles"
 CONNECTOR_EXAMPLE="$APP_ROOT/internal_connector.production.example.json"
 CONNECTOR_TARGET="$APP_ROOT/internal_connector.production.json"
@@ -12,12 +21,14 @@ usage() {
 Usage:
   ./appctl init-profile <demo|production>
   ./appctl validate <demo|production>
+  ./appctl connect-api <demo|production> <endpoint-url> [inspect_internal_api.py args...]
   ./appctl inspect-api <demo|production> [inspect_internal_api.py args...]
   ./appctl start <demo|production>
 
 What it does:
   init-profile   create editable runtime config files from the bundled examples
   validate       verify the chosen profile before running the app
+  connect-api    fetch an API URL, write the connector, and validate the profile
   inspect-api    inspect a live API or saved APIDog JSON using the chosen profile
   start          launch the app with the chosen profile through Waitress
 USAGE
@@ -98,14 +109,56 @@ load_profile_env() {
 validate_profile() {
   local profile="$1"
   load_profile_env "$profile"
-  python3 "$APP_ROOT/validate_internal_connector.py"
+  "$APP_PYTHON" "$APP_ROOT/validate_internal_connector.py"
 }
 
 inspect_api() {
   local profile="$1"
   shift
   load_profile_env "$profile"
-  python3 "$APP_ROOT/inspect_internal_api.py" "$@"
+  "$APP_PYTHON" "$APP_ROOT/inspect_internal_api.py" "$@"
+}
+
+connect_api() {
+  local profile="$1"
+  local endpoint_url="${2:-}"
+  shift 2
+
+  if [[ -z "$endpoint_url" ]]; then
+    echo "Endpoint URL is required." >&2
+    usage >&2
+    exit 1
+  fi
+
+  load_profile_env "$profile"
+
+  local has_file_arg=0
+  local has_write_connector_arg=0
+  local arg
+  for arg in "$@"; do
+    if [[ "$arg" == "--file" ]]; then
+      has_file_arg=1
+    fi
+    if [[ "$arg" == "--write-connector" ]]; then
+      has_write_connector_arg=1
+    fi
+  done
+
+  local inspect_args=("$endpoint_url")
+  if [[ "$has_file_arg" == "0" ]]; then
+    inspect_args+=("--fetch")
+  fi
+  if [[ "$has_write_connector_arg" == "0" ]]; then
+    inspect_args+=("--write-connector")
+  fi
+  inspect_args+=("$@")
+
+  "$APP_PYTHON" "$APP_ROOT/inspect_internal_api.py" "${inspect_args[@]}"
+  if [[ "$has_file_arg" == "1" ]]; then
+    echo "Connector written from sample JSON. Run './appctl validate $profile' after the live endpoint and credentials are ready."
+  else
+    "$APP_PYTHON" "$APP_ROOT/validate_internal_connector.py"
+  fi
 }
 
 start_profile() {
@@ -126,6 +179,10 @@ main() {
     validate)
       profile="$(require_profile "${2:-}")"
       validate_profile "$profile"
+      ;;
+    connect-api)
+      profile="$(require_profile "${2:-}")"
+      connect_api "$profile" "${3:-}" "${@:4}"
       ;;
     inspect-api)
       profile="$(require_profile "${2:-}")"
