@@ -29,7 +29,25 @@ Model scoring sekarang mengikuti parameter yang Anda berikan:
 Implementasi parameter ada di:
 
 * `Sentiment analyzer/config.py` (`SCORE_ENGINE_PARAMETER_TABLES`, `SCORE_ENGINE_PROFILES`)
-* `Sentiment analyzer/core.py` (`_score_engine_metrics_single`, `_score_engine_metrics_experience_index`)
+* `Sentiment analyzer/report_analytics.py` (`_score_engine_metrics_single`, `_score_engine_metrics_experience_index`)
+
+## Struktur Kode
+
+Kode aplikasi dibagi berdasarkan tanggung jawab agar perubahan lebih mudah dilokalisasi:
+
+* `app.py`: route Flask dan response HTTP.
+* `auth_service.py`: autentikasi, password hashing, session registry, dan auth database.
+* `data_pipeline.py`: normalisasi data internal, connector API/CSV, cache SQLite, dan knowledge-base refresh.
+* `internal_api.py` + `internal_connector.py`: HTTP client, auto-discovery JSON, flattening payload, dan connector runtime.
+* `osint_research.py`: pencarian OSINT, ranking sumber, cache OSINT, dan deep insight.
+* `report_analytics.py`: analitik CX, scoring, risk model, dan konteks laporan.
+* `report_narratives.py`: penyusunan narasi markdown untuk executive snapshot dan bab laporan.
+* `document_builder.py`: chart, styling, dan DOCX rendering.
+* `report_quality.py`: validasi kelengkapan dokumen.
+* `report_engine.py`: orkestrasi akhir antara OSINT, analytics, DOCX builder, dan quality check.
+* `runtime.py`: antrian background job dan artefak laporan.
+* `tests/test_report_contract.py`: regression fence untuk struktur laporan, snapshot eksekutif, dan kualitas DOCX.
+* `core.py`: facade kompatibilitas lama; kode baru sebaiknya import dari module yang lebih spesifik di atas.
 
 ## Prasyarat Sistem
 

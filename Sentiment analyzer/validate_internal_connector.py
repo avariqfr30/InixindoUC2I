@@ -10,7 +10,7 @@ from config import (
     INTERNAL_CONNECTOR_PATH,
     INTERNAL_API_SOURCE_URL,
 )
-from core import DemoCsvProvider, InternalApiProvider
+from data_pipeline import DemoCsvProvider, InternalApiProvider
 
 REQUIRED_CANONICAL_FIELDS = (
     "Tipe Stakeholder",
