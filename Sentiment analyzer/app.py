@@ -23,7 +23,6 @@ from auth_service import (
     init_auth_db,
     logout_current_session,
     session_capacity_snapshot,
-    session_stats_for_username,
     start_authenticated_session,
     user_count,
     verify_password,
@@ -41,6 +40,12 @@ from config import (
     SMART_SUGGESTIONS,
 )
 from data_pipeline import KnowledgeBase
+from internal_api_settings import (
+    build_connector_payload,
+    connector_settings_state,
+    load_connector_payload,
+    write_connector_payload,
+)
 from report_engine import ReportGenerator
 from runtime import QueueCapacityError, ReportJobManager
 
@@ -78,6 +83,7 @@ def login_required(view_func):
             return view_func(*args, **kwargs)
 
         wants_json = request.path.startswith("/jobs/") or request.path in {
+            "/api/internal-api/settings",
             "/get-config",
             "/generate",
             "/generate-job",
@@ -267,7 +273,6 @@ def get_config():
         if value
     )
     active_user = current_user()
-    session_stats = session_stats_for_username(active_user)
 
     return jsonify(
         {
@@ -279,12 +284,6 @@ def get_config():
             "default_score_engine": DEFAULT_SCORE_ENGINE,
             "suggestions": SMART_SUGGESTIONS,
             "current_user": active_user,
-            "session": {
-                "idle_timeout_seconds": SESSION_IDLE_TIMEOUT_SECONDS,
-                "active_for_user": session_stats["user_active"],
-                "max_active_per_user": session_stats["max_per_user"],
-                "max_active_total": session_stats["max_total"],
-            },
         }
     )
 
@@ -411,6 +410,43 @@ def refresh_knowledge():
 
     success = kb.refresh_data()
     return jsonify({"status": "success" if success else "error"})
+
+
+@app.route("/api/internal-api/settings", methods=["GET", "POST"])
+@login_required
+def internal_api_settings():
+    if request.method == "GET":
+        return jsonify(connector_settings_state())
+
+    job_stats = job_manager.stats()
+    if job_stats["jobs"]["queued"] or job_stats["jobs"]["running"]:
+        return (
+            jsonify(
+                {
+                    "error": "Pengaturan data internal belum bisa diubah karena masih ada laporan yang sedang diproses.",
+                }
+            ),
+            409,
+        )
+
+    data = request.get_json(silent=True) or {}
+    try:
+        payload = build_connector_payload(data, existing_payload=load_connector_payload())
+        write_connector_payload(payload)
+        refresh_success = kb.refresh_data()
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        logger.exception("Failed to update Internal API settings.")
+        return jsonify({"error": str(exc)}), 500
+
+    return jsonify(
+        {
+            "status": "saved",
+            "refresh_status": "success" if refresh_success else "degraded",
+            **connector_settings_state(),
+        }
+    )
 
 
 if __name__ == "__main__":

@@ -1,0 +1,157 @@
+import json
+import os
+import re
+
+from config import INTERNAL_CONNECTOR_PATH
+from internal_connector import DEFAULT_REQUIRED_FIELDS, InternalConnectorSpec
+
+DEFAULT_RECORD_KEYS = ("dataset_result", "items", "data", "results", "records", "feedback")
+SUPPORTED_METHODS = {"GET", "POST", "PUT", "PATCH"}
+SUPPORTED_BODY_MODES = {"json", "form"}
+
+
+def _load_json_object(raw_value, field_name):
+    if isinstance(raw_value, dict):
+        return raw_value
+    clean_value = str(raw_value or "").strip()
+    if not clean_value:
+        return {}
+    try:
+        parsed = json.loads(clean_value)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{field_name} harus berupa JSON object valid.") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError(f"{field_name} harus berupa JSON object.")
+    return parsed
+
+
+def _normalize_record_keys(raw_value):
+    if isinstance(raw_value, (list, tuple)):
+        values = raw_value
+    else:
+        values = re.split(r"[\n,]+", str(raw_value or ""))
+    clean_values = [str(value).strip() for value in values if str(value).strip()]
+    return clean_values or list(DEFAULT_RECORD_KEYS)
+
+
+def _existing_headers_by_endpoint(existing_payload):
+    if not isinstance(existing_payload, dict):
+        return {}
+    connector = InternalConnectorSpec.from_mapping(existing_payload)
+    return {
+        endpoint.endpoint_name: dict(endpoint.headers)
+        for endpoint in connector.endpoints
+        if endpoint.headers
+    }
+
+
+def _normalize_endpoint(raw_endpoint, index, existing_headers=None):
+    endpoint = raw_endpoint if isinstance(raw_endpoint, dict) else {}
+    endpoint_name = str(endpoint.get("endpoint_name") or f"feedback_{index + 1}").strip()
+    url = str(endpoint.get("url") or "").strip()
+    if not re.match(r"^https?://", url, flags=re.IGNORECASE):
+        raise ValueError(f"Endpoint {index + 1} harus memakai URL HTTP/HTTPS penuh.")
+
+    method = str(endpoint.get("method") or "GET").strip().upper()
+    if method not in SUPPORTED_METHODS:
+        raise ValueError(f"Endpoint {index + 1} memakai method tidak didukung: {method}.")
+
+    body_mode = str(endpoint.get("body_mode") or "json").strip().lower()
+    if body_mode not in SUPPORTED_BODY_MODES:
+        raise ValueError(f"Endpoint {index + 1} memakai body mode tidak didukung: {body_mode}.")
+
+    raw_headers = endpoint.get("headers")
+    if not str(raw_headers or "").strip() and existing_headers:
+        headers = dict(existing_headers)
+    else:
+        headers = _load_json_object(raw_headers, f"headers endpoint {index + 1}")
+
+    return {
+        "endpoint_name": endpoint_name or f"feedback_{index + 1}",
+        "enabled": bool(endpoint.get("enabled", True)),
+        "url": url,
+        "method": method,
+        "body_mode": body_mode,
+        "request_data": _load_json_object(endpoint.get("request_data"), f"request_data endpoint {index + 1}"),
+        "headers": headers,
+        "record_path": str(endpoint.get("record_path") or "").strip(),
+        "record_keys": _normalize_record_keys(endpoint.get("record_keys")),
+        "auto_discover": bool(endpoint.get("auto_discover", True)),
+        "field_map": _load_json_object(endpoint.get("field_map"), f"field_map endpoint {index + 1}"),
+    }
+
+
+def build_connector_payload(data, existing_payload=None):
+    raw_endpoints = data.get("endpoints") if isinstance(data, dict) else None
+    if not isinstance(raw_endpoints, list):
+        raw_endpoints = []
+    existing_headers = _existing_headers_by_endpoint(existing_payload)
+    endpoints = [
+        _normalize_endpoint(
+            endpoint,
+            index,
+            existing_headers=existing_headers.get(str(endpoint.get("endpoint_name") or f"feedback_{index + 1}").strip()),
+        )
+        for index, endpoint in enumerate(raw_endpoints)
+        if isinstance(endpoint, dict) and endpoint.get("enabled", True) is not False
+    ]
+    if not endpoints:
+        raise ValueError("Minimal satu endpoint Internal API harus diisi.")
+
+    return {
+        "name": str(data.get("name") or "ui_internal_api").strip() or "ui_internal_api",
+        "enabled": bool(data.get("enabled", True)),
+        "endpoints": endpoints,
+        "required_fields": list(DEFAULT_REQUIRED_FIELDS),
+        "context_enhancer": str(data.get("context_enhancer") or "").strip(),
+    }
+
+
+def write_connector_payload(payload, path=INTERNAL_CONNECTOR_PATH):
+    connector_path = str(path or "").strip()
+    if not connector_path:
+        raise ValueError("INTERNAL_CONNECTOR_PATH belum dikonfigurasi.")
+    connector_dir = os.path.dirname(connector_path)
+    if connector_dir:
+        os.makedirs(connector_dir, exist_ok=True)
+    with open(connector_path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+    return connector_path
+
+
+def load_connector_payload(path=INTERNAL_CONNECTOR_PATH):
+    connector_path = str(path or "").strip()
+    if not connector_path or not os.path.exists(connector_path):
+        return None
+    with open(connector_path, "r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    return payload if isinstance(payload, dict) else None
+
+
+def _endpoint_to_settings(endpoint):
+    return {
+        "endpoint_name": endpoint.endpoint_name,
+        "enabled": endpoint.enabled,
+        "url": endpoint.url,
+        "method": endpoint.method,
+        "body_mode": endpoint.body_mode,
+        "request_data": json.dumps(endpoint.request_data, ensure_ascii=False, indent=2),
+        "headers": "",
+        "headers_configured": bool(endpoint.headers),
+        "record_path": endpoint.record_path,
+        "record_keys": ", ".join(endpoint.record_keys),
+        "auto_discover": endpoint.auto_discover,
+        "field_map": json.dumps(endpoint.field_map, ensure_ascii=False, indent=2),
+    }
+
+
+def connector_settings_state(path=INTERNAL_CONNECTOR_PATH):
+    payload = load_connector_payload(path)
+    connector = InternalConnectorSpec.from_mapping(payload) if payload else None
+    return {
+        "connector_exists": payload is not None,
+        "enabled": connector.enabled if connector else True,
+        "context_enhancer": connector.context_enhancer if connector else "",
+        "endpoints": [_endpoint_to_settings(endpoint) for endpoint in connector.endpoints] if connector else [],
+    }

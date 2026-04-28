@@ -12,8 +12,8 @@
         h2 { color: #0f172a; margin: 0 0 10px 0; font-size: 1.8rem; }
         p.sub { color: #64748b; margin: 0 0 25px 0; font-size: 1rem; line-height: 1.4; }
         label { display: block; font-weight: 600; margin-bottom: 8px; font-size: 0.95rem; }
-        select, textarea, button { width: 100%; padding: 12px; margin-bottom: 15px; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 1rem; background: white; box-sizing: border-box; font-family: 'Segoe UI', sans-serif;}
-        select:focus, textarea:focus { border-color: #cc0000; outline: none; }
+        select, input[type="text"], input[type="url"], textarea, button { width: 100%; padding: 12px; margin-bottom: 15px; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 1rem; background: white; box-sizing: border-box; font-family: 'Segoe UI', sans-serif;}
+        select:focus, input[type="text"]:focus, input[type="url"]:focus, textarea:focus { border-color: #cc0000; outline: none; }
         button { background: #cc0000; color: white; border: none; font-weight: bold; cursor: pointer; transition: 0.2s; margin-top: 10px; }
         button:hover { background: #990000; }
         button:disabled { background: #94a3b8; cursor: not-allowed; }
@@ -66,14 +66,33 @@
         .topbar-user { color: #64748b; font-size: 0.95rem; }
         .topbar-user strong { color: #0f172a; }
         .session-meta { margin-top: 4px; font-size: 0.82rem; color: #64748b; }
+        .topbar-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
         .logout-form { margin: 0; }
         .logout-button { width: auto; margin: 0; padding: 10px 16px; background: white; color: #475569; border: 1px solid #cbd5e1; }
         .logout-button:hover { background: #f8fafc; }
+        .modal-backdrop { position: fixed; inset: 0; z-index: 1000; display: none; align-items: center; justify-content: center; padding: 24px; background: rgba(15, 23, 42, 0.42); }
+        .modal-backdrop.active { display: flex; }
+        .modal { width: min(900px, 100%); max-height: 88vh; overflow-y: auto; border-radius: 16px; background: #ffffff; padding: 26px; border: 1px solid #e2e8f0; box-shadow: 0 22px 55px rgba(15, 23, 42, 0.2); }
+        .modal-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 18px; }
+        .modal-header h3 { margin: 0 0 6px 0; color: #0f172a; font-size: 1.3rem; }
+        .modal-actions { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; margin-top: 16px; }
+        .modal-actions button { width: auto; margin: 0; }
+        .settings-section { border-top: 1px solid #e2e8f0; padding-top: 16px; margin-top: 16px; }
+        .settings-section h4 { margin: 0 0 8px 0; color: #0f172a; }
+        .settings-endpoint-card { border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px; margin-bottom: 12px; background: #f8fafc; }
+        .settings-endpoint-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 8px; }
+        .settings-endpoint-header strong { color: #0f172a; }
+        .settings-endpoint-header button { width: auto; margin: 0; padding: 8px 10px; }
+        .settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+        .settings-grid .full-width { grid-column: 1 / -1; }
+        .settings-json { min-height: 72px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.88rem; }
         @media (max-width: 720px) {
             body { height: auto; padding: 20px 0; }
             .card { width: min(92vw, 760px); padding: 28px 20px; }
             .field-grid { grid-template-columns: 1fr; }
+            .settings-grid { grid-template-columns: 1fr; }
             .topbar { flex-direction: column; align-items: stretch; }
+            .topbar-actions { justify-content: stretch; }
             .logout-button { width: 100%; }
         }
 
@@ -87,9 +106,12 @@
                 Masuk sebagai <strong>{{ current_user or "Pengguna" }}</strong>
                 <div id="session-meta" class="session-meta"></div>
             </div>
-            <form class="logout-form" method="post" action="/logout">
-                <button type="submit" class="logout-button">Keluar</button>
-            </form>
+            <div class="topbar-actions">
+                <button type="button" id="btn-settings" class="logout-button">Pengaturan</button>
+                <form class="logout-form" method="post" action="/logout">
+                    <button type="submit" class="logout-button">Keluar</button>
+                </form>
+            </div>
         </div>
         <div id="loader" style="text-align:center; padding: 40px;">
             <div style="border:4px solid #e2e8f0; border-top:4px solid #cc0000; border-radius:50%; width:40px; height:40px; animation: spin 1s linear infinite; margin: 0 auto 20px auto;"></div>
@@ -178,6 +200,37 @@
         </div>
     </div>
 
+    <div id="settings-modal" class="modal-backdrop">
+        <div class="modal">
+            <div class="modal-header">
+                <div>
+                    <h3>Pengaturan Data Internal</h3>
+                    <p class="sub">Kelola beberapa endpoint API internal sekaligus. Sistem akan menggabungkan record feedback dari endpoint aktif ke knowledge base server.</p>
+                </div>
+                <button type="button" id="btn-close-settings" class="secondary" style="width:auto; margin:0;">Tutup</button>
+            </div>
+
+            <div id="settings-status" class="status-panel active"></div>
+
+            <div class="settings-section">
+                <h4>Endpoint Internal API</h4>
+                <p class="helper">Gunakan URL penuh dari APIDog/API internal. Header sensitif bisa disimpan, tetapi nilai header tidak akan ditampilkan kembali setelah tersimpan.</p>
+                <div id="settings-endpoints"></div>
+                <button type="button" id="btn-add-endpoint" class="secondary">Tambah Endpoint</button>
+            </div>
+
+            <div class="settings-section">
+                <h4>Context Enhancer</h4>
+                <p class="helper">Ruang ini disiapkan untuk konteks internal tambahan. Untuk saat ini konteks disimpan sebagai konfigurasi, belum dipaksakan ke output laporan.</p>
+                <textarea id="settings-context-enhancer" placeholder="Contoh: prioritas layanan, istilah internal, atau konteks organisasi yang perlu tersedia untuk pengembangan berikutnya."></textarea>
+            </div>
+
+            <div class="modal-actions">
+                <button type="button" id="btn-save-internal-api">Simpan & Sync Knowledge Base</button>
+            </div>
+        </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/quill@2.0.3/dist/quill.js"></script>
     <script>
         const ui = {
@@ -204,7 +257,15 @@
             btnReview: document.getElementById('btn-review'),
             btnGenerate: document.getElementById('btn-generate'),
             btnBack: document.getElementById('btn-back'),
-            btnRefresh: document.getElementById('btn-refresh')
+            btnRefresh: document.getElementById('btn-refresh'),
+            btnSettings: document.getElementById('btn-settings'),
+            settingsModal: document.getElementById('settings-modal'),
+            btnCloseSettings: document.getElementById('btn-close-settings'),
+            settingsStatus: document.getElementById('settings-status'),
+            settingsEndpoints: document.getElementById('settings-endpoints'),
+            settingsContextEnhancer: document.getElementById('settings-context-enhancer'),
+            btnAddEndpoint: document.getElementById('btn-add-endpoint'),
+            btnSaveInternalApi: document.getElementById('btn-save-internal-api')
         };
 
         const appState = {
@@ -213,7 +274,8 @@
             scoreEngines: [],
             currentJobId: null,
             pollTimer: null,
-            notesQuill: null
+            notesQuill: null,
+            endpointCounter: 0
         };
 
         function populateSelect(selectElement, items, placeholder) {
@@ -461,6 +523,171 @@
             }
         }
 
+        function openModal(modal) {
+            modal.classList.add('active');
+        }
+
+        function closeModal(modal) {
+            modal.classList.remove('active');
+        }
+
+        function showSettingsStatus(message, tone = 'neutral') {
+            ui.settingsStatus.className = 'status-panel active';
+            if (tone === 'error') ui.settingsStatus.classList.add('error');
+            if (tone === 'success') ui.settingsStatus.classList.add('success');
+            ui.settingsStatus.innerHTML = escapeHtml(message);
+        }
+
+        function endpointCardTemplate(endpoint = {}) {
+            const index = appState.endpointCounter++;
+            const recordKeys = endpoint.record_keys || 'dataset_result, items, data, results, records, feedback';
+            const requestData = endpoint.request_data || '{}';
+            const fieldMap = endpoint.field_map || '{}';
+            const headersPlaceholder = endpoint.headers_configured
+                ? 'Header tersimpan. Isi ulang hanya jika ingin mengganti.'
+                : '{"X-API-Key": "optional"}';
+            return `
+                <div class="settings-endpoint-card" data-endpoint-card>
+                    <div class="settings-endpoint-header">
+                        <strong>Endpoint ${index + 1}</strong>
+                        <button type="button" class="secondary" data-remove-endpoint>Hapus</button>
+                    </div>
+                    <div class="settings-grid">
+                        <div>
+                            <label>Nama Endpoint</label>
+                            <input type="text" data-endpoint-name value="${escapeHtml(endpoint.endpoint_name || `feedback_${index + 1}`)}" placeholder="feedback_1">
+                        </div>
+                        <div>
+                            <label>Method</label>
+                            <select data-endpoint-method>
+                                ${['GET', 'POST', 'PUT', 'PATCH'].map(method => `<option value="${method}" ${method === (endpoint.method || 'GET') ? 'selected' : ''}>${method}</option>`).join('')}
+                            </select>
+                        </div>
+                        <div class="full-width">
+                            <label>URL Endpoint</label>
+                            <input type="url" data-endpoint-url value="${escapeHtml(endpoint.url || '')}" placeholder="https://internal.example/api/feedback">
+                        </div>
+                        <div>
+                            <label>Body Mode</label>
+                            <select data-endpoint-body-mode>
+                                ${['json', 'form'].map(mode => `<option value="${mode}" ${mode === (endpoint.body_mode || 'json') ? 'selected' : ''}>${mode}</option>`).join('')}
+                            </select>
+                        </div>
+                        <div>
+                            <label>Record Path</label>
+                            <input type="text" data-endpoint-record-path value="${escapeHtml(endpoint.record_path || '')}" placeholder="data.dataset_result">
+                        </div>
+                        <div class="full-width">
+                            <label>Record Keys</label>
+                            <input type="text" data-endpoint-record-keys value="${escapeHtml(recordKeys)}" placeholder="dataset_result, items, data, results, records, feedback">
+                        </div>
+                        <div>
+                            <label>Request Data JSON</label>
+                            <textarea class="settings-json" data-endpoint-request-data>${escapeHtml(requestData)}</textarea>
+                        </div>
+                        <div>
+                            <label>Headers JSON</label>
+                            <textarea class="settings-json" data-endpoint-headers placeholder="${escapeHtml(headersPlaceholder)}"></textarea>
+                        </div>
+                        <div class="full-width">
+                            <label>Field Map JSON</label>
+                            <textarea class="settings-json" data-endpoint-field-map>${escapeHtml(fieldMap)}</textarea>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function addEndpointCard(endpoint = {}) {
+            ui.settingsEndpoints.insertAdjacentHTML('beforeend', endpointCardTemplate(endpoint));
+        }
+
+        function renderEndpointSettings(endpoints) {
+            appState.endpointCounter = 0;
+            ui.settingsEndpoints.innerHTML = '';
+            const endpointList = Array.isArray(endpoints) && endpoints.length ? endpoints : [{}];
+            endpointList.forEach(endpoint => addEndpointCard(endpoint));
+        }
+
+        function collectEndpointSettings() {
+            return [...ui.settingsEndpoints.querySelectorAll('[data-endpoint-card]')].map((card) => ({
+                enabled: true,
+                endpoint_name: card.querySelector('[data-endpoint-name]').value.trim(),
+                url: card.querySelector('[data-endpoint-url]').value.trim(),
+                method: card.querySelector('[data-endpoint-method]').value,
+                body_mode: card.querySelector('[data-endpoint-body-mode]').value,
+                record_path: card.querySelector('[data-endpoint-record-path]').value.trim(),
+                record_keys: card.querySelector('[data-endpoint-record-keys]').value.trim(),
+                request_data: card.querySelector('[data-endpoint-request-data]').value.trim(),
+                headers: card.querySelector('[data-endpoint-headers]').value.trim(),
+                field_map: card.querySelector('[data-endpoint-field-map]').value.trim(),
+                auto_discover: true,
+            })).filter(endpoint => endpoint.url);
+        }
+
+        function renderInternalApiSettings(data) {
+            renderEndpointSettings(data.endpoints || []);
+            ui.settingsContextEnhancer.value = data.context_enhancer || '';
+            showSettingsStatus(data.connector_exists ? 'Konfigurasi Internal API tersedia.' : 'Belum ada konfigurasi Internal API tersimpan.');
+        }
+
+        function loadInternalApiSettings() {
+            showSettingsStatus('Memuat pengaturan Internal API...');
+            return fetch('/api/internal-api/settings')
+                .then(response => unwrapJsonResponse(response, 'Pengaturan Internal API belum bisa dimuat.'))
+                .then(data => {
+                    renderInternalApiSettings(data);
+                    return data;
+                })
+                .catch(err => {
+                    if (err.message === '__redirected__') return null;
+                    renderEndpointSettings([]);
+                    showSettingsStatus(err.message, 'error');
+                    return null;
+                });
+        }
+
+        function saveInternalApiSettings() {
+            const endpoints = collectEndpointSettings();
+            if (!endpoints.length) {
+                alert('Masukkan minimal satu endpoint API internal.');
+                return;
+            }
+
+            ui.btnSaveInternalApi.disabled = true;
+            ui.btnSaveInternalApi.textContent = 'Menyimpan...';
+            showSettingsStatus('Menyimpan konfigurasi dan menyinkronkan knowledge base...');
+
+            fetch('/api/internal-api/settings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    enabled: true,
+                    endpoints,
+                    context_enhancer: ui.settingsContextEnhancer.value,
+                })
+            })
+                .then(response => unwrapJsonResponse(response, 'Pengaturan Internal API belum berhasil disimpan.'))
+                .then(data => {
+                    renderInternalApiSettings(data);
+                    showSettingsStatus(
+                        data.refresh_status === 'success'
+                            ? 'Pengaturan tersimpan dan knowledge base tersinkronisasi.'
+                            : 'Pengaturan tersimpan. Knowledge base memakai cache sampai endpoint produksi siap.',
+                        data.refresh_status === 'success' ? 'success' : 'neutral'
+                    );
+                })
+                .catch(err => {
+                    if (err.message === '__redirected__') return;
+                    showSettingsStatus(err.message, 'error');
+                    alert(err.message);
+                })
+                .finally(() => {
+                    ui.btnSaveInternalApi.disabled = false;
+                    ui.btnSaveInternalApi.textContent = 'Simpan & Sync Knowledge Base';
+                });
+        }
+
         function schedulePoll(jobId, delayMs = 2000) {
             clearPolling();
             appState.pollTimer = window.setTimeout(() => pollJob(jobId), delayMs);
@@ -478,17 +705,8 @@
         function completeJob(job) {
             clearPolling();
             document.getElementById('spinner').classList.remove('active');
-            const quality = job.quality || {};
-            const completenessText = quality.completeness_score != null
-                ? ` Verifikasi kelengkapan: ${quality.completeness_score}% (${quality.verified_complete ? 'verified' : 'needs review'}).`
-                : '';
-            const timingText = `Job ${job.job_id} selesai. Queue wait ${job.queue_wait_seconds || 0} detik, proses generasi ${job.generation_seconds || job.duration_seconds || '-'} detik, total ${job.total_elapsed_seconds || '-'} detik.`;
-            ui.successMeta.textContent = `${timingText}${completenessText}`;
-            if (quality.verified_complete === false) {
-                showJobStatus('Laporan selesai dan akan diunduh, tetapi verifikasi kelengkapan meminta review manual tambahan.');
-            } else {
-                showJobStatus('Laporan selesai disiapkan dan unduhan akan dimulai.', 'success');
-            }
+            ui.successMeta.textContent = '';
+            showJobStatus('Laporan selesai disiapkan dan unduhan akan dimulai.', 'success');
             startDownload(job.download_url, job.filename);
             ui.reviewStep.classList.add('hidden');
             ui.successStep.classList.remove('hidden');
@@ -507,19 +725,13 @@
                 .then(response => unwrapJsonResponse(response, 'Status job tidak dapat dibaca.'))
                 .then(job => {
                     if (job.status === 'queued') {
-                        const queueMessage = job.queue_position > 0
-                            ? `Laporan masuk antrian. Posisi saat ini: ${job.queue_position}.`
-                            : 'Laporan masuk antrian dan akan segera diproses.';
-                        showJobStatus(queueMessage);
+                        showJobStatus('Laporan masuk antrian dan akan segera diproses.');
                         schedulePoll(jobId);
                         return;
                     }
 
                     if (job.status === 'running') {
-                        const runningMessage = job.started_at
-                            ? `Laporan sedang disusun. Proses dimulai pada ${job.started_at}.`
-                            : 'Laporan sedang disusun.';
-                        showJobStatus(runningMessage);
+                        showJobStatus('Laporan sedang disusun.');
                         schedulePoll(jobId);
                         return;
                     }
@@ -588,13 +800,7 @@
                     updateScoreEngineHelper();
 
                     const sessionMetaElement = document.getElementById('session-meta');
-                    if (sessionMetaElement && data.session) {
-                        const idleMinutes = Math.max(1, Math.round((data.session.idle_timeout_seconds || 0) / 60));
-                        const activeForUser = data.session.active_for_user || 0;
-                        const maxPerUser = data.session.max_active_per_user || 0;
-                        const capLabel = maxPerUser > 0 ? `${activeForUser}/${maxPerUser}` : `${activeForUser}`;
-                        sessionMetaElement.textContent = `Sesi aktif akun ini: ${capLabel} | Timeout idle: ${idleMinutes} menit`;
-                    }
+                    if (sessionMetaElement) sessionMetaElement.textContent = '';
                     
                     renderSuggestions(data.suggestions);
                     updateReviewAvailability();
@@ -656,7 +862,7 @@
         ui.btnGenerate.onclick = () => {
             ui.btnGenerate.disabled = true; 
             document.getElementById('spinner').classList.add('active');
-            showJobStatus('Permintaan laporan dikirim ke server. Menyiapkan antrian proses...');
+            showJobStatus('Permintaan laporan dikirim ke server.');
             const notesPayload = getNotesPayload();
             
             const payload = {
@@ -672,7 +878,7 @@
             .then(response => unwrapJsonResponse(response, 'Gagal mengirim job laporan.'))
             .then(job => {
                 appState.currentJobId = job.job_id;
-                showJobStatus(`Job ${job.job_id} berhasil dibuat. Laporan akan diproses di background server.`);
+                showJobStatus('Laporan akan diproses di background server.');
                 pollJob(job.job_id);
             })
             .catch(err => {
@@ -692,6 +898,35 @@
                     alert(err.message);
                 });
         };
+
+        ui.btnSettings.onclick = () => {
+            openModal(ui.settingsModal);
+            loadInternalApiSettings();
+        };
+
+        ui.btnCloseSettings.onclick = () => {
+            closeModal(ui.settingsModal);
+        };
+
+        ui.settingsModal.addEventListener('click', (event) => {
+            if (event.target === ui.settingsModal) closeModal(ui.settingsModal);
+        });
+
+        ui.btnAddEndpoint.onclick = () => {
+            addEndpointCard({});
+        };
+
+        ui.settingsEndpoints.addEventListener('click', (event) => {
+            const removeButton = event.target.closest('[data-remove-endpoint]');
+            if (!removeButton) return;
+            const cards = ui.settingsEndpoints.querySelectorAll('[data-endpoint-card]');
+            if (cards.length <= 1) {
+                return alert('Minimal satu endpoint harus tersedia.');
+            }
+            removeButton.closest('[data-endpoint-card]').remove();
+        });
+
+        ui.btnSaveInternalApi.onclick = saveInternalApiSettings;
 
         window.addEventListener('pageshow', (event) => {
             if (event.persisted) {

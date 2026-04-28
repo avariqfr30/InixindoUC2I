@@ -192,16 +192,33 @@ class InternalApiProvider(InternalDataProvider):
         if not self.connector or not self.connector.enabled:
             return None
 
-        interpreted = self.client.interpret_payload(self.connector.to_endpoint_spec())
-        raw_df = pd.DataFrame(interpreted["records"])
-        if raw_df.empty:
+        normalized_frames = []
+        for endpoint in self.connector.active_endpoints():
+            interpreted = self.client.interpret_payload(endpoint.to_endpoint_spec())
+            raw_df = pd.DataFrame(interpreted["records"])
+            if raw_df.empty:
+                logger.warning(
+                    "Internal connector endpoint '%s' returned no records.",
+                    endpoint.endpoint_name,
+                )
+                continue
+
+            mapped_df = endpoint.apply_field_map(raw_df)
+            normalized_df = self.normalize_dataframe(mapped_df)
+            if "Sumber Feedback" in normalized_df.columns:
+                empty_source = normalized_df["Sumber Feedback"].astype(str).str.strip() == ""
+                normalized_df.loc[empty_source, "Sumber Feedback"] = endpoint.endpoint_name
+            normalized_frames.append(normalized_df)
+
+        if not normalized_frames:
             raise ValueError(
                 f"Internal connector '{self.connector.name}' returned no records."
             )
 
-        mapped_df = self.connector.apply_field_map(raw_df)
-        normalized_df = self.normalize_dataframe(mapped_df)
-        return normalized_df
+        combined_df = pd.concat(normalized_frames, ignore_index=True)
+        if "Record ID" in combined_df.columns:
+            combined_df = combined_df.drop_duplicates(subset=["Record ID"], keep="last")
+        return combined_df.reset_index(drop=True)
 
     def load_dataset(self, dataset_name, extra_params=None):
         raw_df = pd.DataFrame(
@@ -344,4 +361,3 @@ class KnowledgeBase:
             logger.error("Query error: %s", exc)
 
         return "Tidak ada data feedback internal untuk periode ini."
-

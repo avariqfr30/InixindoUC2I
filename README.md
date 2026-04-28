@@ -39,6 +39,7 @@ Kode aplikasi dibagi berdasarkan tanggung jawab agar perubahan lebih mudah dilok
 * `auth_service.py`: autentikasi, password hashing, session registry, dan auth database.
 * `data_pipeline.py`: normalisasi data internal, connector API/CSV, cache SQLite, dan knowledge-base refresh.
 * `internal_api.py` + `internal_connector.py`: HTTP client, auto-discovery JSON, flattening payload, dan connector runtime.
+* `internal_api_settings.py`: validasi dan penyimpanan konfigurasi multi-endpoint Internal API dari UI.
 * `osint_research.py`: pencarian OSINT, ranking sumber, cache OSINT, dan deep insight.
 * `report_analytics.py`: analitik CX, scoring, risk model, dan konteks laporan.
 * `report_narratives.py`: penyusunan narasi markdown untuk executive snapshot dan bab laporan.
@@ -213,7 +214,7 @@ Untuk operator production, jalur yang sekarang disarankan adalah **connector spe
 * field mapping,
 * required fields.
 
-Workflow paling mudah untuk handover APIDog:
+Workflow paling mudah untuk handover APIDog lewat CLI:
 
 ```bash
 cd "Sentiment analyzer"
@@ -240,6 +241,18 @@ INTERNAL_API_KEY=your_token_here
 ```
 
 Setelah connector tersimpan, profile `production` akan memakai endpoint tersebut sebagai internal knowledge base. Pada start atau `POST /refresh-knowledge`, aplikasi akan mengambil data API, menormalisasi field, menulis cache ke `cx_feedback.db`, lalu memperbarui index pengetahuan bila `ENABLE_VECTOR_INDEX=1`.
+
+Operator juga dapat mengelola endpoint lewat UI:
+
+1. login ke aplikasi,
+2. buka **Pengaturan**,
+3. tambahkan satu atau beberapa endpoint Internal API,
+4. isi URL, method, record path/keys, request data, headers bila perlu, dan field map,
+5. klik **Simpan & Sync Knowledge Base**.
+
+Konfigurasi UI memakai schema `endpoints[]` di `internal_connector.production.json`. Setiap endpoint aktif akan diambil, di-*flatten*, dinormalisasi ke kolom kanonik, lalu digabung ke knowledge base. Nilai header sensitif tidak ditampilkan kembali di UI setelah tersimpan; biarkan field header kosong saat mengedit bila ingin mempertahankan credential yang sudah ada.
+
+Field **Context Enhancer** sudah tersedia di pengaturan sebagai tempat menyimpan konteks internal tambahan untuk pengembangan berikutnya. Saat ini field tersebut disimpan di connector config, tetapi belum dipaksakan ke output laporan agar tidak mengubah hasil report tanpa keputusan produk yang jelas.
 
 Layer internal API sekarang akan:
 * menerima endpoint bernama atau URL penuh,

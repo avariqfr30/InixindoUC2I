@@ -1,40 +1,66 @@
 {
   "name": "apidog_feedback",
   "enabled": true,
-  "endpoint_name": "feedback",
-  "url": "https://replace-me.invalid/api/feedback",
-  "method": "GET",
-  "body_mode": "json",
-  "request_data": {},
-  "headers": {},
-  "record_path": "",
-  "record_keys": [
-    "dataset_result",
-    "items",
-    "data",
-    "results",
-    "records",
-    "feedback"
+  "endpoints": [
+    {
+      "endpoint_name": "feedback_main",
+      "enabled": true,
+      "url": "https://replace-me.invalid/api/feedback",
+      "method": "GET",
+      "body_mode": "json",
+      "request_data": {},
+      "headers": {},
+      "record_path": "",
+      "record_keys": [
+        "dataset_result",
+        "items",
+        "data",
+        "results",
+        "records",
+        "feedback"
+      ],
+      "auto_discover": true,
+      "field_map": {
+        "stakeholder_type": "Tipe Stakeholder",
+        "service_name": "Layanan",
+        "feedback_date": "Tanggal Feedback",
+        "rating": "Rating",
+        "comment": "Komentar",
+        "source_name": "Sumber Feedback",
+        "channel_name": "Kanal Feedback",
+        "timeframe": "Rentang Waktu",
+        "location": "Lokasi",
+        "instructor_type": "Tipe Instruktur",
+        "customer_journey": "Customer Journey Hint"
+      }
+    },
+    {
+      "endpoint_name": "feedback_secondary",
+      "enabled": false,
+      "url": "https://replace-me.invalid/api/feedback-secondary",
+      "method": "GET",
+      "body_mode": "json",
+      "request_data": {},
+      "headers": {},
+      "record_path": "",
+      "record_keys": [
+        "dataset_result",
+        "items",
+        "data",
+        "results",
+        "records",
+        "feedback"
+      ],
+      "auto_discover": true,
+      "field_map": {}
+    }
   ],
-  "auto_discover": true,
-  "field_map": {
-    "stakeholder_type": "Tipe Stakeholder",
-    "service_name": "Layanan",
-    "feedback_date": "Tanggal Feedback",
-    "rating": "Rating",
-    "comment": "Komentar",
-    "source_name": "Sumber Feedback",
-    "channel_name": "Kanal Feedback",
-    "timeframe": "Rentang Waktu",
-    "location": "Lokasi",
-    "instructor_type": "Tipe Instruktur",
-    "customer_journey": "Customer Journey Hint"
-  },
   "required_fields": [
     "Tipe Stakeholder",
     "Layanan",
     "Tanggal Feedback",
     "Rating",
     "Komentar"
-  ]
+  ],
+  "context_enhancer": ""
 }
