@@ -77,15 +77,13 @@
         .modal-header h3 { margin: 0 0 6px 0; color: #0f172a; font-size: 1.3rem; }
         .modal-actions { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; margin-top: 16px; }
         .modal-actions button { width: auto; margin: 0; }
-        .settings-section { border-top: 1px solid #e2e8f0; padding-top: 16px; margin-top: 16px; }
-        .settings-section h4 { margin: 0 0 8px 0; color: #0f172a; }
-        .settings-endpoint-card { border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px; margin-bottom: 12px; background: #f8fafc; }
-        .settings-endpoint-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 8px; }
-        .settings-endpoint-header strong { color: #0f172a; }
-        .settings-endpoint-header button { width: auto; margin: 0; padding: 8px 10px; }
         .settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
         .settings-grid .full-width { grid-column: 1 / -1; }
-        .settings-json { min-height: 72px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.88rem; }
+        .internal-api-panel { border-top: 1px solid #e2e8f0; padding-top: 18px; }
+        .internal-api-panel h3 { color: #334155; font-size: 1.5rem; margin: 0 0 18px 0; }
+        .internal-api-panel .sub { font-size: 1rem; margin-bottom: 18px; }
+        .internal-api-status { margin: 10px 0 20px 0; border-radius: 10px; padding: 16px; border: 1px solid #d7e0ea; background: #f8fafc; color: #475569; line-height: 1.5; }
+        .internal-api-status strong { color: #334155; }
         @media (max-width: 720px) {
             body { height: auto; padding: 20px 0; }
             .card { width: min(92vw, 760px); padding: 28px 20px; }
@@ -203,30 +201,42 @@
     <div id="settings-modal" class="modal-backdrop">
         <div class="modal">
             <div class="modal-header">
-                <div>
-                    <h3>Pengaturan Data Internal</h3>
-                    <p class="sub">Kelola beberapa endpoint API internal sekaligus. Sistem akan menggabungkan record feedback dari endpoint aktif ke knowledge base server.</p>
-                </div>
+                <div></div>
                 <button type="button" id="btn-close-settings" class="secondary" style="width:auto; margin:0;">Tutup</button>
             </div>
 
-            <div id="settings-status" class="status-panel active"></div>
+            <div id="settings-status" class="status-panel"></div>
 
-            <div class="settings-section">
-                <h4>Endpoint Internal API</h4>
-                <p class="helper">Gunakan URL penuh dari APIDog/API internal. Header sensitif bisa disimpan, tetapi nilai header tidak akan ditampilkan kembali setelah tersimpan.</p>
-                <div id="settings-endpoints"></div>
-                <button type="button" id="btn-add-endpoint" class="secondary">Tambah Endpoint</button>
-            </div>
+            <div class="internal-api-panel">
+                <h3>Internal API / APIDog</h3>
+                <p class="sub">Masukkan endpoint dataset internal. Sistem akan membuat mapping dasar, menyimpan config, mengaktifkan sumber data API untuk sesi berjalan, lalu refresh knowledge base di background.</p>
 
-            <div class="settings-section">
-                <h4>Context Enhancer</h4>
-                <p class="helper">Ruang ini disiapkan untuk konteks internal tambahan. Untuk saat ini konteks disimpan sebagai konfigurasi, belum dipaksakan ke output laporan.</p>
-                <textarea id="settings-context-enhancer" placeholder="Contoh: prioritas layanan, istilah internal, atau konteks organisasi yang perlu tersedia untuk pengembangan berikutnya."></textarea>
+                <label for="settings-api-url">Endpoint API Dataset</label>
+                <input type="url" id="settings-api-url" placeholder="https://xxx.com/api/Resource/dataset">
+
+                <div class="settings-grid">
+                    <div>
+                        <label for="settings-api-auth-mode">Mode Auth</label>
+                        <select id="settings-api-auth-mode">
+                            <option value="bearer_env">Bearer Token dari environment</option>
+                            <option value="basic_env">Basic Auth dari environment</option>
+                            <option value="none">Tanpa Auth</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="settings-api-body-mode">Format Body</label>
+                        <select id="settings-api-body-mode">
+                            <option value="form">Form</option>
+                            <option value="json">JSON</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div id="internal-api-status" class="internal-api-status"></div>
             </div>
 
             <div class="modal-actions">
-                <button type="button" id="btn-save-internal-api">Simpan & Sync Knowledge Base</button>
+                <button type="button" id="btn-save-internal-api">Simpan & Aktifkan Internal API</button>
             </div>
         </div>
     </div>
@@ -262,9 +272,10 @@
             settingsModal: document.getElementById('settings-modal'),
             btnCloseSettings: document.getElementById('btn-close-settings'),
             settingsStatus: document.getElementById('settings-status'),
-            settingsEndpoints: document.getElementById('settings-endpoints'),
-            settingsContextEnhancer: document.getElementById('settings-context-enhancer'),
-            btnAddEndpoint: document.getElementById('btn-add-endpoint'),
+            internalApiStatus: document.getElementById('internal-api-status'),
+            settingsApiUrl: document.getElementById('settings-api-url'),
+            settingsApiAuthMode: document.getElementById('settings-api-auth-mode'),
+            settingsApiBodyMode: document.getElementById('settings-api-body-mode'),
             btnSaveInternalApi: document.getElementById('btn-save-internal-api')
         };
 
@@ -274,8 +285,7 @@
             scoreEngines: [],
             currentJobId: null,
             pollTimer: null,
-            notesQuill: null,
-            endpointCounter: 0
+            notesQuill: null
         };
 
         function populateSelect(selectElement, items, placeholder) {
@@ -538,97 +548,34 @@
             ui.settingsStatus.innerHTML = escapeHtml(message);
         }
 
-        function endpointCardTemplate(endpoint = {}) {
-            const index = appState.endpointCounter++;
-            const recordKeys = endpoint.record_keys || 'dataset_result, items, data, results, records, feedback';
-            const requestData = endpoint.request_data || '{}';
-            const fieldMap = endpoint.field_map || '{}';
-            const headersPlaceholder = endpoint.headers_configured
-                ? 'Header tersimpan. Isi ulang hanya jika ingin mengganti.'
-                : '{"X-API-Key": "optional"}';
-            return `
-                <div class="settings-endpoint-card" data-endpoint-card>
-                    <div class="settings-endpoint-header">
-                        <strong>Endpoint ${index + 1}</strong>
-                        <button type="button" class="secondary" data-remove-endpoint>Hapus</button>
-                    </div>
-                    <div class="settings-grid">
-                        <div>
-                            <label>Nama Endpoint</label>
-                            <input type="text" data-endpoint-name value="${escapeHtml(endpoint.endpoint_name || `feedback_${index + 1}`)}" placeholder="feedback_1">
-                        </div>
-                        <div>
-                            <label>Method</label>
-                            <select data-endpoint-method>
-                                ${['GET', 'POST', 'PUT', 'PATCH'].map(method => `<option value="${method}" ${method === (endpoint.method || 'GET') ? 'selected' : ''}>${method}</option>`).join('')}
-                            </select>
-                        </div>
-                        <div class="full-width">
-                            <label>URL Endpoint</label>
-                            <input type="url" data-endpoint-url value="${escapeHtml(endpoint.url || '')}" placeholder="https://internal.example/api/feedback">
-                        </div>
-                        <div>
-                            <label>Body Mode</label>
-                            <select data-endpoint-body-mode>
-                                ${['json', 'form'].map(mode => `<option value="${mode}" ${mode === (endpoint.body_mode || 'json') ? 'selected' : ''}>${mode}</option>`).join('')}
-                            </select>
-                        </div>
-                        <div>
-                            <label>Record Path</label>
-                            <input type="text" data-endpoint-record-path value="${escapeHtml(endpoint.record_path || '')}" placeholder="data.dataset_result">
-                        </div>
-                        <div class="full-width">
-                            <label>Record Keys</label>
-                            <input type="text" data-endpoint-record-keys value="${escapeHtml(recordKeys)}" placeholder="dataset_result, items, data, results, records, feedback">
-                        </div>
-                        <div>
-                            <label>Request Data JSON</label>
-                            <textarea class="settings-json" data-endpoint-request-data>${escapeHtml(requestData)}</textarea>
-                        </div>
-                        <div>
-                            <label>Headers JSON</label>
-                            <textarea class="settings-json" data-endpoint-headers placeholder="${escapeHtml(headersPlaceholder)}"></textarea>
-                        </div>
-                        <div class="full-width">
-                            <label>Field Map JSON</label>
-                            <textarea class="settings-json" data-endpoint-field-map>${escapeHtml(fieldMap)}</textarea>
-                        </div>
-                    </div>
-                </div>
+        function clearSettingsStatus() {
+            ui.settingsStatus.className = 'status-panel';
+            ui.settingsStatus.innerHTML = '';
+        }
+
+        function renderInternalApiStatus(data) {
+            const resources = Array.isArray(data.resources) ? data.resources : [];
+            const resourceRows = resources.map(resource => {
+                const missing = Array.isArray(resource.missing_fields) ? resource.missing_fields : [];
+                const suffix = missing.length ? ` (${escapeHtml(missing.join(', '))})` : '';
+                return `<div>${escapeHtml(resource.name || 'feedback')}: <strong>${escapeHtml(resource.status || 'perlu mapping')}</strong>${suffix}</div>`;
+            }).join('');
+
+            ui.internalApiStatus.innerHTML = `
+                <div>Config: <strong>${data.connector_exists ? 'tersedia' : 'belum ada'}</strong></div>
+                <div>Project data source: <strong>${escapeHtml(data.project_data_source || 'local')}</strong></div>
+                <div>File: ${escapeHtml(data.connector_path || '-')}</div>
+                ${resourceRows}
             `;
         }
 
-        function addEndpointCard(endpoint = {}) {
-            ui.settingsEndpoints.insertAdjacentHTML('beforeend', endpointCardTemplate(endpoint));
-        }
-
-        function renderEndpointSettings(endpoints) {
-            appState.endpointCounter = 0;
-            ui.settingsEndpoints.innerHTML = '';
-            const endpointList = Array.isArray(endpoints) && endpoints.length ? endpoints : [{}];
-            endpointList.forEach(endpoint => addEndpointCard(endpoint));
-        }
-
-        function collectEndpointSettings() {
-            return [...ui.settingsEndpoints.querySelectorAll('[data-endpoint-card]')].map((card) => ({
-                enabled: true,
-                endpoint_name: card.querySelector('[data-endpoint-name]').value.trim(),
-                url: card.querySelector('[data-endpoint-url]').value.trim(),
-                method: card.querySelector('[data-endpoint-method]').value,
-                body_mode: card.querySelector('[data-endpoint-body-mode]').value,
-                record_path: card.querySelector('[data-endpoint-record-path]').value.trim(),
-                record_keys: card.querySelector('[data-endpoint-record-keys]').value.trim(),
-                request_data: card.querySelector('[data-endpoint-request-data]').value.trim(),
-                headers: card.querySelector('[data-endpoint-headers]').value.trim(),
-                field_map: card.querySelector('[data-endpoint-field-map]').value.trim(),
-                auto_discover: true,
-            })).filter(endpoint => endpoint.url);
-        }
-
         function renderInternalApiSettings(data) {
-            renderEndpointSettings(data.endpoints || []);
-            ui.settingsContextEnhancer.value = data.context_enhancer || '';
-            showSettingsStatus(data.connector_exists ? 'Konfigurasi Internal API tersedia.' : 'Belum ada konfigurasi Internal API tersimpan.');
+            const endpoint = Array.isArray(data.endpoints) && data.endpoints.length ? data.endpoints[0] : {};
+            ui.settingsApiUrl.value = endpoint.url || '';
+            ui.settingsApiAuthMode.value = data.auth_mode || 'bearer_env';
+            ui.settingsApiBodyMode.value = data.body_mode || endpoint.body_mode || 'form';
+            renderInternalApiStatus(data);
+            clearSettingsStatus();
         }
 
         function loadInternalApiSettings() {
@@ -641,16 +588,22 @@
                 })
                 .catch(err => {
                     if (err.message === '__redirected__') return null;
-                    renderEndpointSettings([]);
+                    renderInternalApiSettings({
+                        connector_exists: false,
+                        project_data_source: 'local',
+                        connector_path: '-',
+                        resources: [{name: 'feedback', status: 'perlu mapping', missing_fields: []}],
+                        endpoints: [],
+                    });
                     showSettingsStatus(err.message, 'error');
                     return null;
                 });
         }
 
         function saveInternalApiSettings() {
-            const endpoints = collectEndpointSettings();
-            if (!endpoints.length) {
-                alert('Masukkan minimal satu endpoint API internal.');
+            const url = ui.settingsApiUrl.value.trim();
+            if (!url) {
+                alert('Masukkan endpoint API dataset internal.');
                 return;
             }
 
@@ -663,8 +616,9 @@
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({
                     enabled: true,
-                    endpoints,
-                    context_enhancer: ui.settingsContextEnhancer.value,
+                    url,
+                    auth_mode: ui.settingsApiAuthMode.value,
+                    body_mode: ui.settingsApiBodyMode.value,
                 })
             })
                 .then(response => unwrapJsonResponse(response, 'Pengaturan Internal API belum berhasil disimpan.'))
@@ -684,7 +638,7 @@
                 })
                 .finally(() => {
                     ui.btnSaveInternalApi.disabled = false;
-                    ui.btnSaveInternalApi.textContent = 'Simpan & Sync Knowledge Base';
+                    ui.btnSaveInternalApi.textContent = 'Simpan & Aktifkan Internal API';
                 });
         }
 
@@ -910,20 +864,6 @@
 
         ui.settingsModal.addEventListener('click', (event) => {
             if (event.target === ui.settingsModal) closeModal(ui.settingsModal);
-        });
-
-        ui.btnAddEndpoint.onclick = () => {
-            addEndpointCard({});
-        };
-
-        ui.settingsEndpoints.addEventListener('click', (event) => {
-            const removeButton = event.target.closest('[data-remove-endpoint]');
-            if (!removeButton) return;
-            const cards = ui.settingsEndpoints.querySelectorAll('[data-endpoint-card]');
-            if (cards.length <= 1) {
-                return alert('Minimal satu endpoint harus tersedia.');
-            }
-            removeButton.closest('[data-endpoint-card]').remove();
         });
 
         ui.btnSaveInternalApi.onclick = saveInternalApiSettings;

@@ -8,6 +8,28 @@ from internal_connector import DEFAULT_REQUIRED_FIELDS, InternalConnectorSpec
 DEFAULT_RECORD_KEYS = ("dataset_result", "items", "data", "results", "records", "feedback")
 SUPPORTED_METHODS = {"GET", "POST", "PUT", "PATCH"}
 SUPPORTED_BODY_MODES = {"json", "form"}
+SUPPORTED_AUTH_MODES = {"bearer_env", "basic_env", "none"}
+DEFAULT_FIELD_MAP = {
+    "id": "Record ID",
+    "record_id": "Record ID",
+    "feedback_id": "Record ID",
+    "stakeholder_type": "Tipe Stakeholder",
+    "stakeholder": "Tipe Stakeholder",
+    "tipe_stakeholder": "Tipe Stakeholder",
+    "service_name": "Layanan",
+    "service": "Layanan",
+    "layanan": "Layanan",
+    "feedback_date": "Tanggal Feedback",
+    "date": "Tanggal Feedback",
+    "tanggal_feedback": "Tanggal Feedback",
+    "rating": "Rating",
+    "score": "Rating",
+    "nilai": "Rating",
+    "comment": "Komentar",
+    "comments": "Komentar",
+    "komentar": "Komentar",
+    "feedback": "Komentar",
+}
 
 
 def _load_json_object(raw_value, field_name):
@@ -32,6 +54,11 @@ def _normalize_record_keys(raw_value):
         values = re.split(r"[\n,]+", str(raw_value or ""))
     clean_values = [str(value).strip() for value in values if str(value).strip()]
     return clean_values or list(DEFAULT_RECORD_KEYS)
+
+
+def _normalize_auth_mode(raw_value):
+    auth_mode = str(raw_value or "bearer_env").strip().lower()
+    return auth_mode if auth_mode in SUPPORTED_AUTH_MODES else "bearer_env"
 
 
 def _existing_headers_by_endpoint(existing_payload):
@@ -81,10 +108,34 @@ def _normalize_endpoint(raw_endpoint, index, existing_headers=None):
     }
 
 
+def _simple_endpoint_from_payload(data):
+    url = str(data.get("url") or data.get("endpoint_url") or "").strip()
+    if not url:
+        return None
+    body_mode = str(data.get("body_mode") or "form").strip().lower()
+    return {
+        "endpoint_name": str(data.get("endpoint_name") or "feedback").strip() or "feedback",
+        "enabled": True,
+        "url": url,
+        "method": str(data.get("method") or "POST").strip().upper(),
+        "body_mode": body_mode if body_mode in SUPPORTED_BODY_MODES else "form",
+        "request_data": data.get("request_data") or {},
+        "headers": data.get("headers") or "",
+        "record_path": str(data.get("record_path") or "").strip(),
+        "record_keys": data.get("record_keys") or list(DEFAULT_RECORD_KEYS),
+        "auto_discover": True,
+        "field_map": data.get("field_map") or DEFAULT_FIELD_MAP,
+    }
+
+
 def build_connector_payload(data, existing_payload=None):
-    raw_endpoints = data.get("endpoints") if isinstance(data, dict) else None
+    data = data if isinstance(data, dict) else {}
+    raw_endpoints = data.get("endpoints")
     if not isinstance(raw_endpoints, list):
         raw_endpoints = []
+    simple_endpoint = _simple_endpoint_from_payload(data)
+    if simple_endpoint and not raw_endpoints:
+        raw_endpoints = [simple_endpoint]
     existing_headers = _existing_headers_by_endpoint(existing_payload)
     endpoints = [
         _normalize_endpoint(
@@ -101,6 +152,7 @@ def build_connector_payload(data, existing_payload=None):
     return {
         "name": str(data.get("name") or "ui_internal_api").strip() or "ui_internal_api",
         "enabled": bool(data.get("enabled", True)),
+        "auth_mode": _normalize_auth_mode(data.get("auth_mode")),
         "endpoints": endpoints,
         "required_fields": list(DEFAULT_REQUIRED_FIELDS),
         "context_enhancer": str(data.get("context_enhancer") or "").strip(),
@@ -146,12 +198,33 @@ def _endpoint_to_settings(endpoint):
     }
 
 
+def _mapping_status(endpoint, required_fields):
+    mapped_targets = {str(target).strip() for target in endpoint.field_map.values() if str(target).strip()}
+    missing = [field for field in required_fields if field not in mapped_targets]
+    return {
+        "name": endpoint.endpoint_name,
+        "status": "ok" if not missing else "perlu mapping",
+        "missing_fields": missing,
+    }
+
+
 def connector_settings_state(path=INTERNAL_CONNECTOR_PATH):
     payload = load_connector_payload(path)
     connector = InternalConnectorSpec.from_mapping(payload) if payload else None
+    required_fields = list(connector.required_fields if connector else DEFAULT_REQUIRED_FIELDS)
     return {
         "connector_exists": payload is not None,
         "enabled": connector.enabled if connector else True,
+        "auth_mode": _normalize_auth_mode(payload.get("auth_mode") if payload else None),
+        "body_mode": connector.endpoints[0].body_mode if connector and connector.endpoints else "form",
+        "project_data_source": "api" if connector and connector.enabled and connector.active_endpoints() else "local",
+        "connector_path": str(path or ""),
         "context_enhancer": connector.context_enhancer if connector else "",
         "endpoints": [_endpoint_to_settings(endpoint) for endpoint in connector.endpoints] if connector else [],
+        "resources": [
+            _mapping_status(endpoint, required_fields)
+            for endpoint in connector.endpoints
+        ] if connector else [
+            {"name": "feedback", "status": "perlu mapping", "missing_fields": required_fields}
+        ],
     }

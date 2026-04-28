@@ -66,6 +66,14 @@ job_manager = ReportJobManager(generator)
 logger.info("Application started in %s mode.", APP_MODE)
 
 
+def _internal_api_settings_state():
+    state = connector_settings_state()
+    state["project_data_source"] = (
+        "api" if getattr(kb.provider, "source_name", "") == "company_api" else "local"
+    )
+    return state
+
+
 def _request_payload(data):
     return {
         "timeframe": data.get("timeframe"),
@@ -416,7 +424,7 @@ def refresh_knowledge():
 @login_required
 def internal_api_settings():
     if request.method == "GET":
-        return jsonify(connector_settings_state())
+        return jsonify(_internal_api_settings_state())
 
     job_stats = job_manager.stats()
     if job_stats["jobs"]["queued"] or job_stats["jobs"]["running"]:
@@ -433,6 +441,8 @@ def internal_api_settings():
     try:
         payload = build_connector_payload(data, existing_payload=load_connector_payload())
         write_connector_payload(payload)
+        if payload.get("enabled", True):
+            kb.activate_internal_api_provider()
         refresh_success = kb.refresh_data()
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
@@ -444,7 +454,7 @@ def internal_api_settings():
         {
             "status": "saved",
             "refresh_status": "success" if refresh_success else "degraded",
-            **connector_settings_state(),
+            **_internal_api_settings_state(),
         }
     )
 

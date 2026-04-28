@@ -143,6 +143,8 @@ class InternalApiClient:
         headers = {"Accept": "application/json", **self.default_headers, **endpoint.headers}
         if self.auth_mode == "basic":
             return headers
+        if self.auth_mode in {"none", "no_auth"}:
+            return headers
         if self.api_key:
             auth_value = self.api_key
             if self.auth_prefix:

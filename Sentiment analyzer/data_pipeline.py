@@ -188,10 +188,21 @@ class InternalApiProvider(InternalDataProvider):
     def _reload_connector(self):
         self.connector = load_internal_connector()
 
+    def _apply_connector_auth_mode(self):
+        auth_mode = str(getattr(self.connector, "auth_mode", "") or "").strip().lower()
+        if auth_mode == "basic_env":
+            self.client.auth_mode = "basic"
+        elif auth_mode == "none":
+            self.client.auth_mode = "none"
+        elif auth_mode == "bearer_env":
+            self.client.auth_mode = "api_key"
+            self.client.auth_prefix = self.client.auth_prefix or "Bearer"
+
     def _load_via_connector(self):
         if not self.connector or not self.connector.enabled:
             return None
 
+        self._apply_connector_auth_mode()
         normalized_frames = []
         for endpoint in self.connector.active_endpoints():
             interpreted = self.client.interpret_payload(endpoint.to_endpoint_spec())
@@ -266,6 +277,10 @@ class KnowledgeBase:
         if self.internal_data_mode == "api":
             return InternalApiProvider()
         return DemoCsvProvider()
+
+    def activate_internal_api_provider(self):
+        self.internal_data_mode = "api"
+        self.provider = InternalApiProvider()
 
     def _load_cached_dataframe(self):
         try:

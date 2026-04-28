@@ -95,6 +95,7 @@ class InternalConnectorEndpoint:
 class InternalConnectorSpec:
     name: str = "production_connector"
     enabled: bool = True
+    auth_mode: str = "api_key"
     endpoints: tuple[InternalConnectorEndpoint, ...] = field(default_factory=tuple)
     required_fields: tuple[str, ...] = DEFAULT_REQUIRED_FIELDS
     context_enhancer: str = ""
@@ -122,6 +123,7 @@ class InternalConnectorSpec:
         return cls(
             name=str(mapping.get("name", "production_connector")).strip() or "production_connector",
             enabled=bool(mapping.get("enabled", True)),
+            auth_mode=str(mapping.get("auth_mode", "api_key")).strip().lower() or "api_key",
             endpoints=endpoints,
             required_fields=tuple(mapping.get("required_fields") or DEFAULT_REQUIRED_FIELDS),
             context_enhancer=str(mapping.get("context_enhancer", "")).strip(),
@@ -148,6 +150,7 @@ class InternalConnectorSpec:
         return {
             "name": self.name,
             "enabled": self.enabled,
+            "auth_mode": self.auth_mode,
             "endpoint_count": len(self.endpoints),
             "active_endpoint_count": len(self.active_endpoints()),
             "endpoints": [endpoint.describe() for endpoint in self.endpoints],
