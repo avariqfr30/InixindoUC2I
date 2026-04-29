@@ -43,6 +43,7 @@ class SignupPolicyTests(unittest.TestCase):
                     },
                     follow_redirects=False,
                 )
+                post_body = post_response.get_data(as_text=True)
                 login_response = client.post(
                     "/login",
                     data={"username": "%s", "password": "Password123!"},
@@ -59,6 +60,8 @@ class SignupPolicyTests(unittest.TestCase):
                         "login_location": login_response.headers.get("Location", ""),
                         "user_count": user_count(),
                         "approved": bool(approved_at),
+                        "has_warning_popup": "signup-warning-popup" in post_body,
+                        "has_error_box": "class=\\"error\\"" in post_body,
                     }
                 )
                 """ % (username, username, username)
@@ -83,6 +86,7 @@ class SignupPolicyTests(unittest.TestCase):
         self.assertIn("'login_location': '/'", output)
         self.assertIn("'user_count': 1", output)
         self.assertIn("'approved': True", output)
+        self.assertIn("'has_warning_popup': False", output)
 
     def test_signup_rejects_external_email_domains(self):
         output = self._run_probe({}, username="outsider@example.com")
@@ -92,6 +96,8 @@ class SignupPolicyTests(unittest.TestCase):
         self.assertIn("'login_status': 200", output)
         self.assertIn("'user_count': 0", output)
         self.assertIn("'approved': False", output)
+        self.assertIn("'has_warning_popup': True", output)
+        self.assertIn("'has_error_box': False", output)
 
     def test_signup_rejects_invalid_email_format(self):
         output = self._run_probe({}, username="not-an-email")
@@ -101,6 +107,8 @@ class SignupPolicyTests(unittest.TestCase):
         self.assertIn("'login_status': 200", output)
         self.assertIn("'user_count': 0", output)
         self.assertIn("'approved': False", output)
+        self.assertIn("'has_warning_popup': True", output)
+        self.assertIn("'has_error_box': False", output)
 
     def test_signup_can_still_be_closed_explicitly(self):
         output = self._run_probe({"ALLOW_SIGNUP": "0"})

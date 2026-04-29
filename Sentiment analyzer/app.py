@@ -191,13 +191,14 @@ def signup():
         return redirect(url_for("home"))
 
     error = None
+    warning = None
     if request.method == "POST":
         username = (request.form.get("username") or "").strip()
         password = request.form.get("password") or ""
         confirm_password = request.form.get("confirm_password") or ""
 
         if not _is_allowed_signup_email(username):
-            error = f"Pendaftaran hanya menerima email internal dengan domain {_allowed_signup_domain()}."
+            warning = f"Gunakan email internal dengan domain {_allowed_signup_domain()} untuk mendaftar."
         elif len(username) < 4:
             error = "Email minimal 4 karakter."
         elif len(password) < 8:
@@ -233,6 +234,7 @@ def signup():
         "auth.html",
         mode="signup",
         error=error,
+        warning=warning,
         allow_signup=ALLOW_SIGNUP,
         signup_requires_approval=SIGNUP_REQUIRES_APPROVAL,
         user_count=user_count(),

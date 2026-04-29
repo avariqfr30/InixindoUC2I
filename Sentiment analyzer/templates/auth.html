@@ -138,6 +138,21 @@
         .notice.active {
             display: block;
         }
+        .warning-popup {
+            margin-bottom: 16px;
+            padding: 14px 16px;
+            border-radius: 12px;
+            border: 1px solid #facc15;
+            background: #fefce8;
+            color: #854d0e;
+            line-height: 1.5;
+            box-shadow: 0 14px 30px rgba(133, 77, 14, 0.14);
+        }
+        .warning-popup strong {
+            display: block;
+            margin-bottom: 4px;
+            color: #713f12;
+        }
         .hint {
             margin-top: 16px;
             font-size: 0.9rem;
@@ -207,6 +222,12 @@
             {% endif %}
             {% if notice %}
             <div class="notice active">{{ notice }}</div>
+            {% endif %}
+            {% if warning %}
+            <div id="signup-warning-popup" class="warning-popup" role="alert" aria-live="assertive">
+                <strong>Pendaftaran belum bisa diproses</strong>
+                {{ warning }}
+            </div>
             {% endif %}
             <div id="session-notice" class="notice"></div>
 
