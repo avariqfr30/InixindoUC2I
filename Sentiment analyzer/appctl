@@ -23,6 +23,7 @@ Usage:
   ./appctl validate <demo|production>
   ./appctl connect-api <demo|production> <endpoint-url> [inspect_internal_api.py args...]
   ./appctl inspect-api <demo|production> [inspect_internal_api.py args...]
+  ./appctl approve-user <demo|production> <username>
   ./appctl start <demo|production>
 
 What it does:
@@ -30,6 +31,7 @@ What it does:
   validate       verify the chosen profile before running the app
   connect-api    fetch an API URL, write the connector, and validate the profile
   inspect-api    inspect a live API or saved APIDog JSON using the chosen profile
+  approve-user   approve a pending signup from the server shell
   start          launch the app with the chosen profile through Waitress
 USAGE
 }
@@ -167,6 +169,28 @@ start_profile() {
   exec "$APP_ROOT/run_pilot.sh"
 }
 
+approve_user_cmd() {
+  local profile="$1"
+  local username="${2:-}"
+  if [[ -z "$username" ]]; then
+    echo "Username is required." >&2
+    usage >&2
+    exit 1
+  fi
+  load_profile_env "$profile"
+  "$APP_PYTHON" - "$username" <<'PY'
+import sys
+
+from auth_service import approve_user
+
+username = sys.argv[1]
+user = approve_user(username, approved_by="appctl")
+if not user:
+    raise SystemExit(f"User not found: {username}")
+print(f"Approved user: {user['username']}")
+PY
+}
+
 main() {
   local command="${1:-}"
   local profile
@@ -188,6 +212,10 @@ main() {
       profile="$(require_profile "${2:-}")"
       shift 2
       inspect_api "$profile" "$@"
+      ;;
+    approve-user)
+      profile="$(require_profile "${2:-}")"
+      approve_user_cmd "$profile" "${3:-}"
       ;;
     start)
       profile="$(require_profile "${2:-}")"

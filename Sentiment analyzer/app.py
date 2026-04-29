@@ -21,6 +21,7 @@ from auth_service import (
     current_user,
     get_user_by_username,
     init_auth_db,
+    is_user_approved,
     logout_current_session,
     session_capacity_snapshot,
     start_authenticated_session,
@@ -37,6 +38,8 @@ from config import (
     SENTIMENT_OPTIONS,
     SESSION_COOKIE_SECURE,
     SESSION_IDLE_TIMEOUT_SECONDS,
+    SIGNUP_ALLOWED_EMAIL_DOMAIN,
+    SIGNUP_REQUIRES_APPROVAL,
     SMART_SUGGESTIONS,
 )
 from data_pipeline import KnowledgeBase
@@ -82,6 +85,19 @@ def _request_payload(data):
         "segment": data.get("segment", "all"),
         "score_engine": data.get("score_engine", DEFAULT_SCORE_ENGINE),
     }
+
+
+def _allowed_signup_domain():
+    domain = str(SIGNUP_ALLOWED_EMAIL_DOMAIN or "").strip().lower()
+    if domain and not domain.startswith("@"):
+        domain = f"@{domain}"
+    return domain
+
+
+def _is_allowed_signup_email(value):
+    email = str(value or "").strip().lower()
+    allowed_domain = _allowed_signup_domain()
+    return bool(email and allowed_domain and email.endswith(allowed_domain))
 
 
 def login_required(view_func):
@@ -141,6 +157,8 @@ def login():
                 )
             else:
                 error = "Username atau password tidak valid."
+        elif SIGNUP_REQUIRES_APPROVAL and not is_user_approved(user):
+            error = "Akun ini masih menunggu konfirmasi admin sebelum bisa masuk."
         else:
             try:
                 revoked_count = start_authenticated_session(user)
@@ -159,6 +177,7 @@ def login():
         mode="login",
         error=error,
         allow_signup=ALLOW_SIGNUP,
+        signup_requires_approval=SIGNUP_REQUIRES_APPROVAL,
         user_count=user_count(),
     )
 
@@ -177,8 +196,10 @@ def signup():
         password = request.form.get("password") or ""
         confirm_password = request.form.get("confirm_password") or ""
 
-        if len(username) < 4:
-            error = "Username minimal 4 karakter."
+        if not _is_allowed_signup_email(username):
+            error = f"Pendaftaran hanya menerima email internal dengan domain {_allowed_signup_domain()}."
+        elif len(username) < 4:
+            error = "Email minimal 4 karakter."
         elif len(password) < 8:
             error = "Kata sandi minimal 8 karakter."
         elif password != confirm_password:
@@ -186,7 +207,22 @@ def signup():
         elif get_user_by_username(username):
             error = "Username sudah dipakai."
         else:
-            created_user = create_user(username, password)
+            created_user = create_user(
+                username,
+                password,
+                approved=not SIGNUP_REQUIRES_APPROVAL,
+                approved_by="signup_without_approval",
+            )
+            if SIGNUP_REQUIRES_APPROVAL:
+                return render_template(
+                    "auth.html",
+                    mode="login",
+                    error=None,
+                    notice="Pendaftaran diterima. Akun harus dikonfirmasi admin sebelum bisa masuk.",
+                    allow_signup=ALLOW_SIGNUP,
+                    signup_requires_approval=SIGNUP_REQUIRES_APPROVAL,
+                    user_count=user_count(),
+                )
             try:
                 start_authenticated_session(created_user)
                 return redirect(url_for("home"))
@@ -198,6 +234,7 @@ def signup():
         mode="signup",
         error=error,
         allow_signup=ALLOW_SIGNUP,
+        signup_requires_approval=SIGNUP_REQUIRES_APPROVAL,
         user_count=user_count(),
     )
 

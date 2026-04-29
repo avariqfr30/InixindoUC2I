@@ -31,6 +31,15 @@ CSV_PATH = os.getenv("CSV_PATH", os.path.join(DATA_DIR, "db.csv"))
 AUTH_DB_PATH = os.getenv("AUTH_DB_PATH", os.path.join(DATA_DIR, "auth.db"))
 APP_SECRET_KEY = os.getenv("APP_SECRET_KEY", "change-this-secret-before-deployment")
 ALLOW_SIGNUP = os.getenv("ALLOW_SIGNUP", "1").strip().lower() in {"1", "true", "yes"}
+SIGNUP_REQUIRES_APPROVAL = os.getenv("SIGNUP_REQUIRES_APPROVAL", "0").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
+SIGNUP_ALLOWED_EMAIL_DOMAIN = os.getenv(
+    "SIGNUP_ALLOWED_EMAIL_DOMAIN",
+    "@inixindojogja.co.id",
+).strip().lower()
 SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "0").strip().lower() in {
     "1",
     "true",

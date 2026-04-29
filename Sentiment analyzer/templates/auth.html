@@ -192,7 +192,11 @@
             <h2>{% if mode == "signup" %}Buat Akun{% else %}Selamat Datang Kembali{% endif %}</h2>
             <p class="sub">
                 {% if mode == "signup" %}
-                Buat akun dasar untuk mengakses aplikasi. Setelah akun awal terbentuk, Anda bisa mematikan signup lewat environment variable bila perlu.
+                    {% if signup_requires_approval %}
+                    Buat permintaan akun menggunakan email internal Inixindo Jogja. Admin harus mengonfirmasi akun sebelum akses aplikasi dibuka.
+                    {% else %}
+                    Buat akun menggunakan email internal Inixindo Jogja. Email dengan domain yang benar bisa langsung digunakan untuk masuk.
+                    {% endif %}
                 {% else %}
                 Masuk dengan username dan password untuk membuka dashboard report.
                 {% endif %}
@@ -201,12 +205,15 @@
             {% if error %}
             <div class="error">{{ error }}</div>
             {% endif %}
+            {% if notice %}
+            <div class="notice active">{{ notice }}</div>
+            {% endif %}
             <div id="session-notice" class="notice"></div>
 
             {% if mode == "signup" %}
             <form method="post" action="{{ url_for('signup') }}">
-                <label for="username">Username</label>
-                <input id="username" name="username" type="text" minlength="4" maxlength="64" required>
+                <label for="username">Email Internal</label>
+                <input id="username" name="username" type="email" minlength="4" maxlength="96" placeholder="nama@inixindojogja.co.id" required>
 
                 <label for="password">Kata Sandi</label>
                 <input id="password" name="password" type="password" minlength="8" required>
@@ -218,7 +225,7 @@
             </form>
             {% else %}
             <form method="post" action="{{ url_for('login') }}">
-                <label for="username">Username</label>
+                <label for="username">Email / Username</label>
                 <input id="username" name="username" type="text" minlength="4" maxlength="64" required>
 
                 <label for="password">Kata Sandi</label>
@@ -229,7 +236,15 @@
             {% endif %}
 
             <p class="hint">
-                Gunakan akun yang sudah terdaftar untuk masuk ke aplikasi. Jika belum memiliki akun, silakan daftar terlebih dahulu selama fitur pendaftaran masih dibuka.
+                {% if allow_signup %}
+                    {% if signup_requires_approval %}
+                    Hanya email berakhiran @inixindojogja.co.id yang bisa mengajukan akun. Akun baru tidak langsung aktif sampai admin server mengonfirmasi akses.
+                    {% else %}
+                    Hanya email berakhiran @inixindojogja.co.id yang bisa mendaftar dan langsung menggunakan aplikasi.
+                    {% endif %}
+                {% else %}
+                Pendaftaran mandiri sedang ditutup. Gunakan akun yang sudah disediakan oleh admin server.
+                {% endif %}
             </p>
         </section>
     </div>

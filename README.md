@@ -120,6 +120,17 @@ Setelah itu:
 * edit `profiles/production.env` untuk secret, auth, dan tuning runtime,
 * edit `internal_connector.production.json` untuk endpoint API, request body, record path, dan field map.
 
+Signup publik dapat dibuka, tetapi dibatasi untuk email internal dengan `SIGNUP_ALLOWED_EMAIL_DOMAIN=@inixindojogja.co.id`. Dengan mode default sekarang, email internal yang valid bisa langsung membuat akun dan masuk.
+
+Jika approval manual dibutuhkan nanti, aktifkan `SIGNUP_REQUIRES_APPROVAL=1`; pengguna baru tetap bisa mendaftar tetapi belum bisa masuk sampai admin server mengonfirmasi akun:
+
+```bash
+./appctl approve-user demo <username>
+./appctl approve-user production <username>
+```
+
+Jika formulir pendaftaran perlu ditutup total, set `ALLOW_SIGNUP=0`.
+
 Validasi profil sebelum menjalankan aplikasi:
 
 ```bash

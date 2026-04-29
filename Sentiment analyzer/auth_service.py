@@ -299,6 +299,31 @@ def _init_auth_db():
             )
             """
         )
+        existing_user_columns = {
+            row["name"] for row in connection.execute("PRAGMA table_info(users)").fetchall()
+        }
+        should_backfill_existing_users = "approved_at" not in existing_user_columns
+        if "approved_at" not in existing_user_columns:
+            connection.execute("ALTER TABLE users ADD COLUMN approved_at TIMESTAMP")
+        if "approved_by" not in existing_user_columns:
+            connection.execute("ALTER TABLE users ADD COLUMN approved_by TEXT")
+        if should_backfill_existing_users:
+            connection.execute(
+                """
+                UPDATE users
+                SET approved_at = created_at,
+                    approved_by = 'migration'
+                WHERE approved_at IS NULL
+                """
+            )
+        elif "approved_by" not in existing_user_columns:
+            connection.execute(
+                """
+                UPDATE users
+                SET approved_by = COALESCE(approved_by, 'migration')
+                WHERE approved_at IS NOT NULL
+                """
+            )
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS user_sessions (
@@ -340,20 +365,55 @@ def _get_user_by_username(username):
 
     with _auth_connection() as connection:
         return connection.execute(
-            "SELECT id, username, password_hash FROM users WHERE username = ?",
+            "SELECT id, username, password_hash, approved_at, approved_by FROM users WHERE username = ?",
             (clean_username,),
         ).fetchone()
 
 
-def _create_user(username, password):
+def _create_user(username, password, approved=False, approved_by=None):
     clean_username = username.strip()
+    approved_at = _utc_now() if approved else None
     with _auth_connection() as connection:
         connection.execute(
-            "INSERT INTO users (username, password_hash) VALUES (?, ?)",
+            """
+            INSERT INTO users (username, password_hash, approved_at, approved_by)
+            VALUES (?, ?, ?, ?)
+            """,
             (
                 clean_username,
                 generate_password_hash(password, method=PASSWORD_HASH_METHOD),
+                approved_at,
+                str(approved_by or "signup_policy") if approved else None,
             ),
+        )
+        connection.commit()
+    return _get_user_by_username(clean_username)
+
+
+def _is_user_approved(user):
+    return bool(user and str(user["approved_at"] or "").strip())
+
+
+def _approve_user(username, approved_by="admin"):
+    clean_username = str(username or "").strip()
+    if not clean_username:
+        return None
+
+    with _auth_connection() as connection:
+        row = connection.execute(
+            "SELECT id FROM users WHERE username = ?",
+            (clean_username,),
+        ).fetchone()
+        if not row:
+            return None
+        connection.execute(
+            """
+            UPDATE users
+            SET approved_at = COALESCE(approved_at, ?),
+                approved_by = COALESCE(approved_by, ?)
+            WHERE username = ?
+            """,
+            (_utc_now(), str(approved_by or "admin").strip() or "admin", clean_username),
         )
         connection.commit()
     return _get_user_by_username(clean_username)
@@ -405,6 +465,8 @@ get_user_by_username = _get_user_by_username
 create_user = _create_user
 user_count = _user_count
 verify_password = _verify_password
+is_user_approved = _is_user_approved
+approve_user = _approve_user
 start_authenticated_session = _start_authenticated_session
 revoke_session = _revoke_session
 session_capacity_snapshot = _session_capacity_snapshot
