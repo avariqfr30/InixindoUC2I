@@ -178,6 +178,7 @@ def login():
         error=error,
         allow_signup=ALLOW_SIGNUP,
         signup_requires_approval=SIGNUP_REQUIRES_APPROVAL,
+        signup_allowed_email_domain=_allowed_signup_domain(),
         user_count=user_count(),
     )
 
@@ -222,6 +223,7 @@ def signup():
                     notice="Pendaftaran diterima. Akun harus dikonfirmasi admin sebelum bisa masuk.",
                     allow_signup=ALLOW_SIGNUP,
                     signup_requires_approval=SIGNUP_REQUIRES_APPROVAL,
+                    signup_allowed_email_domain=_allowed_signup_domain(),
                     user_count=user_count(),
                 )
             try:
@@ -237,6 +239,7 @@ def signup():
         warning=warning,
         allow_signup=ALLOW_SIGNUP,
         signup_requires_approval=SIGNUP_REQUIRES_APPROVAL,
+        signup_allowed_email_domain=_allowed_signup_domain(),
         user_count=user_count(),
     )
 

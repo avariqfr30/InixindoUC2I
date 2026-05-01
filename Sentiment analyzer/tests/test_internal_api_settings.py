@@ -97,11 +97,16 @@ class InternalApiSettingsTests(unittest.TestCase):
         connector = InternalConnectorSpec.from_mapping(payload)
 
         self.assertEqual(payload["auth_mode"], "bearer_env")
-        self.assertEqual(len(connector.endpoints), 1)
-        self.assertEqual(connector.endpoints[0].endpoint_name, "feedback")
+        self.assertEqual(len(connector.endpoints), 2)
+        self.assertEqual(
+            [endpoint.request_data["dataset"] for endpoint in connector.endpoints],
+            ["ClassReport", "ReferenceClassReport"],
+        )
+        self.assertEqual(connector.endpoints[0].endpoint_name, "class_report")
         self.assertEqual(connector.endpoints[0].method, "POST")
         self.assertEqual(connector.endpoints[0].body_mode, "form")
-        self.assertIn("stakeholder_type", connector.endpoints[0].field_map)
+        self.assertEqual(connector.endpoints[0].record_path, "data.dataset_result")
+        self.assertIn("class_name", connector.endpoints[0].field_map)
         self.assertIn("Komentar", connector.endpoints[0].field_map.values())
 
     def test_connector_settings_state_reports_mapping_without_secrets(self):

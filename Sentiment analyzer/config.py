@@ -38,7 +38,7 @@ SIGNUP_REQUIRES_APPROVAL = os.getenv("SIGNUP_REQUIRES_APPROVAL", "0").strip().lo
 }
 SIGNUP_ALLOWED_EMAIL_DOMAIN = os.getenv(
     "SIGNUP_ALLOWED_EMAIL_DOMAIN",
-    "@inixindojogja.co.id",
+    "@company.example",
 ).strip().lower()
 SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "0").strip().lower() in {
     "1",

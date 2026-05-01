@@ -10,7 +10,7 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 
 
 class SignupPolicyTests(unittest.TestCase):
-    def _run_probe(self, extra_env, username="publicuser@inixindojogja.co.id"):
+    def _run_probe(self, extra_env, username="publicuser@company.example"):
         with tempfile.TemporaryDirectory() as temp_dir:
             env = os.environ.copy()
             env.update(
@@ -22,6 +22,7 @@ class SignupPolicyTests(unittest.TestCase):
                     "JOB_STATE_PATH": str(Path(temp_dir) / "jobs.json"),
                     "REPORT_ARTIFACT_DIR": str(Path(temp_dir) / "reports"),
                     "INTERNAL_CONNECTOR_PATH": str(Path(temp_dir) / "internal_api_config.json"),
+                    "SIGNUP_ALLOWED_EMAIL_DOMAIN": "@company.example",
                 }
             )
             env.pop("ALLOW_SIGNUP", None)

@@ -9,26 +9,53 @@ DEFAULT_RECORD_KEYS = ("dataset_result", "items", "data", "results", "records", 
 SUPPORTED_METHODS = {"GET", "POST", "PUT", "PATCH"}
 SUPPORTED_BODY_MODES = {"json", "form"}
 SUPPORTED_AUTH_MODES = {"bearer_env", "basic_env", "none"}
+DEFAULT_APIDOG_DATASETS = (
+    ("class_report", "ClassReport"),
+    ("reference_class_report", "ReferenceClassReport"),
+)
 DEFAULT_FIELD_MAP = {
     "id": "Record ID",
     "record_id": "Record ID",
     "feedback_id": "Record ID",
+    "class_report_id": "Record ID",
+    "class_id": "Record ID",
     "stakeholder_type": "Tipe Stakeholder",
     "stakeholder": "Tipe Stakeholder",
     "tipe_stakeholder": "Tipe Stakeholder",
+    "participant_type": "Tipe Stakeholder",
+    "customer_type": "Tipe Stakeholder",
+    "company_segment": "Tipe Stakeholder",
     "service_name": "Layanan",
     "service": "Layanan",
     "layanan": "Layanan",
+    "class_name": "Layanan",
+    "training_name": "Layanan",
+    "course_name": "Layanan",
+    "product_name": "Layanan",
+    "program_name": "Layanan",
     "feedback_date": "Tanggal Feedback",
     "date": "Tanggal Feedback",
     "tanggal_feedback": "Tanggal Feedback",
+    "class_date": "Tanggal Feedback",
+    "report_date": "Tanggal Feedback",
+    "submitted_at": "Tanggal Feedback",
+    "created_at": "Tanggal Feedback",
     "rating": "Rating",
     "score": "Rating",
     "nilai": "Rating",
+    "satisfaction_score": "Rating",
+    "class_rating": "Rating",
     "comment": "Komentar",
     "comments": "Komentar",
     "komentar": "Komentar",
     "feedback": "Komentar",
+    "feedback_text": "Komentar",
+    "suggestion": "Komentar",
+    "instructor_name": "PIC Layanan",
+    "trainer_name": "PIC Layanan",
+    "location": "Lokasi",
+    "venue": "Lokasi",
+    "city": "Lokasi",
 }
 
 
@@ -108,24 +135,47 @@ def _normalize_endpoint(raw_endpoint, index, existing_headers=None):
     }
 
 
-def _simple_endpoint_from_payload(data):
+def _dataset_codes_from_payload(data):
+    raw_datasets = data.get("datasets")
+    if isinstance(raw_datasets, list):
+        clean_codes = [str(code).strip() for code in raw_datasets if str(code).strip()]
+        if clean_codes:
+            return [
+                (re.sub(r"[^a-z0-9]+", "_", code.lower()).strip("_") or f"dataset_{index + 1}", code)
+                for index, code in enumerate(clean_codes)
+            ]
+    raw_dataset = str(data.get("dataset") or "").strip()
+    if raw_dataset:
+        return [(str(data.get("endpoint_name") or "feedback").strip() or "feedback", raw_dataset)]
+    return list(DEFAULT_APIDOG_DATASETS)
+
+
+def _simple_endpoints_from_payload(data):
     url = str(data.get("url") or data.get("endpoint_url") or "").strip()
     if not url:
-        return None
+        return []
     body_mode = str(data.get("body_mode") or "form").strip().lower()
-    return {
-        "endpoint_name": str(data.get("endpoint_name") or "feedback").strip() or "feedback",
-        "enabled": True,
-        "url": url,
-        "method": str(data.get("method") or "POST").strip().upper(),
-        "body_mode": body_mode if body_mode in SUPPORTED_BODY_MODES else "form",
-        "request_data": data.get("request_data") or {},
-        "headers": data.get("headers") or "",
-        "record_path": str(data.get("record_path") or "").strip(),
-        "record_keys": data.get("record_keys") or list(DEFAULT_RECORD_KEYS),
-        "auto_discover": True,
-        "field_map": data.get("field_map") or DEFAULT_FIELD_MAP,
-    }
+    request_data = _load_json_object(data.get("request_data"), "request_data") if data.get("request_data") else {}
+    endpoints = []
+    for endpoint_name, dataset_code in _dataset_codes_from_payload(data):
+        dataset_request_data = dict(request_data)
+        dataset_request_data.setdefault("dataset", dataset_code)
+        endpoints.append(
+            {
+                "endpoint_name": endpoint_name,
+                "enabled": True,
+                "url": url,
+                "method": str(data.get("method") or "POST").strip().upper(),
+                "body_mode": body_mode if body_mode in SUPPORTED_BODY_MODES else "form",
+                "request_data": dataset_request_data,
+                "headers": data.get("headers") or "",
+                "record_path": str(data.get("record_path") or "data.dataset_result").strip(),
+                "record_keys": data.get("record_keys") or list(DEFAULT_RECORD_KEYS),
+                "auto_discover": True,
+                "field_map": data.get("field_map") or DEFAULT_FIELD_MAP,
+            }
+        )
+    return endpoints
 
 
 def build_connector_payload(data, existing_payload=None):
@@ -133,9 +183,9 @@ def build_connector_payload(data, existing_payload=None):
     raw_endpoints = data.get("endpoints")
     if not isinstance(raw_endpoints, list):
         raw_endpoints = []
-    simple_endpoint = _simple_endpoint_from_payload(data)
-    if simple_endpoint and not raw_endpoints:
-        raw_endpoints = [simple_endpoint]
+    simple_endpoints = _simple_endpoints_from_payload(data)
+    if simple_endpoints and not raw_endpoints:
+        raw_endpoints = simple_endpoints
     existing_headers = _existing_headers_by_endpoint(existing_payload)
     endpoints = [
         _normalize_endpoint(

@@ -120,7 +120,7 @@ Setelah itu:
 * edit `profiles/production.env` untuk secret, auth, dan tuning runtime,
 * edit `internal_connector.production.json` untuk endpoint API, request body, record path, dan field map.
 
-Signup publik dapat dibuka, tetapi dibatasi untuk email internal dengan `SIGNUP_ALLOWED_EMAIL_DOMAIN=@inixindojogja.co.id`. Dengan mode default sekarang, email internal yang valid bisa langsung membuat akun dan masuk.
+Signup publik dapat dibuka, tetapi dibatasi dengan `SIGNUP_ALLOWED_EMAIL_DOMAIN` di file env runtime. Gunakan domain internal asli hanya di VPS, bukan di README atau contoh konfigurasi yang ikut repo. Dengan mode default sekarang, email internal yang valid bisa langsung membuat akun dan masuk.
 
 Jika approval manual dibutuhkan nanti, aktifkan `SIGNUP_REQUIRES_APPROVAL=1`; pengguna baru tetap bisa mendaftar tetapi belum bisa masuk sampai admin server mengonfirmasi akun:
 
@@ -242,14 +242,10 @@ cd "Sentiment analyzer"
 ./appctl validate production
 ```
 
-Untuk endpoint APIDog/live API yang memakai Bearer token, isi `profiles/production.env` seperti ini:
+Untuk UI sederhana **Internal API / APIDog**, operator cukup mengisi endpoint dataset internal dari APIDog. Aplikasi akan otomatis membuat request dataset feedback yang diperlukan untuk knowledge base UC2; kode dataset detail disimpan di konfigurasi runtime/aplikasi dan tidak perlu ditulis di README.
 
-```env
-INTERNAL_API_AUTH_MODE=api_key
-INTERNAL_API_AUTH_HEADER=Authorization
-INTERNAL_API_AUTH_PREFIX=Bearer
-INTERNAL_API_KEY=your_token_here
-```
+Untuk endpoint APIDog/live API yang memakai credential, simpan nilai asli hanya di `profiles/production.env` pada VPS atau secret manager yang setara. README ini sengaja tidak mencantumkan host internal, token, atau dataset code yang tidak dibutuhkan operator.
+Jangan commit `profiles/*.env`, `internal_connector.production.json`, database lokal, cache, atau laporan hasil generate. Nilai header sensitif tidak ditampilkan ulang di UI setelah tersimpan.
 
 Setelah connector tersimpan, profile `production` akan memakai endpoint tersebut sebagai internal knowledge base. Pada start atau `POST /refresh-knowledge`, aplikasi akan mengambil data API, menormalisasi field, menulis cache ke `cx_feedback.db`, lalu memperbarui index pengetahuan bila `ENABLE_VECTOR_INDEX=1`.
 
@@ -257,13 +253,11 @@ Operator juga dapat mengelola endpoint lewat UI:
 
 1. login ke aplikasi,
 2. buka **Pengaturan**,
-3. tambahkan satu atau beberapa endpoint Internal API,
-4. isi URL, method, record path/keys, request data, headers bila perlu, dan field map,
-5. klik **Simpan & Sync Knowledge Base**.
+3. isi URL endpoint APIDog dataset,
+4. pilih mode auth dan format body,
+5. klik **Simpan & Aktifkan Internal API**.
 
-Konfigurasi UI memakai schema `endpoints[]` di `internal_connector.production.json`. Setiap endpoint aktif akan diambil, di-*flatten*, dinormalisasi ke kolom kanonik, lalu digabung ke knowledge base. Nilai header sensitif tidak ditampilkan kembali di UI setelah tersimpan; biarkan field header kosong saat mengedit bila ingin mempertahankan credential yang sudah ada.
-
-Field **Context Enhancer** sudah tersedia di pengaturan sebagai tempat menyimpan konteks internal tambahan untuk pengembangan berikutnya. Saat ini field tersebut disimpan di connector config, tetapi belum dipaksakan ke output laporan agar tidak mengubah hasil report tanpa keputusan produk yang jelas.
+Konfigurasi UI tetap disimpan sebagai schema `endpoints[]` di `internal_connector.production.json`. Setiap endpoint aktif akan diambil, di-*flatten*, dinormalisasi ke kolom kanonik, lalu digabung ke knowledge base.
 
 Layer internal API sekarang akan:
 * menerima endpoint bernama atau URL penuh,

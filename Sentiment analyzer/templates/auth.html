@@ -208,9 +208,9 @@
             <p class="sub">
                 {% if mode == "signup" %}
                     {% if signup_requires_approval %}
-                    Buat permintaan akun menggunakan email internal Inixindo Jogja. Admin harus mengonfirmasi akun sebelum akses aplikasi dibuka.
+                    Buat permintaan akun menggunakan email internal yang terdaftar. Admin harus mengonfirmasi akun sebelum akses aplikasi dibuka.
                     {% else %}
-                    Buat akun menggunakan email internal Inixindo Jogja. Email dengan domain yang benar bisa langsung digunakan untuk masuk.
+                    Buat akun menggunakan email internal yang terdaftar. Email dengan domain yang benar bisa langsung digunakan untuk masuk.
                     {% endif %}
                 {% else %}
                 Masuk dengan username dan password untuk membuka dashboard report.
@@ -234,7 +234,7 @@
             {% if mode == "signup" %}
             <form method="post" action="{{ url_for('signup') }}">
                 <label for="username">Email Internal</label>
-                <input id="username" name="username" type="email" minlength="4" maxlength="96" placeholder="nama@inixindojogja.co.id" required>
+                <input id="username" name="username" type="email" minlength="4" maxlength="96" placeholder="nama{{ signup_allowed_email_domain }}" required>
 
                 <label for="password">Kata Sandi</label>
                 <input id="password" name="password" type="password" minlength="8" required>
@@ -259,9 +259,9 @@
             <p class="hint">
                 {% if allow_signup %}
                     {% if signup_requires_approval %}
-                    Hanya email berakhiran @inixindojogja.co.id yang bisa mengajukan akun. Akun baru tidak langsung aktif sampai admin server mengonfirmasi akses.
+                    Hanya email berakhiran {{ signup_allowed_email_domain }} yang bisa mengajukan akun. Akun baru tidak langsung aktif sampai admin server mengonfirmasi akses.
                     {% else %}
-                    Hanya email berakhiran @inixindojogja.co.id yang bisa mendaftar dan langsung menggunakan aplikasi.
+                    Hanya email berakhiran {{ signup_allowed_email_domain }} yang bisa mendaftar dan langsung menggunakan aplikasi.
                     {% endif %}
                 {% else %}
                 Pendaftaran mandiri sedang ditutup. Gunakan akun yang sudah disediakan oleh admin server.

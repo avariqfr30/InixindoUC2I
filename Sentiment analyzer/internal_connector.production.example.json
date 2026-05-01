@@ -3,14 +3,16 @@
   "enabled": true,
   "endpoints": [
     {
-      "endpoint_name": "feedback_main",
+      "endpoint_name": "class_report",
       "enabled": true,
-      "url": "https://replace-me.invalid/api/feedback",
-      "method": "GET",
-      "body_mode": "json",
-      "request_data": {},
+      "url": "https://replace-me.invalid/api/Resource/dataset",
+      "method": "POST",
+      "body_mode": "form",
+      "request_data": {
+        "dataset": "ClassReport"
+      },
       "headers": {},
-      "record_path": "",
+      "record_path": "data.dataset_result",
       "record_keys": [
         "dataset_result",
         "items",
@@ -21,11 +23,26 @@
       ],
       "auto_discover": true,
       "field_map": {
+        "class_report_id": "Record ID",
+        "class_id": "Record ID",
         "stakeholder_type": "Tipe Stakeholder",
+        "participant_type": "Tipe Stakeholder",
+        "customer_type": "Tipe Stakeholder",
         "service_name": "Layanan",
+        "class_name": "Layanan",
+        "training_name": "Layanan",
+        "course_name": "Layanan",
+        "product_name": "Layanan",
         "feedback_date": "Tanggal Feedback",
+        "class_date": "Tanggal Feedback",
+        "report_date": "Tanggal Feedback",
+        "submitted_at": "Tanggal Feedback",
         "rating": "Rating",
+        "score": "Rating",
+        "satisfaction_score": "Rating",
         "comment": "Komentar",
+        "feedback_text": "Komentar",
+        "suggestion": "Komentar",
         "source_name": "Sumber Feedback",
         "channel_name": "Kanal Feedback",
         "timeframe": "Rentang Waktu",
@@ -35,14 +52,16 @@
       }
     },
     {
-      "endpoint_name": "feedback_secondary",
-      "enabled": false,
-      "url": "https://replace-me.invalid/api/feedback-secondary",
-      "method": "GET",
-      "body_mode": "json",
-      "request_data": {},
+      "endpoint_name": "reference_class_report",
+      "enabled": true,
+      "url": "https://replace-me.invalid/api/Resource/dataset",
+      "method": "POST",
+      "body_mode": "form",
+      "request_data": {
+        "dataset": "ReferenceClassReport"
+      },
       "headers": {},
-      "record_path": "",
+      "record_path": "data.dataset_result",
       "record_keys": [
         "dataset_result",
         "items",
