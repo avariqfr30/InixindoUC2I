@@ -1,5 +1,6 @@
 import sys
 import unittest
+from unittest import mock
 from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
@@ -36,6 +37,33 @@ class FakeInternalApiClient:
                     "feedback_date": "2026-04-21",
                     "rating": 2,
                     "comment": "Follow up pasca sesi perlu lebih jelas.",
+                }
+            ],
+        }[endpoint_spec.name]
+        return {"records": records, "record_count": len(records)}
+
+
+class FakeClassReportApiClient:
+    auth_mode = "api_key"
+    auth_prefix = "Bearer"
+
+    def interpret_payload(self, endpoint_spec):
+        records = {
+            "class_report": [
+                {
+                    "response_id": "1",
+                    "response_parent_id": "",
+                    "response_name": "KESESUAIAN MATERIAL BAHAN AJAR",
+                    "response_type": "rating_5",
+                    "response_answer": "5",
+                }
+            ],
+            "reference_class_report": [
+                {
+                    "response_id": "1",
+                    "response_parent_id": "",
+                    "response_name": "KESESUAIAN MATERIAL BAHAN AJAR",
+                    "response_type": "rating_5",
                 }
             ],
         }[endpoint_spec.name]
@@ -109,6 +137,18 @@ class InternalApiSettingsTests(unittest.TestCase):
         self.assertIn("class_name", connector.endpoints[0].field_map)
         self.assertIn("Komentar", connector.endpoints[0].field_map.values())
 
+    def test_connector_settings_state_describes_recommended_endpoint_contracts(self):
+        state = connector_settings_state(path="/tmp/non-existent-internal-api-config.json")
+        recommended = state["recommended_endpoints"]
+
+        self.assertGreaterEqual(len(recommended), 4)
+        self.assertIn("feedback_records", {item["name"] for item in recommended})
+        self.assertIn("learner_profile", {item["name"] for item in recommended})
+        for endpoint in recommended:
+            self.assertIn("purpose", endpoint)
+            self.assertIn("required_fields", endpoint)
+            self.assertTrue(endpoint["required_fields"])
+
     def test_connector_settings_state_reports_mapping_without_secrets(self):
         import tempfile
 
@@ -133,6 +173,46 @@ class InternalApiSettingsTests(unittest.TestCase):
         self.assertEqual(state["resources"][0]["status"], "ok")
         self.assertNotIn("secret", str(state))
 
+    def test_settings_template_exposes_refresh_without_requiring_resave(self):
+        template = (PROJECT_DIR / "templates" / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn("Refresh Dataset Sekarang", template)
+        self.assertIn("btn-refresh-internal-api", template)
+        self.assertIn("/api/internal-api/refresh", template)
+        self.assertIn("setInternalApiConnectionState", template)
+
+    def test_internal_api_refresh_endpoint_forces_provider_reload(self):
+        import app as app_module
+
+        fake_kb = mock.Mock()
+        fake_kb.provider = mock.Mock(source_name="company_api")
+        fake_kb.df = [{"id": "A-1"}]
+        fake_kb.refresh_data.return_value = True
+        fake_job_manager = mock.Mock()
+        fake_job_manager.stats.return_value = {"jobs": {"queued": 0, "running": 0}}
+        connector_state = {
+            "connector_exists": True,
+            "enabled": True,
+            "connector_path": "/tmp/internal_api_config.json",
+            "endpoints": [{"url": "https://internal.example/api/Resource/dataset"}],
+            "resources": [],
+            "recommended_endpoints": [],
+        }
+
+        with mock.patch.object(app_module, "current_user", return_value="tester"), \
+            mock.patch.object(app_module, "kb", fake_kb), \
+            mock.patch.object(app_module, "job_manager", fake_job_manager), \
+            mock.patch.object(app_module, "connector_settings_state", return_value=connector_state):
+            client = app_module.app.test_client()
+            response = client.post("/api/internal-api/refresh")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["status"], "refreshed")
+        self.assertTrue(payload["api_connection_active"])
+        fake_kb.activate_internal_api_provider.assert_called_once()
+        fake_kb.refresh_data.assert_called_once()
+
     def test_internal_api_provider_aggregates_multiple_connector_endpoints(self):
         provider = InternalApiProvider.__new__(InternalApiProvider)
         provider.client = FakeInternalApiClient()
@@ -144,6 +224,74 @@ class InternalApiSettingsTests(unittest.TestCase):
         self.assertEqual(set(dataframe["Record ID"].tolist()), {"A-1", "B-1"})
         self.assertEqual(set(dataframe["Sumber Feedback"].tolist()), {"feedback_alpha", "feedback_beta"})
         self.assertTrue((dataframe["Komentar"].astype(str).str.len() > 0).all())
+
+    def test_internal_api_provider_normalizes_apidog_class_report_shape(self):
+        raw_df = __import__("pandas").DataFrame(
+            [
+                {
+                    "response_id": "1",
+                    "response_parent_id": "",
+                    "response_name": "KESESUAIAN MATERIAL BAHAN AJAR",
+                    "response_type": "rating_5",
+                    "response_answer": "4",
+                },
+                {
+                    "response_id": "1",
+                    "response_parent_id": "",
+                    "response_name": "KESESUAIAN MATERIAL BAHAN AJAR",
+                    "response_type": "rating_5",
+                    "response_answer": "2",
+                },
+                {
+                    "response_id": "9",
+                    "response_parent_id": "1",
+                    "response_name": "Komentar material",
+                    "response_type": "text",
+                    "response_answer": "Materi perlu contoh praktik tambahan.",
+                },
+            ]
+        )
+
+        dataframe = InternalApiProvider._normalize_class_report_dataframe(raw_df, "class_report")
+
+        self.assertEqual(len(dataframe), 1)
+        self.assertEqual(dataframe.loc[0, "Rating"], "3")
+        self.assertEqual(dataframe.loc[0, "Raw Response Count"], "3")
+        self.assertEqual(dataframe.loc[0, "Rating Response Count"], "2")
+        self.assertEqual(dataframe.loc[0, "Text Response Count"], "1")
+        self.assertEqual(dataframe.loc[0, "Rating Distribution"], "2: 1; 4: 1")
+        self.assertIn("Materi perlu contoh praktik tambahan", dataframe.loc[0, "Representative Why"])
+        self.assertEqual(dataframe.loc[0, "Tipe Stakeholder"], "Peserta Kelas")
+        self.assertEqual(dataframe.loc[0, "Layanan"], "Materi dan kurikulum")
+        self.assertEqual(dataframe.loc[0, "Kanal Feedback"], "Evaluasi Kelas Internal")
+        self.assertIn("Rata-rata rating Kesesuaian materi bahan ajar: 3.0 dari 5", dataframe.loc[0, "Komentar"])
+        self.assertIn("Mengapa: Materi perlu contoh praktik tambahan", dataframe.loc[0, "Komentar"])
+        self.assertNotIn("KESESUAIAN MATERIAL", dataframe.loc[0, "Komentar"])
+        self.assertEqual(dataframe.loc[0, "Customer Journey Hint"], "Pelaksanaan Layanan")
+        self.assertEqual(dataframe.loc[0, "Rentang Waktu"], "Semua Data APIDog (tanggal tidak tersedia)")
+        self.assertTrue(dataframe["Tanggal Feedback"].astype(str).str.len().gt(0).all())
+
+    def test_internal_api_provider_uses_reference_class_report_as_dictionary_not_feedback_rows(self):
+        provider = InternalApiProvider.__new__(InternalApiProvider)
+        provider.client = FakeClassReportApiClient()
+        provider.connector = InternalConnectorSpec.from_mapping(
+            build_connector_payload(
+                {
+                    "url": "https://internal.example/api/Resource/dataset",
+                    "auth_mode": "none",
+                    "body_mode": "form",
+                }
+            )
+        )
+
+        dataframe = provider._load_via_connector()
+
+        self.assertEqual(len(dataframe), 1)
+        self.assertEqual(dataframe.loc[0, "Raw Response Count"], "1")
+        self.assertEqual(dataframe.loc[0, "Rating Response Count"], "1")
+        self.assertEqual(dataframe.loc[0, "Layanan"], "Materi dan kurikulum")
+        self.assertIn("Rata-rata rating Kesesuaian materi bahan ajar: 5.0 dari 5", dataframe.loc[0, "Komentar"])
+        self.assertNotIn("reference_class_report", set(dataframe["Sumber Feedback"]))
 
     def test_connector_auth_mode_updates_runtime_client(self):
         provider = InternalApiProvider.__new__(InternalApiProvider)
@@ -169,6 +317,28 @@ class InternalApiSettingsTests(unittest.TestCase):
 
         self.assertNotIn("Authorization", headers)
         self.assertNotIn("X-API-Key", headers)
+
+    def test_internal_api_client_supports_apidog_multipart_body(self):
+        client = InternalApiClient(auth_mode="none", default_headers={})
+        endpoint = EndpointSpec(
+            name="feedback",
+            path="https://internal.example/api/Resource/dataset",
+            method="POST",
+            body_mode="multipart",
+            query_params={"dataset": "ClassReport", "dataset_cache": "enabled"},
+        )
+        response = mock.Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"success": True, "data": {"dataset_result": []}}
+
+        with mock.patch("internal_api.requests.request", return_value=response) as request_mock:
+            client.request_endpoint(endpoint)
+
+        _, kwargs = request_mock.call_args
+        self.assertEqual(kwargs["files"]["dataset"], (None, "ClassReport"))
+        self.assertEqual(kwargs["files"]["dataset_cache"], (None, "enabled"))
+        self.assertNotIn("data", kwargs)
+        self.assertNotIn("json", kwargs)
 
     def test_build_connector_payload_rejects_non_http_endpoint(self):
         with self.assertRaisesRegex(ValueError, "HTTP/HTTPS"):

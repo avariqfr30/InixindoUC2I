@@ -99,6 +99,37 @@ class FeedbackAnalyticsEngine(ReportNarrativeBuilderMixin):
         return filtered.value_counts().head(limit)
 
     @staticmethod
+    def _sum_numeric_column(dataframe, column_name):
+        if dataframe is None or column_name not in dataframe.columns:
+            return 0
+        numeric_values = pd.to_numeric(dataframe[column_name], errors="coerce").fillna(0)
+        return int(numeric_values.sum())
+
+    def _raw_response_count(self, dataframe):
+        raw_count = self._sum_numeric_column(dataframe, "Raw Response Count")
+        return raw_count if raw_count > 0 else len(dataframe)
+
+    def _rating_response_count(self, dataframe):
+        rating_count = self._sum_numeric_column(dataframe, "Rating Response Count")
+        if rating_count > 0:
+            return rating_count
+        if dataframe is None or dataframe.empty or "Rating Numeric" not in dataframe.columns:
+            return 0
+        return int(dataframe["Rating Numeric"].notna().sum())
+
+    def _text_response_count(self, dataframe):
+        text_count = self._sum_numeric_column(dataframe, "Text Response Count")
+        if text_count > 0:
+            return text_count
+        if dataframe is None or dataframe.empty or "Komentar" not in dataframe.columns:
+            return 0
+        return int((dataframe["Komentar"].astype(str).str.strip() != "").sum())
+
+    @staticmethod
+    def _dimension_count(dataframe):
+        return len(dataframe) if dataframe is not None else 0
+
+    @staticmethod
     def _column_series(dataframe, column_name):
         if dataframe is None or column_name not in dataframe.columns:
             return pd.Series(dtype="object")
@@ -502,12 +533,20 @@ class FeedbackAnalyticsEngine(ReportNarrativeBuilderMixin):
         return rows[:limit]
 
     def _governance_summary(self, timeframe_df):
-        total_rows = len(timeframe_df)
+        total_rows = self._raw_response_count(timeframe_df)
         if total_rows == 0: return {"total_rows": 0, "completeness_pct": 0.0, "source_count": 0, "channel_count": 0}
         completeness_scores = [(timeframe_df[field].astype(str).str.strip() != "").mean() for field in ["Tipe Stakeholder", "Layanan", "Rentang Waktu", "Komentar"]]
         source_count = max(self._series_counts(timeframe_df["Sumber Feedback"], limit=20).shape[0], 1)
         channel_count = self._series_counts(timeframe_df["Kanal Feedback"], limit=20).shape[0]
-        return {"total_rows": total_rows, "completeness_pct": round(sum(completeness_scores) / len(completeness_scores) * 100, 1), "source_count": source_count, "channel_count": channel_count}
+        return {
+            "total_rows": total_rows,
+            "dimension_count": self._dimension_count(timeframe_df),
+            "rating_response_count": self._rating_response_count(timeframe_df),
+            "text_response_count": self._text_response_count(timeframe_df),
+            "completeness_pct": round(sum(completeness_scores) / len(completeness_scores) * 100, 1),
+            "source_count": source_count,
+            "channel_count": channel_count,
+        }
 
     @staticmethod
     def _rating_assessment(avg_rating):

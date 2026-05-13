@@ -71,9 +71,22 @@ logger.info("Application started in %s mode.", APP_MODE)
 
 def _internal_api_settings_state():
     state = connector_settings_state()
-    state["project_data_source"] = (
-        "api" if getattr(kb.provider, "source_name", "") == "company_api" else "local"
+    provider_source = getattr(kb.provider, "source_name", "")
+    connector_configured = bool(state.get("connector_exists") and state.get("enabled"))
+    state["project_data_source"] = "api" if provider_source == "company_api" else "local"
+    state["active_runtime_source"] = provider_source or "unknown"
+    state["api_connection_active"] = (
+        connector_configured
+        and state["project_data_source"] == "api"
     )
+    state["can_refresh_dataset"] = state["api_connection_active"]
+    state["refresh_running"] = False
+    state["connection_label"] = (
+        "Aktif memakai Internal API/APIDog"
+        if state["api_connection_active"]
+        else "Belum aktif untuk sesi berjalan"
+    )
+    state["active_record_count"] = int(len(kb.df)) if getattr(kb, "df", None) is not None else 0
     return state
 
 
@@ -108,6 +121,7 @@ def login_required(view_func):
 
         wants_json = request.path.startswith("/jobs/") or request.path in {
             "/api/internal-api/settings",
+            "/api/internal-api/refresh",
             "/get-config",
             "/generate",
             "/generate-job",
@@ -316,7 +330,11 @@ def get_config():
             }
         )
 
-    timeframes = sorted(kb.df["Rentang Waktu"].dropna().unique().tolist())
+    timeframes = sorted(
+        value
+        for value in kb.df["Rentang Waktu"].dropna().astype(str).str.strip().unique().tolist()
+        if value
+    )
     segments = sorted(
         value
         for value in kb.df["Tipe Stakeholder"].fillna("").astype(str).str.strip().unique().tolist()
@@ -460,6 +478,54 @@ def refresh_knowledge():
 
     success = kb.refresh_data()
     return jsonify({"status": "success" if success else "error"})
+
+
+@app.route("/api/internal-api/refresh", methods=["POST"])
+@login_required
+def refresh_internal_api_dataset():
+    job_stats = job_manager.stats()
+    if job_stats["jobs"]["queued"] or job_stats["jobs"]["running"]:
+        return (
+            jsonify(
+                {
+                    "status": "busy",
+                    "error": "Sinkronisasi data sementara dikunci karena masih ada laporan yang sedang diproses.",
+                }
+            ),
+            409,
+        )
+
+    connector_state = connector_settings_state()
+    if not (connector_state.get("connector_exists") and connector_state.get("enabled")):
+        return (
+            jsonify(
+                {
+                    "status": "not_configured",
+                    "error": "Internal API belum aktif. Simpan konfigurasi endpoint sebelum refresh dataset.",
+                    **_internal_api_settings_state(),
+                }
+            ),
+            400,
+        )
+
+    try:
+        kb.activate_internal_api_provider()
+        refresh_success = kb.refresh_data()
+    except Exception as exc:
+        logger.exception("Failed to refresh Internal API dataset.")
+        return jsonify({"status": "error", "error": str(exc), **_internal_api_settings_state()}), 500
+
+    status_code = 200 if refresh_success else 503
+    return (
+        jsonify(
+            {
+                "status": "refreshed" if refresh_success else "error",
+                "refresh_status": "success" if refresh_success else "degraded",
+                **_internal_api_settings_state(),
+            }
+        ),
+        status_code,
+    )
 
 
 @app.route("/api/internal-api/settings", methods=["GET", "POST"])

@@ -19,6 +19,7 @@
         button:disabled { background: #94a3b8; cursor: not-allowed; }
         button.secondary { background: white; color: #475569; border: 1px solid #cbd5e1; }
         button.secondary:hover { background: #f8fafc; }
+        button.secondary:disabled { background: #f1f5f9; color: #94a3b8; border-color: #cbd5e1; }
         .review-box { background: #f8fafc; padding: 25px; border-radius: 12px; margin-bottom: 25px; border: 1px solid #e2e8f0; font-size: 0.95rem; }
         .review-row { display: flex; justify-content: space-between; margin-bottom: 10px; border-bottom: 1px dashed #e2e8f0; padding-bottom: 5px;}
         .review-row span:last-child { font-weight: 600; color: #0f172a; text-align: right;}
@@ -84,6 +85,10 @@
         .internal-api-panel .sub { font-size: 1rem; margin-bottom: 18px; }
         .internal-api-status { margin: 10px 0 20px 0; border-radius: 10px; padding: 16px; border: 1px solid #d7e0ea; background: #f8fafc; color: #475569; line-height: 1.5; }
         .internal-api-status strong { color: #334155; }
+        .internal-api-status .status-active { color: #0f766e; }
+        .internal-api-status .status-inactive { color: #b45309; }
+        .endpoint-contracts { margin-top: 12px; display: grid; gap: 8px; }
+        .endpoint-contract { border-top: 1px solid #e2e8f0; padding-top: 8px; font-size: 0.92rem; }
         @media (max-width: 720px) {
             body { height: auto; padding: 20px 0; }
             .card { width: min(92vw, 760px); padding: 28px 20px; }
@@ -236,6 +241,7 @@
             </div>
 
             <div class="modal-actions">
+                <button type="button" id="btn-refresh-internal-api" class="secondary">Refresh Dataset Sekarang</button>
                 <button type="button" id="btn-save-internal-api">Simpan & Aktifkan Internal API</button>
             </div>
         </div>
@@ -276,6 +282,7 @@
             settingsApiUrl: document.getElementById('settings-api-url'),
             settingsApiAuthMode: document.getElementById('settings-api-auth-mode'),
             settingsApiBodyMode: document.getElementById('settings-api-body-mode'),
+            btnRefreshInternalApi: document.getElementById('btn-refresh-internal-api'),
             btnSaveInternalApi: document.getElementById('btn-save-internal-api')
         };
 
@@ -553,20 +560,53 @@
             ui.settingsStatus.innerHTML = '';
         }
 
+        function setInternalApiConnectionState(data) {
+            const isActive = Boolean(data && data.api_connection_active);
+            const isRefreshing = Boolean(data && data.refresh_running);
+            ui.btnSaveInternalApi.disabled = isActive;
+            ui.btnSaveInternalApi.textContent = isActive ? 'Internal API Sudah Aktif' : 'Simpan & Aktifkan Internal API';
+            ui.btnRefreshInternalApi.disabled = !isActive || isRefreshing;
+            ui.btnRefreshInternalApi.textContent = isRefreshing ? 'Refresh Berjalan...' : 'Refresh Dataset Sekarang';
+        }
+
         function renderInternalApiStatus(data) {
             const resources = Array.isArray(data.resources) ? data.resources : [];
+            const recommendedEndpoints = Array.isArray(data.recommended_endpoints) ? data.recommended_endpoints : [];
             const resourceRows = resources.map(resource => {
                 const missing = Array.isArray(resource.missing_fields) ? resource.missing_fields : [];
                 const suffix = missing.length ? ` (${escapeHtml(missing.join(', '))})` : '';
                 return `<div>${escapeHtml(resource.name || 'feedback')}: <strong>${escapeHtml(resource.status || 'perlu mapping')}</strong>${suffix}</div>`;
             }).join('');
+            const contractRows = recommendedEndpoints.map(endpoint => {
+                const requiredFields = Array.isArray(endpoint.required_fields) ? endpoint.required_fields.join(', ') : '-';
+                return `
+                    <div class="endpoint-contract">
+                        <strong>${escapeHtml(endpoint.name || 'endpoint')}</strong>: ${escapeHtml(endpoint.purpose || '-')}
+                        <div>Required fields: ${escapeHtml(requiredFields)}</div>
+                    </div>
+                `;
+            }).join('');
+            const connectionClass = data.api_connection_active ? 'status-active' : 'status-inactive';
+            const connectionLabel = data.connection_label || (data.api_connection_active ? 'Aktif memakai Internal API/APIDog' : 'Belum aktif untuk sesi berjalan');
+            const refreshHint = data.api_connection_active
+                ? 'Dataset dapat di-refresh tanpa menyimpan ulang kredensial.'
+                : 'Aktifkan Internal API lebih dulu sebelum refresh dataset.';
 
             ui.internalApiStatus.innerHTML = `
                 <div>Config: <strong>${data.connector_exists ? 'tersedia' : 'belum ada'}</strong></div>
+                <div>Connection: <strong class="${connectionClass}">${connectionLabel}</strong></div>
                 <div>Project data source: <strong>${escapeHtml(data.project_data_source || 'local')}</strong></div>
+                <div>Runtime provider: <strong>${escapeHtml(data.active_runtime_source || 'unknown')}</strong></div>
+                <div>Active records: <strong>${Number(data.active_record_count || 0).toLocaleString('id-ID')}</strong></div>
+                <div>Refresh: <strong>${escapeHtml(refreshHint)}</strong></div>
                 <div>File: ${escapeHtml(data.connector_path || '-')}</div>
                 ${resourceRows}
+                <div class="endpoint-contracts">
+                    <strong>Endpoint tambahan yang disarankan:</strong>
+                    ${contractRows}
+                </div>
             `;
+            setInternalApiConnectionState(data);
         }
 
         function renderInternalApiSettings(data) {
@@ -592,7 +632,12 @@
                         connector_exists: false,
                         project_data_source: 'local',
                         connector_path: '-',
+                        active_runtime_source: 'unknown',
+                        api_connection_active: false,
+                        can_refresh_dataset: false,
+                        refresh_running: false,
                         resources: [{name: 'feedback', status: 'perlu mapping', missing_fields: []}],
+                        recommended_endpoints: [],
                         endpoints: [],
                     });
                     showSettingsStatus(err.message, 'error');
@@ -637,8 +682,33 @@
                     alert(err.message);
                 })
                 .finally(() => {
-                    ui.btnSaveInternalApi.disabled = false;
-                    ui.btnSaveInternalApi.textContent = 'Simpan & Aktifkan Internal API';
+                    loadInternalApiSettings();
+                });
+        }
+
+        function refreshInternalApiDataset() {
+            ui.btnRefreshInternalApi.disabled = true;
+            ui.btnRefreshInternalApi.textContent = 'Me-refresh...';
+            showSettingsStatus('Mengambil ulang dataset dari Internal API...');
+
+            fetch('/api/internal-api/refresh', {method: 'POST'})
+                .then(response => unwrapJsonResponse(response, 'Dataset Internal API belum berhasil di-refresh.'))
+                .then(data => {
+                    renderInternalApiSettings(data);
+                    showSettingsStatus(
+                        data.refresh_status === 'success'
+                            ? 'Dataset Internal API berhasil di-refresh.'
+                            : 'Refresh selesai dengan status degradasi. Cek endpoint produksi bila data belum berubah.',
+                        data.refresh_status === 'success' ? 'success' : 'neutral'
+                    );
+                })
+                .catch(err => {
+                    if (err.message === '__redirected__') return;
+                    showSettingsStatus(err.message, 'error');
+                    alert(err.message);
+                })
+                .finally(() => {
+                    loadInternalApiSettings();
                 });
         }
 
@@ -867,6 +937,7 @@
         });
 
         ui.btnSaveInternalApi.onclick = saveInternalApiSettings;
+        ui.btnRefreshInternalApi.onclick = refreshInternalApiDataset;
 
         window.addEventListener('pageshow', (event) => {
             if (event.persisted) {

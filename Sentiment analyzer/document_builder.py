@@ -9,7 +9,7 @@ from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Cm, Inches, Pt, RGBColor
+from docx.shared import Cm, Inches, Pt, RGBColor, Twips
 import markdown
 import matplotlib
 import matplotlib.patches as patches
@@ -185,6 +185,11 @@ class ChartEngine:
 
 class DocumentBuilder:
     LIST_STYLES = {"ul": ["List Bullet", "List Bullet 2", "List Bullet 3"], "ol": ["List Number", "List Number 2", "List Number 3"]}
+    LIST_INDENTS = (
+        (Twips(720), Twips(-360)),
+        (Twips(1080), Twips(-360)),
+        (Twips(1440), Twips(-360)),
+    )
 
     @staticmethod
     def _format_paragraph(paragraph, alignment=None, before=0, after=6, line_spacing=1.08):
@@ -244,6 +249,86 @@ class DocumentBuilder:
         return style_candidates[min(level, len(style_candidates) - 1)] if style_candidates[min(level, len(style_candidates) - 1)] in doc.styles else style_candidates[0]
 
     @staticmethod
+    def _next_numbering_id(numbering, tag_name, attr_name):
+        values = []
+        for element in numbering.findall(qn(tag_name)):
+            raw_value = element.get(qn(attr_name))
+            if str(raw_value).isdigit():
+                values.append(int(raw_value))
+        return max(values, default=0) + 1
+
+    @staticmethod
+    def _append_level(parent, level, list_tag):
+        lvl = OxmlElement("w:lvl")
+        lvl.set(qn("w:ilvl"), str(level))
+
+        start = OxmlElement("w:start")
+        start.set(qn("w:val"), "1")
+        lvl.append(start)
+
+        num_fmt = OxmlElement("w:numFmt")
+        num_fmt.set(qn("w:val"), "decimal" if list_tag == "ol" else "bullet")
+        lvl.append(num_fmt)
+
+        lvl_text = OxmlElement("w:lvlText")
+        if list_tag == "ol":
+            lvl_text.set(qn("w:val"), f"%{level + 1}.")
+        else:
+            lvl_text.set(qn("w:val"), ("•", "o", "▪")[min(level, 2)])
+        lvl.append(lvl_text)
+
+        p_pr = OxmlElement("w:pPr")
+        ind = OxmlElement("w:ind")
+        left_indent, hanging_indent = DocumentBuilder.LIST_INDENTS[min(level, len(DocumentBuilder.LIST_INDENTS) - 1)]
+        ind.set(qn("w:left"), str(left_indent.twips))
+        ind.set(qn("w:hanging"), str(abs(hanging_indent.twips)))
+        p_pr.append(ind)
+        lvl.append(p_pr)
+        parent.append(lvl)
+
+    @staticmethod
+    def _create_numbering_instance(doc, list_tag):
+        numbering = doc.part.numbering_part.numbering_definitions._numbering
+        abstract_id = DocumentBuilder._next_numbering_id(numbering, "w:abstractNum", "w:abstractNumId")
+        num_id = DocumentBuilder._next_numbering_id(numbering, "w:num", "w:numId")
+
+        abstract_num = OxmlElement("w:abstractNum")
+        abstract_num.set(qn("w:abstractNumId"), str(abstract_id))
+        multi_level = OxmlElement("w:multiLevelType")
+        multi_level.set(qn("w:val"), "hybridMultilevel")
+        abstract_num.append(multi_level)
+        for level in range(len(DocumentBuilder.LIST_INDENTS)):
+            DocumentBuilder._append_level(abstract_num, level, list_tag)
+        numbering.append(abstract_num)
+
+        num = OxmlElement("w:num")
+        num.set(qn("w:numId"), str(num_id))
+        abstract_num_id = OxmlElement("w:abstractNumId")
+        abstract_num_id.set(qn("w:val"), str(abstract_id))
+        num.append(abstract_num_id)
+        numbering.append(num)
+        return num_id
+
+    @staticmethod
+    def _apply_numbering(paragraph, num_id, level):
+        p_pr = paragraph._p.get_or_add_pPr()
+        existing_num_pr = p_pr.find(qn("w:numPr"))
+        if existing_num_pr is not None:
+            p_pr.remove(existing_num_pr)
+
+        num_pr = OxmlElement("w:numPr")
+        ilvl = OxmlElement("w:ilvl")
+        ilvl.set(qn("w:val"), str(level))
+        num = OxmlElement("w:numId")
+        num.set(qn("w:val"), str(num_id))
+        num_pr.extend([ilvl, num])
+        p_pr.append(num_pr)
+
+        left_indent, hanging_indent = DocumentBuilder.LIST_INDENTS[min(level, len(DocumentBuilder.LIST_INDENTS) - 1)]
+        paragraph.paragraph_format.left_indent = left_indent
+        paragraph.paragraph_format.first_line_indent = hanging_indent
+
+    @staticmethod
     def _append_inline_runs(paragraph, node, bold=False, italic=False):
         if isinstance(node, NavigableString):
             if str(node):
@@ -260,16 +345,21 @@ class DocumentBuilder:
             DocumentBuilder._append_inline_runs(paragraph, child, bold=next_bold, italic=next_italic)
 
     @staticmethod
-    def _render_list(doc, list_node, level=0):
+    def _render_list(doc, list_node, level=0, list_state=None):
+        if list_state is None:
+            list_state = {}
+        if list_node.name not in list_state:
+            list_state[list_node.name] = DocumentBuilder._create_numbering_instance(doc, list_node.name)
         style_name = DocumentBuilder._resolve_list_style(doc, list_node.name, level)
         for list_item in list_node.find_all("li", recursive=False):
             paragraph = doc.add_paragraph(style=style_name)
             DocumentBuilder._format_paragraph(paragraph, alignment=WD_ALIGN_PARAGRAPH.LEFT, after=3, line_spacing=1.0)
+            DocumentBuilder._apply_numbering(paragraph, list_state[list_node.name], level)
             for child in list_item.contents:
                 if isinstance(child, Tag) and child.name in {"ul", "ol"}: continue
                 DocumentBuilder._append_inline_runs(paragraph, child)
             for nested in [child for child in list_item.contents if isinstance(child, Tag) and child.name in {"ul", "ol"}]:
-                DocumentBuilder._render_list(doc, nested, level=level + 1)
+                DocumentBuilder._render_list(doc, nested, level=level + 1, list_state=list_state)
 
     @staticmethod
     def _render_table(doc, table_node):

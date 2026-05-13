@@ -320,7 +320,12 @@ class InternalApiClient:
             request_kwargs["params"] = params
             response = requests.get(url, **request_kwargs)
         else:
-            if endpoint.body_mode == "form":
+            if endpoint.body_mode in {"multipart", "form-data", "multipart/form-data"}:
+                request_kwargs["files"] = {
+                    key: (None, json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else str(value))
+                    for key, value in params.items()
+                }
+            elif endpoint.body_mode == "form":
                 request_kwargs["data"] = params
             else:
                 request_kwargs["json"] = params

@@ -6,6 +6,7 @@ from docx import Document
 from config import DEFAULT_COLOR, DEFAULT_SCORE_ENGINE, SCORE_ENGINE_PROFILES
 from document_builder import DocumentBuilder
 from osint_research import Researcher
+from report_agents import FeedbackProposalTeam
 from report_analytics import FeedbackAnalyticsEngine
 from report_quality import ReportQualityValidator
 
@@ -34,7 +35,14 @@ class ReportGenerator:
             macro_trends = "Tidak ada tren eksternal yang berhasil dimuat."
 
         analytics = FeedbackAnalyticsEngine(self.kb.df)
-        executive_snapshot = analytics.build_executive_snapshot(timeframe, notes, sentiment=sentiment, segment=segment, score_engine=score_engine)
+        executive_snapshot = analytics.build_executive_snapshot(
+            timeframe,
+            notes,
+            sentiment=sentiment,
+            segment=segment,
+            score_engine=score_engine,
+            macro_trends=macro_trends,
+        )
         report_sections = analytics.build_report_sections(timeframe, notes, macro_trends, sentiment=sentiment, segment=segment, score_engine=score_engine)
 
         document = Document()
@@ -51,6 +59,20 @@ class ReportGenerator:
 
         filename = f"Inixindo_Feedback_Intelligence_Report_{score_profile['label']}_{timeframe}".replace(" ", "_")
         quality = ReportQualityValidator.evaluate(document, executive_snapshot, report_sections, score_profile["label"])
+        briefing = FeedbackProposalTeam().run(
+            analytics,
+            self.kb.df,
+            timeframe,
+            macro_trends=macro_trends,
+            sentiment=sentiment,
+            segment=segment,
+            score_engine=score_engine,
+        )
+        quality["audit_trail"] = briefing.get("audit_trail", {})
+        quality["confidence"] = briefing.get("confidence")
+        quality["contradiction_review"] = briefing.get("contradiction_review", {})
+        quality["trend_review"] = briefing.get("trend_review", {})
+        quality["prediction_review"] = briefing.get("prediction_review", {})
         if not quality["verified_complete"]:
             logger.warning(
                 "Generated report is below completeness target: %s",

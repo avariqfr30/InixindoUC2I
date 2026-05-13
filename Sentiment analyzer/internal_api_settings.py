@@ -13,6 +13,43 @@ DEFAULT_APIDOG_DATASETS = (
     ("class_report", "ClassReport"),
     ("reference_class_report", "ReferenceClassReport"),
 )
+RECOMMENDED_ENDPOINT_CONTRACTS = (
+    {
+        "name": "feedback_records",
+        "purpose": "Core feedback/evaluation records for sentiment, rating, journey, and service-risk analysis.",
+        "required_fields": [
+            "record_id",
+            "feedback_date",
+            "stakeholder_type",
+            "service_name",
+            "rating",
+            "comment",
+        ],
+        "optional_fields": ["channel", "source", "location", "instructor_type", "journey_stage"],
+        "record_path": "data.dataset_result",
+    },
+    {
+        "name": "learner_profile",
+        "purpose": "Participant/company segment context so feedback can be grouped by customer type and future retention risk.",
+        "required_fields": ["participant_id", "company_or_institution", "stakeholder_type"],
+        "optional_fields": ["industry", "department", "role", "city", "account_owner"],
+        "record_path": "data.dataset_result",
+    },
+    {
+        "name": "class_delivery",
+        "purpose": "Class/session metadata for linking satisfaction to course, instructor, delivery mode, schedule, and location.",
+        "required_fields": ["class_id", "class_name", "class_date", "delivery_mode", "instructor_name"],
+        "optional_fields": ["venue", "city", "duration", "capacity", "attendance_count"],
+        "record_path": "data.dataset_result",
+    },
+    {
+        "name": "follow_up_actions",
+        "purpose": "Closed-loop action tracking so negative feedback can be connected to owner, SLA, status, and resolution outcome.",
+        "required_fields": ["feedback_id", "action_owner", "action_status", "created_at"],
+        "optional_fields": ["due_date", "closed_at", "resolution_note", "escalation_level"],
+        "record_path": "data.dataset_result",
+    },
+)
 DEFAULT_FIELD_MAP = {
     "id": "Record ID",
     "record_id": "Record ID",
@@ -270,6 +307,7 @@ def connector_settings_state(path=INTERNAL_CONNECTOR_PATH):
         "project_data_source": "api" if connector and connector.enabled and connector.active_endpoints() else "local",
         "connector_path": str(path or ""),
         "context_enhancer": connector.context_enhancer if connector else "",
+        "recommended_endpoints": [dict(endpoint) for endpoint in RECOMMENDED_ENDPOINT_CONTRACTS],
         "endpoints": [_endpoint_to_settings(endpoint) for endpoint in connector.endpoints] if connector else [],
         "resources": [
             _mapping_status(endpoint, required_fields)
