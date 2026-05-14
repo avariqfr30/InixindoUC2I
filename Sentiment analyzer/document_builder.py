@@ -190,6 +190,39 @@ class DocumentBuilder:
         (Twips(1080), Twips(-360)),
         (Twips(1440), Twips(-360)),
     )
+    DEFAULT_TOC_ITEMS = (
+        "Executive Summary",
+        "BAB I - Descriptive Analytics & Feedback Governance",
+        "BAB II - Diagnostic Analytics & Root Cause",
+        "BAB III - Predictive Analytics & Early Warning",
+        "BAB IV - Prescriptive Analytics & Action Plan",
+        "BAB V - Implementation Readiness",
+    )
+
+    SOURCE_REPLACEMENTS = (
+        (r"Semua Data APIDog \(tanggal tidak tersedia\)", "Seluruh Periode Evaluasi"),
+        (r"Semua Data sistem data evaluasi \(tanggal tidak tersedia\)", "Seluruh Periode Evaluasi"),
+        (r"APIDog", "sistem data evaluasi"),
+        (r"Internal API\\s*/\\s*feedback cache", "basis evaluasi layanan"),
+        (r"Internal API", "basis evaluasi layanan"),
+        (r"internal_api", "evaluasi layanan"),
+        (r"internal facts", "temuan evaluasi"),
+        (r"Internal facts", "Temuan evaluasi"),
+        (r"feedback cache", "basis evaluasi layanan"),
+        (r"Dataset Spesialis", "Fokus Bukti"),
+        (r"OSINT benchmark", "pembanding eksternal"),
+        (r"OSINT", "konteks eksternal"),
+        (r"Jejak sumber yang dipakai", "Jejak bukti yang dipakai"),
+    )
+
+    @staticmethod
+    def reader_facing_text(raw_text):
+        clean_text = str(raw_text or "")
+        for pattern, replacement in DocumentBuilder.SOURCE_REPLACEMENTS:
+            clean_text = re.sub(pattern, replacement, clean_text, flags=re.IGNORECASE)
+        clean_text = re.sub(r"\b(endpoint|schema|sync status|source-of-truth|Waitress|thread|runtime)\b", "kesiapan operasional", clean_text, flags=re.IGNORECASE)
+        clean_text = re.sub(r"\s+", " ", clean_text) if "\n" not in clean_text else "\n".join(re.sub(r"[ \t]+", " ", line).rstrip() for line in clean_text.splitlines())
+        return clean_text.strip()
 
     @staticmethod
     def _format_paragraph(paragraph, alignment=None, before=0, after=6, line_spacing=1.08):
@@ -404,6 +437,7 @@ class DocumentBuilder:
 
     @staticmethod
     def process_content(doc, raw_text, theme_color=DEFAULT_COLOR):
+        raw_text = DocumentBuilder.reader_facing_text(raw_text)
         clean_lines = []
         for line in raw_text.split("\n"):
             stripped_line = line.strip()
@@ -428,14 +462,14 @@ class DocumentBuilder:
         DocumentBuilder.parse_html_to_docx(doc, html)
 
     @staticmethod
-    def add_table_of_contents(doc):
+    def add_table_of_contents(doc, items=None):
         doc.add_heading("DAFTAR ISI", level=1)
+        for item in (items or DocumentBuilder.DEFAULT_TOC_ITEMS):
+            paragraph = doc.add_paragraph(str(item), style="List Bullet")
+            DocumentBuilder._format_paragraph(paragraph, alignment=WD_ALIGN_PARAGRAPH.LEFT, after=2, line_spacing=1.0)
         toc_paragraph = doc.add_paragraph()
         DocumentBuilder._format_paragraph(toc_paragraph, alignment=WD_ALIGN_PARAGRAPH.LEFT, after=8)
         append_field(toc_paragraph, 'TOC \\o "1-3" \\h \\z \\u')
-        note = doc.add_paragraph("Perbarui field di Microsoft Word agar daftar isi otomatis terisi.")
-        DocumentBuilder._format_paragraph(note, alignment=WD_ALIGN_PARAGRAPH.LEFT, after=6)
-        note.runs[0].italic, note.runs[0].font.size = True, Pt(9)
         doc.add_page_break()
 
     @staticmethod
@@ -457,7 +491,7 @@ class DocumentBuilder:
         DocumentBuilder._format_paragraph(company_name, alignment=WD_ALIGN_PARAGRAPH.CENTER, after=14, line_spacing=1.0)
         company_name.runs[0].font.name, company_name.runs[0].font.bold, company_name.runs[0].font.size, company_name.runs[0].font.color.rgb = "Calibri", True, Pt(32), RGBColor(*theme_color)
 
-        period_text = doc.add_paragraph(f"Periode Evaluasi Laporan: {timeframe}")
+        period_text = doc.add_paragraph(f"Periode Evaluasi Laporan: {DocumentBuilder.reader_facing_text(timeframe)}")
         DocumentBuilder._format_paragraph(period_text, alignment=WD_ALIGN_PARAGRAPH.CENTER, after=4, line_spacing=1.0)
         period_text.runs[0].font.size = Pt(13)
 

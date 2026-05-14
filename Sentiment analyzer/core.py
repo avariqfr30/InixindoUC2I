@@ -12,15 +12,9 @@ Existing app and scripts can continue importing from core while newer code can i
 from the focused modules directly.
 """
 
-from data_pipeline import (
-    CANONICAL_INTERNAL_COLUMNS,
-    COLUMN_ALIASES,
-    DATE_COLUMN_ALIASES,
-    DemoCsvProvider,
-    InternalApiProvider,
-    InternalDataProvider,
-    KnowledgeBase,
-)
+from data_contract import CANONICAL_INTERNAL_COLUMNS, COLUMN_ALIASES, DATE_COLUMN_ALIASES
+from data_pipeline import DemoCsvProvider, InternalApiProvider, InternalDataProvider
+from knowledge_base import KnowledgeBase
 from document_builder import ChartEngine, DocumentBuilder, StyleEngine, append_field
 from osint_research import InsightSchema, Researcher, osint_cache
 from report_analytics import FeedbackAnalyticsEngine

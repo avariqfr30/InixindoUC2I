@@ -61,18 +61,18 @@ class ReportAnalyticsContractTests(unittest.TestCase):
         )
 
         required_markers = [
-            "## Executive Brief",
-            "### Headline untuk Manajemen",
+            "## Executive Summary",
+            "### What leadership needs to know",
             "### Decision Dashboard",
             "| Pertanyaan Eksekutif | Jawaban Singkat |",
-            "### Prioritas Aksi Manajemen",
-            "### Agenda Diskusi Prioritas",
+            "### Decisions to make",
+            "### Discussion agenda",
         ]
         for marker in required_markers:
             self.assertIn(marker, snapshot)
         self.assertNotIn("Formula Experience Index", snapshot)
-        self.assertLess(snapshot.index("### Headline untuk Manajemen"), snapshot.index("### Decision Dashboard"))
-        self.assertLess(snapshot.index("### Decision Dashboard"), snapshot.index("### Prioritas Aksi Manajemen"))
+        self.assertLess(snapshot.index("### What leadership needs to know"), snapshot.index("### Decision Dashboard"))
+        self.assertLess(snapshot.index("### Decision Dashboard"), snapshot.index("### Decisions to make"))
 
         sections = self.engine.build_report_sections(
             self.timeframe,
@@ -213,7 +213,7 @@ class ReportAnalyticsContractTests(unittest.TestCase):
         self.assertTrue(all(item["evidence_type"] for item in briefing["evidence_ledger"]))
         self.assertTrue(all(item["source"] for item in briefing["evidence_ledger"]))
         self.assertTrue(all(item["confidence"] in {"Tinggi", "Sedang", "Rendah"} for item in briefing["specialists"]))
-        self.assertTrue(all("internal facts" in item for item in briefing["qa_review"]))
+        self.assertTrue(all("temuan evaluasi" in item for item in briefing["qa_review"]))
 
     def test_specialist_briefing_adds_audit_trend_contradiction_and_prediction_controls(self):
         briefing = FeedbackProposalTeam().run(

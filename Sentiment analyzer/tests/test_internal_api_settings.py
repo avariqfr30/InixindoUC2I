@@ -8,6 +8,7 @@ if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
 from data_pipeline import InternalApiProvider
+from class_report_adapter import ClassReportAdapter
 from internal_api import EndpointSpec, InternalApiClient
 from internal_api_settings import build_connector_payload, connector_settings_state, write_connector_payload
 from internal_connector import InternalConnectorSpec
@@ -252,7 +253,7 @@ class InternalApiSettingsTests(unittest.TestCase):
             ]
         )
 
-        dataframe = InternalApiProvider._normalize_class_report_dataframe(raw_df, "class_report")
+        dataframe = ClassReportAdapter.normalize(raw_df, "class_report")
 
         self.assertEqual(len(dataframe), 1)
         self.assertEqual(dataframe.loc[0, "Rating"], "3")

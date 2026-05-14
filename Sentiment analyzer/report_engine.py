@@ -1,21 +1,15 @@
-import concurrent.futures
 import logging
 
-from docx import Document
-
-from config import DEFAULT_COLOR, DEFAULT_SCORE_ENGINE, SCORE_ENGINE_PROFILES
-from document_builder import DocumentBuilder
-from osint_research import Researcher
-from report_agents import FeedbackProposalTeam
-from report_analytics import FeedbackAnalyticsEngine
-from report_quality import ReportQualityValidator
+from config import DEFAULT_SCORE_ENGINE
+from report_pipeline import ReportPipeline
 
 logger = logging.getLogger(__name__)
 
+
 class ReportGenerator:
-    def __init__(self, kb_instance):
+    def __init__(self, kb_instance, pipeline=None):
         self.kb = kb_instance
-        self.research_pool = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+        self.pipeline = pipeline or ReportPipeline(kb_instance)
 
     def run(self, timeframe, notes="", sentiment="all", segment="all", score_engine=DEFAULT_SCORE_ENGINE):
         logger.info(
@@ -25,57 +19,11 @@ class ReportGenerator:
             segment,
             score_engine,
         )
-        score_profile = SCORE_ENGINE_PROFILES.get(score_engine, SCORE_ENGINE_PROFILES[DEFAULT_SCORE_ENGINE])
-
-        macro_future = self.research_pool.submit(Researcher.get_macro_trends, timeframe, notes, score_profile["label"])
-        try:
-            macro_trends = macro_future.result(timeout=45)
-        except Exception:
-            logger.exception("OSINT macro trend lookup failed during report generation.")
-            macro_trends = "Tidak ada tren eksternal yang berhasil dimuat."
-
-        analytics = FeedbackAnalyticsEngine(self.kb.df)
-        executive_snapshot = analytics.build_executive_snapshot(
-            timeframe,
-            notes,
-            sentiment=sentiment,
-            segment=segment,
-            score_engine=score_engine,
-            macro_trends=macro_trends,
-        )
-        report_sections = analytics.build_report_sections(timeframe, notes, macro_trends, sentiment=sentiment, segment=segment, score_engine=score_engine)
-
-        document = Document()
-        DocumentBuilder.create_cover(document, timeframe, DEFAULT_COLOR)
-        document.add_heading("EXECUTIVE SNAPSHOT", level=1)
-        DocumentBuilder.process_content(document, executive_snapshot, DEFAULT_COLOR)
-        document.add_page_break()
-
-        for index, section in enumerate(report_sections):
-            document.add_heading(section["title"], level=1)
-            DocumentBuilder.process_content(document, section["content"], DEFAULT_COLOR)
-            if index < len(report_sections) - 1:
-                document.add_page_break()
-
-        filename = f"Inixindo_Feedback_Intelligence_Report_{score_profile['label']}_{timeframe}".replace(" ", "_")
-        quality = ReportQualityValidator.evaluate(document, executive_snapshot, report_sections, score_profile["label"])
-        briefing = FeedbackProposalTeam().run(
-            analytics,
-            self.kb.df,
-            timeframe,
-            macro_trends=macro_trends,
+        # ReportPipeline owns the stage orchestration; this facade preserves the public API.
+        return self.pipeline.run(
+            timeframe=timeframe,
+            notes=notes,
             sentiment=sentiment,
             segment=segment,
             score_engine=score_engine,
         )
-        quality["audit_trail"] = briefing.get("audit_trail", {})
-        quality["confidence"] = briefing.get("confidence")
-        quality["contradiction_review"] = briefing.get("contradiction_review", {})
-        quality["trend_review"] = briefing.get("trend_review", {})
-        quality["prediction_review"] = briefing.get("prediction_review", {})
-        if not quality["verified_complete"]:
-            logger.warning(
-                "Generated report is below completeness target: %s",
-                quality["summary"],
-            )
-        return document, filename, quality

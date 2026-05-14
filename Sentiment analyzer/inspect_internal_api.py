@@ -5,7 +5,8 @@ import os
 import pandas as pd
 
 from config import INTERNAL_CONNECTOR_PATH
-from data_pipeline import CANONICAL_INTERNAL_COLUMNS, COLUMN_ALIASES, InternalDataProvider
+from data_contract import CANONICAL_INTERNAL_COLUMNS, COLUMN_ALIASES
+from data_pipeline import InternalDataProvider
 from internal_api import EndpointSpec, InternalApiClient
 
 DEFAULT_RECORD_KEYS = ["dataset_result", "items", "data", "results", "records", "feedback"]

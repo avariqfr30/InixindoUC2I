@@ -59,9 +59,9 @@ class DataStewardAgent(FeedbackSpecialistAgent):
         )
         return {
             "role": self.role,
-            "dataset": "Internal API / feedback cache",
-            "evidence_type": "internal_data",
-            "confidence": self._confidence_from_context(context, "internal_data"),
+            "dataset": "Operational evidence",
+            "evidence_type": "operational_evidence",
+            "confidence": self._confidence_from_context(context, "operational_evidence"),
             "finding": finding,
             "implication": implication,
         }
@@ -197,8 +197,8 @@ class FeedbackProposalTeam:
                 source_tokens.add("komentar")
             if "osint" in dataset:
                 source_tokens.add("osint")
-            if "internal" in dataset:
-                source_tokens.add("internal_api")
+            if "operational" in dataset:
+                source_tokens.add("evaluasi_layanan")
         return sorted(source_tokens)
 
     @staticmethod
@@ -231,8 +231,8 @@ class FeedbackProposalTeam:
         governance = context["governance"]
         ledger = [
             {
-                "evidence_type": "internal_data",
-                "source": "Internal API / feedback cache",
+                "evidence_type": "operational_evidence",
+                "source": "Basis evaluasi layanan",
                 "detail": f"{governance['total_rows']} respons mentah; {governance.get('dimension_count', 0)} dimensi evaluasi.",
             },
             {
@@ -250,8 +250,8 @@ class FeedbackProposalTeam:
             ledger.append(
                 {
                     "evidence_type": "osint",
-                    "source": "OSINT benchmark",
-                    "detail": "Dipakai sebagai konteks eksternal, bukan pengganti fakta operasional internal.",
+                    "source": "Pembanding eksternal",
+                    "detail": "Dipakai sebagai konteks eksternal, bukan pengganti bukti operasional.",
                 }
             )
         return ledger
@@ -260,15 +260,15 @@ class FeedbackProposalTeam:
     def _qa_review(context, overall_confidence):
         governance = context["governance"]
         notes = [
-            "internal facts remain separated from OSINT benchmark context.",
-            "internal facts are supported by rating, comment, and risk-priority evidence before recommendations are made.",
+            "temuan evaluasi dipisahkan dari konteks pembanding eksternal.",
+            "temuan evaluasi didukung oleh rating, komentar, dan prioritas risiko sebelum menjadi rekomendasi.",
         ]
         if overall_confidence != "Tinggi":
-            notes.append("internal facts require manager review before being treated as final policy direction.")
+            notes.append("temuan evaluasi memerlukan review manajemen sebelum menjadi arah kebijakan final.")
         if int(governance.get("text_response_count", 0) or 0) == 0:
-            notes.append("internal facts have limited text evidence, so rating explanations should be treated cautiously.")
+            notes.append("temuan evaluasi memiliki bukti teks terbatas, sehingga penjelasan rating perlu dibaca hati-hati.")
         if not context.get("has_osint_signal"):
-            notes.append("internal facts remain primary because OSINT signal is weak or unavailable.")
+            notes.append("temuan evaluasi menjadi rujukan utama karena sinyal eksternal lemah atau belum tersedia.")
         return notes
 
     @staticmethod

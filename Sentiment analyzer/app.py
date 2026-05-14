@@ -15,6 +15,7 @@ from flask import (
 )
 from flask_cors import CORS
 
+from app_services import ReportRequest, allowed_signup_domain, is_allowed_signup_email
 from auth_service import (
     ActiveSessionCapacityError,
     create_user,
@@ -38,17 +39,13 @@ from config import (
     SENTIMENT_OPTIONS,
     SESSION_COOKIE_SECURE,
     SESSION_IDLE_TIMEOUT_SECONDS,
-    SIGNUP_ALLOWED_EMAIL_DOMAIN,
     SIGNUP_REQUIRES_APPROVAL,
     SMART_SUGGESTIONS,
 )
-from data_pipeline import KnowledgeBase
-from internal_api_settings import (
-    build_connector_payload,
-    connector_settings_state,
-    load_connector_payload,
-    write_connector_payload,
-)
+from internal_api_service import InternalApiService
+from internal_api_settings import connector_settings_state
+from job_presenter import present_job
+from knowledge_base import KnowledgeBase
 from report_engine import ReportGenerator
 from runtime import QueueCapacityError, ReportJobManager
 
@@ -69,48 +66,21 @@ job_manager = ReportJobManager(generator)
 logger.info("Application started in %s mode.", APP_MODE)
 
 
+def _internal_api_service():
+    return InternalApiService(
+        kb,
+        job_manager,
+        logger=logger,
+        connector_settings_state_func=connector_settings_state,
+    )
+
+
 def _internal_api_settings_state():
-    state = connector_settings_state()
-    provider_source = getattr(kb.provider, "source_name", "")
-    connector_configured = bool(state.get("connector_exists") and state.get("enabled"))
-    state["project_data_source"] = "api" if provider_source == "company_api" else "local"
-    state["active_runtime_source"] = provider_source or "unknown"
-    state["api_connection_active"] = (
-        connector_configured
-        and state["project_data_source"] == "api"
-    )
-    state["can_refresh_dataset"] = state["api_connection_active"]
-    state["refresh_running"] = False
-    state["connection_label"] = (
-        "Aktif memakai Internal API/APIDog"
-        if state["api_connection_active"]
-        else "Belum aktif untuk sesi berjalan"
-    )
-    state["active_record_count"] = int(len(kb.df)) if getattr(kb, "df", None) is not None else 0
-    return state
+    return _internal_api_service().get_state()
 
 
-def _request_payload(data):
-    return {
-        "timeframe": data.get("timeframe"),
-        "notes": data.get("notes", ""),
-        "sentiment": data.get("sentiment", "all"),
-        "segment": data.get("segment", "all"),
-        "score_engine": data.get("score_engine", DEFAULT_SCORE_ENGINE),
-    }
-
-
-def _allowed_signup_domain():
-    domain = str(SIGNUP_ALLOWED_EMAIL_DOMAIN or "").strip().lower()
-    if domain and not domain.startswith("@"):
-        domain = f"@{domain}"
-    return domain
-
-
-def _is_allowed_signup_email(value):
-    email = str(value or "").strip().lower()
-    allowed_domain = _allowed_signup_domain()
-    return bool(email and allowed_domain and email.endswith(allowed_domain))
+def create_app():
+    return app
 
 
 def login_required(view_func):
@@ -192,7 +162,7 @@ def login():
         error=error,
         allow_signup=ALLOW_SIGNUP,
         signup_requires_approval=SIGNUP_REQUIRES_APPROVAL,
-        signup_allowed_email_domain=_allowed_signup_domain(),
+        signup_allowed_email_domain=allowed_signup_domain(),
         user_count=user_count(),
     )
 
@@ -212,8 +182,8 @@ def signup():
         password = request.form.get("password") or ""
         confirm_password = request.form.get("confirm_password") or ""
 
-        if not _is_allowed_signup_email(username):
-            warning = f"Gunakan email internal dengan domain {_allowed_signup_domain()} untuk mendaftar."
+        if not is_allowed_signup_email(username):
+            warning = f"Gunakan email internal dengan domain {allowed_signup_domain()} untuk mendaftar."
         elif len(username) < 4:
             error = "Email minimal 4 karakter."
         elif len(password) < 8:
@@ -237,7 +207,7 @@ def signup():
                     notice="Pendaftaran diterima. Akun harus dikonfirmasi admin sebelum bisa masuk.",
                     allow_signup=ALLOW_SIGNUP,
                     signup_requires_approval=SIGNUP_REQUIRES_APPROVAL,
-                    signup_allowed_email_domain=_allowed_signup_domain(),
+                    signup_allowed_email_domain=allowed_signup_domain(),
                     user_count=user_count(),
                 )
             try:
@@ -253,7 +223,7 @@ def signup():
         warning=warning,
         allow_signup=ALLOW_SIGNUP,
         signup_requires_approval=SIGNUP_REQUIRES_APPROVAL,
-        signup_allowed_email_domain=_allowed_signup_domain(),
+        signup_allowed_email_domain=allowed_signup_domain(),
         user_count=user_count(),
     )
 
@@ -360,22 +330,22 @@ def get_config():
 @login_required
 def generate_report():
     data = request.get_json(silent=True) or {}
-    payload = _request_payload(data)
-    timeframe = payload["timeframe"]
-
-    if not timeframe:
-        return jsonify({"error": "Parameter 'timeframe' wajib diisi."}), 400
+    try:
+        report_request = ReportRequest.from_mapping(data).validate()
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    payload = report_request.to_job_payload()
 
     logger.info(
         "Generating report for timeframe='%s', sentiment='%s', segment='%s', score_engine='%s' by user '%s'.",
-        timeframe,
+        payload["timeframe"],
         payload["sentiment"],
         payload["segment"],
         payload["score_engine"],
         current_user(),
     )
     doc, filename, quality = generator.run(
-        timeframe,
+        payload["timeframe"],
         payload["notes"],
         sentiment=payload["sentiment"],
         segment=payload["segment"],
@@ -401,10 +371,10 @@ def generate_report():
 @login_required
 def generate_report_job():
     data = request.get_json(silent=True) or {}
-    payload = _request_payload(data)
-
-    if not payload["timeframe"]:
-        return jsonify({"error": "Parameter 'timeframe' wajib diisi."}), 400
+    try:
+        payload = ReportRequest.from_mapping(data).validate().to_job_payload()
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
 
     try:
         job = job_manager.submit(payload)
@@ -422,11 +392,12 @@ def generate_report_job():
     )
     return (
         jsonify(
-            {
-                **job,
-                "status_url": f"/jobs/{job['job_id']}",
-                "download_url": f"/download/{job['job_id']}",
-            }
+            present_job(
+                job,
+                stats=job_manager.stats(),
+                status_url=f"/jobs/{job['job_id']}",
+                download_url=f"/download/{job['job_id']}",
+            )
         ),
         202,
     )
@@ -439,11 +410,14 @@ def get_report_job(job_id):
     if not job:
         return jsonify({"error": "Job tidak ditemukan."}), 404
 
-    response = dict(job)
-    response["status_url"] = f"/jobs/{job_id}"
-    if job["status"] == "completed":
-        response["download_url"] = f"/download/{job_id}"
-    return jsonify(response)
+    return jsonify(
+        present_job(
+            job,
+            stats=job_manager.stats(),
+            status_url=f"/jobs/{job_id}",
+            download_url=f"/download/{job_id}",
+        )
+    )
 
 
 @app.route("/download/<job_id>")
@@ -464,68 +438,15 @@ def download_report(job_id):
 @app.route("/refresh-knowledge", methods=["POST"])
 @login_required
 def refresh_knowledge():
-    job_stats = job_manager.stats()
-    if job_stats["jobs"]["queued"] or job_stats["jobs"]["running"]:
-        return (
-            jsonify(
-                {
-                    "status": "busy",
-                    "error": "Sinkronisasi data sementara dikunci karena masih ada laporan yang sedang diproses.",
-                }
-            ),
-            409,
-        )
-
-    success = kb.refresh_data()
-    return jsonify({"status": "success" if success else "error"})
+    response, status_code = _internal_api_service().refresh_knowledge()
+    return jsonify(response), status_code
 
 
 @app.route("/api/internal-api/refresh", methods=["POST"])
 @login_required
 def refresh_internal_api_dataset():
-    job_stats = job_manager.stats()
-    if job_stats["jobs"]["queued"] or job_stats["jobs"]["running"]:
-        return (
-            jsonify(
-                {
-                    "status": "busy",
-                    "error": "Sinkronisasi data sementara dikunci karena masih ada laporan yang sedang diproses.",
-                }
-            ),
-            409,
-        )
-
-    connector_state = connector_settings_state()
-    if not (connector_state.get("connector_exists") and connector_state.get("enabled")):
-        return (
-            jsonify(
-                {
-                    "status": "not_configured",
-                    "error": "Internal API belum aktif. Simpan konfigurasi endpoint sebelum refresh dataset.",
-                    **_internal_api_settings_state(),
-                }
-            ),
-            400,
-        )
-
-    try:
-        kb.activate_internal_api_provider()
-        refresh_success = kb.refresh_data()
-    except Exception as exc:
-        logger.exception("Failed to refresh Internal API dataset.")
-        return jsonify({"status": "error", "error": str(exc), **_internal_api_settings_state()}), 500
-
-    status_code = 200 if refresh_success else 503
-    return (
-        jsonify(
-            {
-                "status": "refreshed" if refresh_success else "error",
-                "refresh_status": "success" if refresh_success else "degraded",
-                **_internal_api_settings_state(),
-            }
-        ),
-        status_code,
-    )
+    response, status_code = _internal_api_service().refresh_dataset()
+    return jsonify(response), status_code
 
 
 @app.route("/api/internal-api/settings", methods=["GET", "POST"])
@@ -534,37 +455,9 @@ def internal_api_settings():
     if request.method == "GET":
         return jsonify(_internal_api_settings_state())
 
-    job_stats = job_manager.stats()
-    if job_stats["jobs"]["queued"] or job_stats["jobs"]["running"]:
-        return (
-            jsonify(
-                {
-                    "error": "Pengaturan data internal belum bisa diubah karena masih ada laporan yang sedang diproses.",
-                }
-            ),
-            409,
-        )
-
     data = request.get_json(silent=True) or {}
-    try:
-        payload = build_connector_payload(data, existing_payload=load_connector_payload())
-        write_connector_payload(payload)
-        if payload.get("enabled", True):
-            kb.activate_internal_api_provider()
-        refresh_success = kb.refresh_data()
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
-    except Exception as exc:
-        logger.exception("Failed to update Internal API settings.")
-        return jsonify({"error": str(exc)}), 500
-
-    return jsonify(
-        {
-            "status": "saved",
-            "refresh_status": "success" if refresh_success else "degraded",
-            **_internal_api_settings_state(),
-        }
-    )
+    response, status_code = _internal_api_service().save_and_refresh(data)
+    return jsonify(response), status_code
 
 
 if __name__ == "__main__":

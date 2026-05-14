@@ -3,7 +3,8 @@ import re
 import pandas as pd
 
 from config import ADOPTION_READINESS_PILLARS, CX_SENTIMENT_STRUCTURE, DEFAULT_SCORE_ENGINE
-from report_agents import FeedbackProposalTeam
+from document_builder import DocumentBuilder
+from report_trust_sections import build_specialist_review_markdown
 
 
 class ReportNarrativeBuilderMixin:
@@ -539,87 +540,19 @@ class ReportNarrativeBuilderMixin:
         ]
 
     def _specialist_review_markdown(self, timeframe, macro_trends, sentiment, segment, score_engine):
-        briefing = FeedbackProposalTeam().run(
+        return build_specialist_review_markdown(
             self,
-            self.full_df,
+            self._markdown_table,
             timeframe,
-            macro_trends=macro_trends,
-            sentiment=sentiment,
-            segment=segment,
-            score_engine=score_engine,
+            macro_trends,
+            sentiment,
+            segment,
+            score_engine,
         )
-        rows = [
-            [
-                item["role"],
-                item["dataset"],
-                item["confidence"],
-                item["finding"],
-                item["implication"],
-            ]
-            for item in briefing["specialists"]
-        ]
-        sources = ", ".join(briefing["sources_used"]) if briefing["sources_used"] else "internal analytics"
-        ledger_rows = [
-            [item["evidence_type"], item["source"], item["detail"]]
-            for item in briefing["evidence_ledger"]
-        ]
-        qa_lines = [f"- {item}" for item in briefing["qa_review"]]
-        audit = briefing["audit_trail"]
-        contradiction = briefing["contradiction_review"]
-        trend = briefing["trend_review"]
-        prediction = briefing["prediction_review"]
-        audit_rows = [
-            ["Generated at", audit["generated_at_utc"]],
-            ["Periode", audit["timeframe"]],
-            ["Filter", f"sentiment={audit['sentiment']}; segment={audit['segment']}; score_engine={audit['score_engine']}"],
-            ["Cakupan data", f"{audit['raw_response_count']} respons mentah; {audit['dimension_count']} dimensi evaluasi"],
-            ["Komposisi", f"{audit['rating_response_count']} rating; {audit['text_response_count']} komentar teks"],
-            ["Kelengkapan", f"{audit['field_completeness_pct']}% field inti; {audit['source_count']} sumber; {audit['channel_count']} kanal"],
-        ]
-        return "\n".join([
-            "### Review Tim Analis Internal",
-            briefing["manager_summary"],
-            "",
-            f"**Confidence Desk:** {briefing['confidence']}.",
-            "",
-            self._markdown_table(
-                ["Peran", "Dataset Spesialis", "Confidence", "Temuan", "Implikasi"],
-                rows,
-            ),
-            "",
-            "### Evidence Ledger",
-            self._markdown_table(
-                ["Tipe Bukti", "Sumber", "Catatan"],
-                ledger_rows,
-            ),
-            "",
-            "### QA Guardrail",
-            *qa_lines,
-            "",
-            "### Report Audit Trail",
-            self._markdown_table(
-                ["Item", "Nilai"],
-                audit_rows,
-            ),
-            "",
-            "### Contradiction Check",
-            f"Status: **{contradiction['severity']}**. {contradiction['rating_text_alignment']}. "
-            f"Rata-rata rating {contradiction['average_rating']}/5, negative rating share {contradiction['negative_rating_share']}%, "
-            f"negative text hits {contradiction['negative_text_hits']}, positive text hits {contradiction['positive_text_hits']}.",
-            "",
-            "### Historical Trend Desk",
-            f"Periode pembanding: {trend['comparison_period']}. Rating delta: {trend['rating_delta']}; negative share delta: {trend['negative_share_delta']}%. {trend['reading']}",
-            "",
-            "### Prediction Boundary",
-            f"{prediction['method']} Arah saat ini: {prediction['direction']} dari {prediction['current_score']} menuju {prediction['projected_score']}. "
-            f"{prediction['confidence_note']}",
-            "",
-            f"Jejak sumber yang dipakai: {sources}.",
-        ])
 
     def build_executive_snapshot(self, timeframe, notes="", sentiment="all", segment="all", score_engine=DEFAULT_SCORE_ENGINE, macro_trends=""):
         timeframe_df = self._filter_view(timeframe, sentiment=sentiment, segment=segment)
-        if timeframe_df.empty: return "## Executive Brief\n- Tidak ada data internal yang cukup untuk menyusun snapshot eksekutif pada kombinasi filter yang dipilih.\n"
+        if timeframe_df.empty: return "## Executive Summary\n- Belum ada bukti evaluasi yang cukup untuk menyusun ringkasan eksekutif pada kombinasi filter yang dipilih.\n"
 
         context = self._build_analysis_context(timeframe_df, timeframe, sentiment, segment, score_engine)
         governance = self._governance_summary(timeframe_df)
@@ -651,9 +584,9 @@ class ReportNarrativeBuilderMixin:
         context_table = self._markdown_table(
             ["Konteks Pendukung", "Nilai"],
             [
-                ["Periode", timeframe],
+                ["Periode", "Seluruh Periode Evaluasi" if "apidog" in timeframe.lower() else timeframe],
                 ["Cakupan analisis", context["scope_text"]],
-                ["Respons mentah dianalisis", f"{total_rows} respons"],
+                ["Respons evaluasi dianalisis", f"{total_rows} respons"],
                 ["Dimensi evaluasi diringkas", f"{dimension_count} dimensi"],
                 ["Komposisi jawaban", f"{rating_response_count} rating; {text_response_count} komentar teks"],
                 ["Lokasi pelatihan dominan", self._primary_label(top_location, "Belum terpetakan")],
@@ -661,25 +594,24 @@ class ReportNarrativeBuilderMixin:
                 ["Kelengkapan field inti", f"{governance['completeness_pct']}%"],
             ],
         )
-        meeting_agenda = [f"- Apakah layanan {top_risk[0]['label']} memerlukan intervensi prioritas lintas fungsi pada 30 hari ke depan?" if top_risk else "- Apakah perusahaan perlu memperluas pengumpulan feedback agar risiko layanan lebih mudah dibaca?", f"- Bagaimana tindak lanjut yang paling tepat untuk tema {top_issue['label']} agar tidak berkembang menjadi keluhan berulang?" if top_issue else "- Kekuatan layanan mana yang paling layak distandardisasi dan direplikasi?", f"- Tahap customer journey mana yang paling perlu dikoreksi lebih dulu, mengingat titik gesekan terbesar saat ini berada pada {dominant_journey['stage_label']}?" if dominant_journey else "- Tahap customer journey mana yang paling perlu dipetakan lebih rinci pada periode berikutnya?", "- Apakah tata kelola sumber, kanal, dan owner tindak lanjut sudah cukup jelas untuk mendukung evaluasi periodik berikutnya?"]
+        meeting_agenda = [f"- Apakah layanan {top_risk[0]['label']} memerlukan intervensi prioritas lintas fungsi pada 30 hari ke depan?" if top_risk else "- Apakah perusahaan perlu memperluas pengumpulan feedback agar risiko layanan lebih mudah dibaca?", f"- Bagaimana tindak lanjut yang paling tepat untuk tema {top_issue['label']} agar tidak berkembang menjadi keluhan berulang?" if top_issue else "- Kekuatan layanan mana yang paling layak distandardisasi dan direplikasi?", f"- Tahap customer journey mana yang paling perlu dikoreksi lebih dulu, mengingat titik gesekan terbesar saat ini berada pada {dominant_journey['stage_label']}?" if dominant_journey else "- Tahap customer journey mana yang paling perlu dipetakan lebih rinci pada periode berikutnya?", "- Apakah tata kelola kanal, owner, dan tindak lanjut sudah cukup jelas untuk mendukung evaluasi periodik berikutnya?"]
+        decision_headline = headlines[0].lstrip("- ").strip() if headlines else "Manajemen perlu menetapkan prioritas perbaikan layanan berdasarkan sinyal evaluasi paling kuat."
         opening = (
-            f"Laporan ini dibuat untuk pembacaan cepat manajemen. Fokus awalnya bukan metodologi, tetapi keputusan: "
-            f"apa yang perlu diperhatikan, layanan mana yang perlu ditindaklanjuti, dan tindakan apa yang perlu disepakati. "
-            f"Analisis mencakup {total_rows} respons mentah yang diringkas menjadi {dimension_count} dimensi evaluasi pada {context['scope_text']}. "
-            f"Fokus tambahan pengguna: {focus_text}"
+            f"{decision_headline} Ringkasan ini dirancang untuk pembaca eksekutif: mulai dari keputusan yang perlu dibuat, "
+            f"implikasi bisnisnya, lalu bukti pendukung yang paling relevan. Evaluasi mencakup {total_rows} respons yang "
+            f"diringkas menjadi {dimension_count} dimensi pada {context['scope_text']}. Fokus tambahan: {focus_text}"
         )
         technical_note = (
-            "Detail formula, pembobotan score engine, distribusi kanal, bukti verbatim, dan OSINT diletakkan pada bab teknis setelah bagian ini. "
-            "Tujuannya agar pembaca eksekutif mendapat inti laporan lebih dulu, lalu tim teknis tetap memiliki bahan audit dan pembuktian yang lengkap."
+            "Detail formula, distribusi kanal, bukti verbatim, dan konteks eksternal ditempatkan setelah ringkasan ini agar eksekutif memperoleh inti keputusan lebih dulu."
         )
         specialist_review = self._specialist_review_markdown(timeframe, macro_trends, sentiment, segment, score_engine)
 
-        return "\n".join([
-            "## Executive Brief", opening, "",
-            "### Headline untuk Manajemen", *headlines, "",
+        return DocumentBuilder.reader_facing_text("\n".join([
+            "## Executive Summary", opening, "",
+            "### What leadership needs to know", *headlines, "",
             "### Decision Dashboard", dashboard_table, "",
             specialist_review, "",
-            "### Prioritas Aksi Manajemen", action_table, "",
-            "### Agenda Diskusi Prioritas", *meeting_agenda, "",
-            "### Konteks Singkat", context_table, "", technical_note,
-        ])
+            "### Decisions to make", action_table, "",
+            "### Discussion agenda", *meeting_agenda, "",
+            "### Supporting context", context_table, "", technical_note,
+        ]))

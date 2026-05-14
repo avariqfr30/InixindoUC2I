@@ -11,7 +11,7 @@ from config import (
     SCORE_ENGINE_PROFILES,
     SENTIMENT_OPTIONS,
 )
-from data_pipeline import CANONICAL_INTERNAL_COLUMNS
+from data_contract import CANONICAL_INTERNAL_COLUMNS
 from report_narratives import ReportNarrativeBuilderMixin
 
 class FeedbackAnalyticsEngine(ReportNarrativeBuilderMixin):
@@ -68,6 +68,10 @@ class FeedbackAnalyticsEngine(ReportNarrativeBuilderMixin):
                 self._sentiment_label
             )
             self.full_df["Komentar Lower"] = self.full_df["Komentar"].astype(str).str.lower()
+
+    @classmethod
+    def from_records(cls, records):
+        return cls(pd.DataFrame.from_records(records))
 
     @staticmethod
     def _sentiment_label(value):

@@ -730,7 +730,7 @@
             clearPolling();
             document.getElementById('spinner').classList.remove('active');
             ui.successMeta.textContent = '';
-            showJobStatus('Laporan selesai disiapkan dan unduhan akan dimulai.', 'success');
+            showJobStatus(job.stage_detail || 'Laporan selesai disiapkan dan unduhan akan dimulai.', 'success');
             startDownload(job.download_url, job.filename);
             ui.reviewStep.classList.add('hidden');
             ui.successStep.classList.remove('hidden');
@@ -749,13 +749,13 @@
                 .then(response => unwrapJsonResponse(response, 'Status job tidak dapat dibaca.'))
                 .then(job => {
                     if (job.status === 'queued') {
-                        showJobStatus('Laporan masuk antrian dan akan segera diproses.');
+                        showJobStatus(job.stage_detail || 'Laporan masuk antrian dan akan segera diproses.');
                         schedulePoll(jobId);
                         return;
                     }
 
                     if (job.status === 'running') {
-                        showJobStatus('Laporan sedang disusun.');
+                        showJobStatus(job.stage_detail || 'Laporan sedang disusun.');
                         schedulePoll(jobId);
                         return;
                     }
@@ -902,7 +902,7 @@
             .then(response => unwrapJsonResponse(response, 'Gagal mengirim job laporan.'))
             .then(job => {
                 appState.currentJobId = job.job_id;
-                showJobStatus('Laporan akan diproses di background server.');
+                showJobStatus(job.stage_detail || 'Laporan akan diproses di background server.');
                 pollJob(job.job_id);
             })
             .catch(err => {
