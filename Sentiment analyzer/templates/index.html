@@ -181,7 +181,7 @@
             </div>
             
             <button type="button" id="btn-review" disabled>Tinjau Parameter Laporan</button>
-            <button type="button" id="btn-refresh" class="secondary" style="font-size:0.9rem; padding:10px;">🔄 Sync Data</button>
+            <button type="button" id="btn-refresh" class="secondary" style="font-size:0.9rem; padding:10px;">🔄 Sinkronkan Data</button>
         </div>
 
         <div id="step-review" class="hidden">
@@ -190,14 +190,14 @@
             <div id="job-status" class="status-panel"></div>
             <div style="display:flex; gap:15px;">
                 <button type="button" id="btn-back" class="secondary" style="width:35%">Kembali</button>
-                <button type="button" id="btn-generate" style="width:65%">Generate Report <span id="spinner" class="spinner"></span></button>
+                <button type="button" id="btn-generate" style="width:65%">Buat Laporan <span id="spinner" class="spinner"></span></button>
             </div>
         </div>
 
         <div id="step-success" class="hidden" style="text-align:center; padding: 20px;">
             <div style="font-size: 60px; margin-bottom: 20px;">✅</div>
             <h2>Selesai!</h2>
-            <p class="sub">Laporan feedback intelligence telah diunduh.</p>
+            <p class="sub">Laporan intelijen umpan balik telah diunduh.</p>
             <p id="success-meta" class="helper" style="margin: 0 0 20px 0;"></p>
             <button type="button" onclick="location.reload()" class="secondary">Buat Laporan Baru</button>
         </div>
@@ -213,23 +213,23 @@
             <div id="settings-status" class="status-panel"></div>
 
             <div class="internal-api-panel">
-                <h3>Internal API / APIDog</h3>
-                <p class="sub">Masukkan endpoint dataset internal. Sistem akan membuat mapping dasar, menyimpan config, mengaktifkan sumber data API untuk sesi berjalan, lalu refresh knowledge base di background.</p>
+                <h3>API Internal</h3>
+                <p class="sub">Masukkan titik akses data internal. Sistem akan membuat pemetaan dasar, menyimpan konfigurasi, mengaktifkan sumber data API untuk sesi berjalan, lalu memuat ulang basis pengetahuan di latar belakang.</p>
 
-                <label for="settings-api-url">Endpoint API Dataset</label>
+                <label for="settings-api-url">Titik Akses API Data</label>
                 <input type="url" id="settings-api-url" placeholder="https://xxx.com/api/Resource/dataset">
 
                 <div class="settings-grid">
                     <div>
-                        <label for="settings-api-auth-mode">Mode Auth</label>
+                        <label for="settings-api-auth-mode">Mode Autentikasi</label>
                         <select id="settings-api-auth-mode">
-                            <option value="bearer_env">Bearer Token dari environment</option>
-                            <option value="basic_env">Basic Auth dari environment</option>
-                            <option value="none">Tanpa Auth</option>
+                            <option value="bearer_env">Token akses dari konfigurasi server</option>
+                            <option value="basic_env">Autentikasi dasar dari konfigurasi server</option>
+                            <option value="none">Tanpa autentikasi</option>
                         </select>
                     </div>
                     <div>
-                        <label for="settings-api-body-mode">Format Body</label>
+                        <label for="settings-api-body-mode">Format Isi Permintaan</label>
                         <select id="settings-api-body-mode">
                             <option value="form">Form</option>
                             <option value="json">JSON</option>
@@ -241,8 +241,8 @@
             </div>
 
             <div class="modal-actions">
-                <button type="button" id="btn-refresh-internal-api" class="secondary">Refresh Dataset Sekarang</button>
-                <button type="button" id="btn-save-internal-api">Simpan & Aktifkan Internal API</button>
+                <button type="button" id="btn-refresh-internal-api" class="secondary">Muat Ulang Data Sekarang</button>
+                <button type="button" id="btn-save-internal-api">Simpan & Aktifkan API Internal</button>
             </div>
         </div>
     </div>
@@ -566,7 +566,7 @@
             ui.btnSaveInternalApi.disabled = isActive;
             ui.btnSaveInternalApi.textContent = isActive ? 'Internal API Sudah Aktif' : 'Simpan & Aktifkan Internal API';
             ui.btnRefreshInternalApi.disabled = !isActive || isRefreshing;
-            ui.btnRefreshInternalApi.textContent = isRefreshing ? 'Refresh Berjalan...' : 'Refresh Dataset Sekarang';
+            ui.btnRefreshInternalApi.textContent = isRefreshing ? 'Pemuatan Ulang Berjalan...' : 'Muat Ulang Data Sekarang';
         }
 
         function renderInternalApiStatus(data) {
@@ -595,7 +595,7 @@
             ui.internalApiStatus.innerHTML = `
                 <div>Config: <strong>${data.connector_exists ? 'tersedia' : 'belum ada'}</strong></div>
                 <div>Connection: <strong class="${connectionClass}">${connectionLabel}</strong></div>
-                <div>Project data source: <strong>${escapeHtml(data.project_data_source || 'local')}</strong></div>
+                <div>Sumber data proyek: <strong>${escapeHtml(data.project_data_source || 'lokal')}</strong></div>
                 <div>Runtime provider: <strong>${escapeHtml(data.active_runtime_source || 'unknown')}</strong></div>
                 <div>Active records: <strong>${Number(data.active_record_count || 0).toLocaleString('id-ID')}</strong></div>
                 <div>Refresh: <strong>${escapeHtml(refreshHint)}</strong></div>

@@ -61,9 +61,9 @@ class ReaderFacingDocumentContractTests(unittest.TestCase):
 
         summary = engine.build_executive_snapshot("Semua Data APIDog (tanggal tidak tersedia)")
 
-        self.assertIn("## Executive Summary", summary)
-        self.assertIn("### What leadership needs to know", summary)
-        self.assertIn("### Decisions to make", summary)
+        self.assertIn("## Ringkasan Eksekutif", summary)
+        self.assertIn("### Hal yang Perlu Diketahui Manajemen", summary)
+        self.assertIn("### Keputusan yang Perlu Diambil", summary)
         for token in ["APIDog", "Internal API", "internal_api", "internal facts", "Dataset Spesialis"]:
             self.assertNotIn(token, summary)
 

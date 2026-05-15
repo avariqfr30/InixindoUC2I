@@ -61,18 +61,18 @@ class ReportAnalyticsContractTests(unittest.TestCase):
         )
 
         required_markers = [
-            "## Executive Summary",
-            "### What leadership needs to know",
-            "### Decision Dashboard",
+            "## Ringkasan Eksekutif",
+            "### Hal yang Perlu Diketahui Manajemen",
+            "### Dasbor Keputusan",
             "| Pertanyaan Eksekutif | Jawaban Singkat |",
-            "### Decisions to make",
-            "### Discussion agenda",
+            "### Keputusan yang Perlu Diambil",
+            "### Agenda Diskusi",
         ]
         for marker in required_markers:
             self.assertIn(marker, snapshot)
         self.assertNotIn("Formula Experience Index", snapshot)
-        self.assertLess(snapshot.index("### What leadership needs to know"), snapshot.index("### Decision Dashboard"))
-        self.assertLess(snapshot.index("### Decision Dashboard"), snapshot.index("### Decisions to make"))
+        self.assertLess(snapshot.index("### Hal yang Perlu Diketahui Manajemen"), snapshot.index("### Dasbor Keputusan"))
+        self.assertLess(snapshot.index("### Dasbor Keputusan"), snapshot.index("### Keputusan yang Perlu Diambil"))
 
         sections = self.engine.build_report_sections(
             self.timeframe,

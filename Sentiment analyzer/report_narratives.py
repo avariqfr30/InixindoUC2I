@@ -552,7 +552,7 @@ class ReportNarrativeBuilderMixin:
 
     def build_executive_snapshot(self, timeframe, notes="", sentiment="all", segment="all", score_engine=DEFAULT_SCORE_ENGINE, macro_trends=""):
         timeframe_df = self._filter_view(timeframe, sentiment=sentiment, segment=segment)
-        if timeframe_df.empty: return "## Executive Summary\n- Belum ada bukti evaluasi yang cukup untuk menyusun ringkasan eksekutif pada kombinasi filter yang dipilih.\n"
+        if timeframe_df.empty: return "## Ringkasan Eksekutif\n- Belum ada bukti evaluasi yang cukup untuk menyusun ringkasan eksekutif pada kombinasi filter yang dipilih.\n"
 
         context = self._build_analysis_context(timeframe_df, timeframe, sentiment, segment, score_engine)
         governance = self._governance_summary(timeframe_df)
@@ -607,11 +607,11 @@ class ReportNarrativeBuilderMixin:
         specialist_review = self._specialist_review_markdown(timeframe, macro_trends, sentiment, segment, score_engine)
 
         return DocumentBuilder.reader_facing_text("\n".join([
-            "## Executive Summary", opening, "",
-            "### What leadership needs to know", *headlines, "",
-            "### Decision Dashboard", dashboard_table, "",
+            "## Ringkasan Eksekutif", opening, "",
+            "### Hal yang Perlu Diketahui Manajemen", *headlines, "",
+            "### Dasbor Keputusan", dashboard_table, "",
             specialist_review, "",
-            "### Decisions to make", action_table, "",
-            "### Discussion agenda", *meeting_agenda, "",
-            "### Supporting context", context_table, "", technical_note,
+            "### Keputusan yang Perlu Diambil", action_table, "",
+            "### Agenda Diskusi", *meeting_agenda, "",
+            "### Konteks Pendukung", context_table, "", technical_note,
         ]))

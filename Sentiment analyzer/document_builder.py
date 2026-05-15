@@ -59,7 +59,7 @@ class StyleEngine:
             footer_paragraph = section.footer.paragraphs[0] if section.footer.paragraphs else section.footer.add_paragraph()
             footer_paragraph.clear()
             footer_paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-            footer_run = footer_paragraph.add_run("STRICTLY CONFIDENTIAL | Inixindo Jogja Executive Report | Page ")
+            footer_run = footer_paragraph.add_run("SANGAT RAHASIA | Laporan Eksekutif Inixindo Jogja | Halaman ")
             footer_run.font.name, footer_run.font.size, footer_run.font.color.rgb = "Calibri", Pt(9), RGBColor(128, 128, 128)
             append_field(footer_paragraph, "PAGE")
 
@@ -191,12 +191,12 @@ class DocumentBuilder:
         (Twips(1440), Twips(-360)),
     )
     DEFAULT_TOC_ITEMS = (
-        "Executive Summary",
-        "BAB I - Descriptive Analytics & Feedback Governance",
-        "BAB II - Diagnostic Analytics & Root Cause",
-        "BAB III - Predictive Analytics & Early Warning",
-        "BAB IV - Prescriptive Analytics & Action Plan",
-        "BAB V - Implementation Readiness",
+        "Ringkasan Eksekutif",
+        "BAB I - Analitik Deskriptif dan Tata Kelola Umpan Balik",
+        "BAB II - Analitik Diagnostik dan Akar Masalah",
+        "BAB III - Analitik Prediktif dan Peringatan Dini",
+        "BAB IV - Analitik Preskriptif dan Rencana Aksi",
+        "BAB V - Kesiapan Implementasi",
     )
 
     SOURCE_REPLACEMENTS = (

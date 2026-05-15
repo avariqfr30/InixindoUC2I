@@ -177,7 +177,7 @@ class InternalApiSettingsTests(unittest.TestCase):
     def test_settings_template_exposes_refresh_without_requiring_resave(self):
         template = (PROJECT_DIR / "templates" / "index.html").read_text(encoding="utf-8")
 
-        self.assertIn("Refresh Dataset Sekarang", template)
+        self.assertIn("Muat Ulang Data Sekarang", template)
         self.assertIn("btn-refresh-internal-api", template)
         self.assertIn("/api/internal-api/refresh", template)
         self.assertIn("setInternalApiConnectionState", template)
