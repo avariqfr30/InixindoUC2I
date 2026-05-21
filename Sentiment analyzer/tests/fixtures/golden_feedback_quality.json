@@ -1,0 +1,10 @@
+{
+  "timeframe": "1 Bulan Terakhir (Monthly)",
+  "notes": "Periksa risiko jadwal dan tindak lanjut layanan.",
+  "score_engine": "experience_index",
+  "expected": {
+    "required_section_prefix": "### Bukti yang Dipakai",
+    "forbidden_reader_terms": ["APIDog", "Internal API", "endpoint", "source=", "Evidence Ledger"],
+    "required_summary_sections": ["### Inti Keputusan", "### Sintesis Lintas Bab", "### Rekomendasi"]
+  }
+}

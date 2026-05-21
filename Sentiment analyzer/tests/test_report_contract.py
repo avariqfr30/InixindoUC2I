@@ -12,6 +12,7 @@ from docx.shared import Twips
 
 from config import CX_SENTIMENT_STRUCTURE
 from document_builder import DocumentBuilder
+from report_evidence import ReportEvidenceBuilder
 from report_analytics import FeedbackAnalyticsEngine
 from report_agents import FeedbackProposalTeam
 from report_quality import ReportQualityValidator
@@ -40,18 +41,45 @@ class ReportAnalyticsContractTests(unittest.TestCase):
         self.assertEqual([item["id"] for item in sections], [item["id"] for item in CX_SENTIMENT_STRUCTURE])
         self.assertEqual([item["title"] for item in sections], [item["title"] for item in CX_SENTIMENT_STRUCTURE])
         self.assertTrue(all(section["content"].strip() for section in sections))
+        self.assertTrue(all(section["content"].lstrip().startswith("### Bukti yang Dipakai") for section in sections))
 
         combined = "\n".join(section["content"] for section in sections)
         required_markers = [
-            "## 1.1 Ringkasan Cakupan Feedback dan Tata Kelola",
-            "## 2.1 Akar Masalah Utama dan Pain Point Dominan",
+            "## 1.1 Ringkasan Cakupan Umpan Balik dan Tata Kelola",
+            "## 2.1 Akar Masalah Utama dan Titik Keluhan Dominan",
             "## 3.1 Risiko Jangka Pendek Jika Pola Saat Ini Berlanjut",
             "## 4.1 Intervensi Prioritas 30 Hari",
             "## 5.1 Prioritas Sasaran Bisnis",
-            "Experience Index",
+            "Indeks Pengalaman",
         ]
         for marker in required_markers:
             self.assertIn(marker, combined)
+
+    def test_report_evidence_cards_are_source_safe(self):
+        sections = [
+            {
+                "id": "cx_chap_1",
+                "title": "Analisis Deskriptif",
+                "content": "APIDog source=/api/Resource/dataset menunjukkan 120 respons dan risiko onboarding.",
+            }
+        ]
+
+        enriched = ReportEvidenceBuilder.attach_to_sections(sections)
+        content = enriched[0]["content"]
+
+        self.assertIn("### Bukti yang Dipakai", content)
+        self.assertIn("120 respons", content)
+        for forbidden in ["APIDog", "/api/Resource/dataset", "source=", "Evidence Ledger"]:
+            self.assertNotIn(forbidden, content)
+
+    def test_narrative_preflight_rejects_empty_and_raw_source_content(self):
+        result = ReportQualityValidator.evaluate_narrative(
+            "## Ringkasan Eksekutif\nRingkas.",
+            [{"id": "cx_chap_1", "title": "Bab 1", "content": "APIDog endpoint."}],
+        )
+
+        self.assertFalse(result["passes"])
+        self.assertIn("raw_source_label", result["categories"])
 
     def test_executive_snapshot_keeps_decision_ready_contract(self):
         snapshot = self.engine.build_executive_snapshot(
@@ -62,7 +90,9 @@ class ReportAnalyticsContractTests(unittest.TestCase):
 
         required_markers = [
             "## Ringkasan Eksekutif",
-            "### Hal yang Perlu Diketahui Manajemen",
+            "### Inti Keputusan",
+            "### Temuan Utama",
+            "### Rekomendasi",
             "### Dasbor Keputusan",
             "| Pertanyaan Eksekutif | Jawaban Singkat |",
             "### Keputusan yang Perlu Diambil",
@@ -71,7 +101,9 @@ class ReportAnalyticsContractTests(unittest.TestCase):
         for marker in required_markers:
             self.assertIn(marker, snapshot)
         self.assertNotIn("Formula Experience Index", snapshot)
-        self.assertLess(snapshot.index("### Hal yang Perlu Diketahui Manajemen"), snapshot.index("### Dasbor Keputusan"))
+        self.assertLess(snapshot.index("### Inti Keputusan"), snapshot.index("### Temuan Utama"))
+        self.assertLess(snapshot.index("### Temuan Utama"), snapshot.index("### Rekomendasi"))
+        self.assertLess(snapshot.index("### Rekomendasi"), snapshot.index("### Dasbor Keputusan"))
         self.assertLess(snapshot.index("### Dasbor Keputusan"), snapshot.index("### Keputusan yang Perlu Diambil"))
 
         sections = self.engine.build_report_sections(
@@ -81,7 +113,7 @@ class ReportAnalyticsContractTests(unittest.TestCase):
             score_engine="experience_index",
         )
         combined_sections = "\n".join(section["content"] for section in sections)
-        self.assertIn("Penjelasan Perhitungan Experience Index", combined_sections)
+        self.assertIn("Penjelasan Perhitungan Indeks Pengalaman", combined_sections)
 
     def test_executive_snapshot_reports_raw_response_volume_for_aggregated_class_report(self):
         dataframe = pd.DataFrame(
@@ -114,9 +146,9 @@ class ReportAnalyticsContractTests(unittest.TestCase):
             score_engine="experience_index",
         )
 
-        self.assertIn("3 respons mentah", snapshot)
-        self.assertIn("1 dimensi evaluasi", snapshot)
-        self.assertIn("2 rating", snapshot)
+        self.assertIn("3 respons", snapshot)
+        self.assertIn("1 dimensi", snapshot)
+        self.assertIn("2 penilaian", snapshot)
         self.assertIn("1 komentar teks", snapshot)
 
     def test_docx_quality_accepts_generated_contract(self):
@@ -238,32 +270,30 @@ class ReportAnalyticsContractTests(unittest.TestCase):
         self.assertFalse(briefing["prediction_review"]["statistical_forecast"])
         self.assertIn("early warning", briefing["prediction_review"]["method"].lower())
 
-    def test_report_includes_specialist_review_before_technical_sections(self):
+    def test_executive_summary_hides_specialist_workflow_labels(self):
         snapshot = self.engine.build_executive_snapshot(
             self.timeframe,
             self.notes,
             score_engine="experience_index",
         )
-        sections = self.engine.build_report_sections(
-            self.timeframe,
-            self.notes,
-            self.macro_trends,
-            score_engine="experience_index",
-        )
-        combined = snapshot + "\n" + "\n".join(section["content"] for section in sections)
 
-        self.assertIn("### Review Tim Analis Internal", snapshot)
-        self.assertIn("Data Steward", snapshot)
-        self.assertIn("Rating Analyst", snapshot)
-        self.assertIn("Voice-of-Customer Analyst", snapshot)
-        self.assertIn("Confidence Desk", snapshot)
-        self.assertIn("Evidence Ledger", snapshot)
-        self.assertIn("QA Guardrail", snapshot)
-        self.assertIn("Report Audit Trail", snapshot)
-        self.assertIn("Contradiction Check", snapshot)
-        self.assertIn("Historical Trend Desk", snapshot)
-        self.assertIn("Prediction Boundary", snapshot)
-        self.assertLess(combined.index("### Review Tim Analis Internal"), combined.index("## 1.1 Ringkasan Cakupan Feedback dan Tata Kelola"))
+        self.assertIn("### Inti Keputusan", snapshot)
+        self.assertIn("### Temuan Utama", snapshot)
+        self.assertIn("### Rekomendasi", snapshot)
+        for forbidden in [
+            "Review Tim Analis Internal",
+            "Data Steward",
+            "Rating Analyst",
+            "Voice-of-Customer Analyst",
+            "Confidence Desk",
+            "Evidence Ledger",
+            "QA Guardrail",
+            "Report Audit Trail",
+            "Contradiction Check",
+            "Historical Trend Desk",
+            "Prediction Boundary",
+        ]:
+            self.assertNotIn(forbidden, snapshot)
 
 
 if __name__ == "__main__":

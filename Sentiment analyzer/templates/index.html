@@ -854,6 +854,16 @@
 
         initNotesEditor();
         syncNotesState();
+
+        function warmReportContext(payload) {
+            fetch('/api/report-prefetch', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload)
+            }).catch(err => {
+                console.warn('Prefetch laporan tidak berhasil:', err);
+            });
+        }
         
         ui.btnReview.onclick = () => { 
             clearJobStatus();
@@ -874,6 +884,13 @@
             ui.reviewText.innerHTML = html; 
             ui.configStep.classList.add('hidden'); 
             ui.reviewStep.classList.remove('hidden'); 
+            warmReportContext({
+                timeframe: ui.selectTimeframe.value,
+                sentiment: ui.selectSentiment.value,
+                segment: ui.selectSegment.value,
+                score_engine: ui.selectScoreEngine.value,
+                notes: notesPayload.text
+            });
         };
         
         ui.btnBack.onclick = () => { 

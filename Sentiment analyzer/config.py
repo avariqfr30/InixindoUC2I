@@ -188,7 +188,7 @@ INTERNAL_API_SOURCE_PARAMS = _load_json_object(
 )
 INTERNAL_API_ENDPOINTS = _load_internal_api_endpoints()
 
-WRITER_FIRM_NAME = "Inixindo Jogja - Quality Assurance & CX Division"
+WRITER_FIRM_NAME = "Inixindo Jogja - Divisi Penjaminan Mutu dan Pengalaman Pelanggan"
 DEFAULT_COLOR = (204, 0, 0)
 
 SMART_SUGGESTIONS = [
@@ -506,26 +506,26 @@ ADOPTION_READINESS_PILLARS = [
 
 CX_SENTIMENT_STRUCTURE = [
     {
-        "id": "cx_chap_1", "title": "BAB I – DESCRIPTIVE ANALYTICS & FEEDBACK GOVERNANCE",
+        "id": "cx_chap_1", "title": "BAB I – ANALITIK DESKRIPTIF DAN TATA KELOLA UMPAN BALIK",
         "sections": [
-            "1.1 Ringkasan Cakupan Feedback dan Tata Kelola",
-            "1.2 Distribusi Sentimen, Rating, dan Volume",
-            "1.3 Distribusi Stakeholder, Layanan, dan Kanal/Sumber"
+            "1.1 Ringkasan Cakupan Umpan Balik dan Tata Kelola",
+            "1.2 Distribusi Sentimen, Penilaian, dan Volume",
+            "1.3 Distribusi Pemangku Kepentingan, Layanan, dan Kanal/Sumber"
         ],
         "focus_keywords": "feedback governance descriptive analytics rating stakeholder service channel source",
         "visual": "bar_chart"
     },
     {
-        "id": "cx_chap_2", "title": "BAB II – DIAGNOSTIC ANALYTICS",
+        "id": "cx_chap_2", "title": "BAB II – ANALITIK DIAGNOSTIK",
         "sections": [
-            "2.1 Akar Masalah Utama dan Pain Point Dominan",
+            "2.1 Akar Masalah Utama dan Titik Keluhan Dominan",
             "2.2 Kekuatan yang Konsisten dan Area yang Perlu Dijaga",
             "2.3 Bukti Verbatim, Kesenjangan Proses, dan Segmentasi Masalah"
         ],
         "focus_keywords": "diagnostic analytics root cause complaint praise service quality process gap"
     },
     {
-        "id": "cx_chap_3", "title": "BAB III – PREDICTIVE ANALYTICS",
+        "id": "cx_chap_3", "title": "BAB III – ANALITIK PREDIKTIF",
         "sections": [
             "3.1 Risiko Jangka Pendek Jika Pola Saat Ini Berlanjut",
             "3.2 Prediksi Segmen dan Layanan yang Paling Rentan",
@@ -534,10 +534,10 @@ CX_SENTIMENT_STRUCTURE = [
         "focus_keywords": "predictive analytics risk trend forecast segment service vulnerability"
     },
     {
-        "id": "cx_chap_4", "title": "BAB IV – PRESCRIPTIVE ANALYTICS",
+        "id": "cx_chap_4", "title": "BAB IV – ANALITIK PRESKRIPTIF",
         "sections": [
             "4.1 Intervensi Prioritas 30 Hari",
-            "4.2 Penguatan Tata Kelola Feedback dan Eskalasi",
+            "4.2 Penguatan Tata Kelola Umpan Balik dan Eskalasi",
             "4.3 Rencana Tindak Lanjut Lintas Fungsi"
         ],
         "focus_keywords": "prescriptive analytics recommendation action plan governance mitigation",

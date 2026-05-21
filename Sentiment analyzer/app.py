@@ -1,6 +1,7 @@
 import io
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from functools import wraps
 
@@ -36,6 +37,7 @@ from config import (
     DB_URI,
     DEFAULT_SCORE_ENGINE,
     SCORE_ENGINE_OPTIONS,
+    SCORE_ENGINE_PROFILES,
     SENTIMENT_OPTIONS,
     SESSION_COOKIE_SECURE,
     SESSION_IDLE_TIMEOUT_SECONDS,
@@ -46,6 +48,7 @@ from internal_api_service import InternalApiService
 from internal_api_settings import connector_settings_state
 from job_presenter import present_job
 from knowledge_base import KnowledgeBase
+from osint_research import Researcher
 from report_engine import ReportGenerator
 from runtime import QueueCapacityError, ReportJobManager
 
@@ -63,6 +66,7 @@ app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(seconds=SESSION_IDLE_TIMEOU
 kb = KnowledgeBase(DB_URI)
 generator = ReportGenerator(kb)
 job_manager = ReportJobManager(generator)
+prefetch_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="report-prefetch")
 logger.info("Application started in %s mode.", APP_MODE)
 
 
@@ -77,6 +81,28 @@ def _internal_api_service():
 
 def _internal_api_settings_state():
     return _internal_api_service().get_state()
+
+
+def warm_report_context(data):
+    report_request = ReportRequest.from_mapping(data).validate()
+    payload = report_request.to_job_payload()
+    score_profile = SCORE_ENGINE_PROFILES.get(
+        payload["score_engine"],
+        SCORE_ENGINE_PROFILES[DEFAULT_SCORE_ENGINE],
+    )
+    prefetch_executor.submit(
+        Researcher.get_macro_trends,
+        payload["timeframe"],
+        payload["notes"],
+        score_profile["label"],
+    )
+    return {
+        "status": "warming",
+        "timeframe": payload["timeframe"],
+        "sentiment": payload["sentiment"],
+        "segment": payload["segment"],
+        "score_engine": payload["score_engine"],
+    }
 
 
 def create_app():
@@ -95,6 +121,7 @@ def login_required(view_func):
             "/get-config",
             "/generate",
             "/generate-job",
+            "/api/report-prefetch",
             "/refresh-knowledge",
         } or request.is_json
         if wants_json:
@@ -324,6 +351,17 @@ def get_config():
             "current_user": active_user,
         }
     )
+
+
+@app.route("/api/report-prefetch", methods=["POST"])
+@login_required
+def report_prefetch():
+    data = request.get_json(silent=True) or {}
+    try:
+        payload = warm_report_context(data)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(payload), 202
 
 
 @app.route("/generate", methods=["POST"])

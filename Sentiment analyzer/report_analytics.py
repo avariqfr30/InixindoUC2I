@@ -60,10 +60,14 @@ class FeedbackAnalyticsEngine(ReportNarrativeBuilderMixin):
                 self.full_df[column_name] = ""
         self.full_df = self.full_df.fillna("")
         if not self.full_df.empty:
-            self.full_df["Rating Numeric"] = pd.to_numeric(
-                self.full_df["Rating"],
-                errors="coerce",
-            )
+            rating_numeric = pd.to_numeric(self.full_df["Rating"], errors="coerce")
+            if "Rating Numeric" in dataframe.columns:
+                explicit_rating_numeric = pd.to_numeric(dataframe["Rating Numeric"], errors="coerce")
+                rating_numeric = rating_numeric.fillna(explicit_rating_numeric)
+            self.full_df["Rating Numeric"] = rating_numeric.apply(self._normalize_rating_value)
+            self.full_df["Rating"] = self.full_df["Rating Numeric"].apply(self._format_rating_for_display)
+            self.full_df["Layanan"] = self.full_df["Layanan"].apply(self._reader_safe_dimension_label)
+            self.full_df["Komentar"] = self.full_df["Komentar"].apply(self._reader_safe_text_label)
             self.full_df["Sentiment Label"] = self.full_df["Rating Numeric"].apply(
                 self._sentiment_label
             )
@@ -82,6 +86,49 @@ class FeedbackAnalyticsEngine(ReportNarrativeBuilderMixin):
         if value <= 2:
             return "negative"
         return "neutral"
+
+    @staticmethod
+    def _normalize_rating_value(value):
+        if pd.isna(value):
+            return value
+        numeric_value = float(value)
+        if 5 < numeric_value <= 50:
+            return numeric_value / 10
+        if 50 < numeric_value <= 100:
+            return numeric_value / 20
+        return numeric_value
+
+    @staticmethod
+    def _format_rating_for_display(value):
+        if pd.isna(value):
+            return ""
+        rounded = round(float(value), 2)
+        if rounded.is_integer():
+            return str(int(rounded))
+        return str(rounded).rstrip("0").rstrip(".")
+
+    @staticmethod
+    def _reader_safe_dimension_label(value):
+        text = re.sub(r"\s+", " ", str(value or "")).strip(" :-")
+        lowered = text.lower()
+        if any(token in lowered for token in ("brand equity", "mengapa inixindo", "menjadi pilihan")):
+            return "Reputasi dan alasan memilih Inixindo"
+        if re.search(r"\bpilih\s+\d+\s+bintang\b|\buntuk mengisi\b", text, flags=re.IGNORECASE):
+            return "Evaluasi umum kelas"
+        if len(text) > 72 and any(mark in text for mark in ("?", "(", ")")):
+            return "Evaluasi umum kelas"
+        return text or "Tidak terklasifikasi"
+
+    @classmethod
+    def _reader_safe_text_label(cls, value):
+        text = re.sub(r"\s+", " ", str(value or "")).strip()
+        text = re.sub(
+            r"BRAND EQUITY\s*\(Mengapa Inixindo Jogja menjadi pilihan\?\)\s*Pilih\s+\d+\s+Bintang\s+untuk\s+mengisi",
+            "Reputasi dan alasan memilih Inixindo",
+            text,
+            flags=re.IGNORECASE,
+        )
+        return text
 
     @staticmethod
     def _safe_percentage(numerator, denominator):

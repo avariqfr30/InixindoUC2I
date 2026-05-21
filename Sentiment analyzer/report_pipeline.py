@@ -9,6 +9,7 @@ from document_builder import DocumentBuilder
 from osint_research import Researcher
 from report_agents import FeedbackProposalTeam
 from report_analytics import FeedbackAnalyticsEngine
+from report_evidence import ReportEvidenceBuilder
 from report_quality import ReportQualityValidator
 
 logger = logging.getLogger(__name__)
@@ -55,14 +56,6 @@ class ReportAnalysisStage:
 
 class ReportNarrativeStage:
     def run(self, analytics, context, macro_trends):
-        executive_snapshot = analytics.build_executive_snapshot(
-            context.timeframe,
-            context.notes,
-            sentiment=context.sentiment,
-            segment=context.segment,
-            score_engine=context.score_engine,
-            macro_trends=macro_trends,
-        )
         report_sections = analytics.build_report_sections(
             context.timeframe,
             context.notes,
@@ -71,14 +64,32 @@ class ReportNarrativeStage:
             segment=context.segment,
             score_engine=context.score_engine,
         )
+        report_sections = ReportEvidenceBuilder.attach_to_sections(report_sections)
+        executive_snapshot = analytics.build_executive_snapshot(
+            context.timeframe,
+            context.notes,
+            sentiment=context.sentiment,
+            segment=context.segment,
+            score_engine=context.score_engine,
+            macro_trends=macro_trends,
+            report_sections=report_sections,
+        )
         return executive_snapshot, report_sections
+
+
+class ReportPreflightQualityStage:
+    def run(self, executive_snapshot, report_sections):
+        result = ReportQualityValidator.evaluate_narrative(executive_snapshot, report_sections)
+        if not result["passes"]:
+            raise ValueError("Report narrative preflight failed: " + "; ".join(result["findings"]))
+        return result
 
 
 class DocumentRenderStage:
     def run(self, context, executive_snapshot, report_sections):
         document = Document()
         DocumentBuilder.create_cover(document, context.timeframe, DEFAULT_COLOR)
-        document.add_heading("EXECUTIVE SUMMARY", level=1)
+        document.add_heading("Ringkasan Eksekutif", level=1)
         DocumentBuilder.process_content(document, executive_snapshot, DEFAULT_COLOR)
         document.add_page_break()
 
@@ -141,12 +152,14 @@ class ReportPipeline:
         narrative_stage=None,
         document_stage=None,
         quality_stage=None,
+        preflight_stage=None,
     ):
         self.kb = kb_instance
         self.research_stage = research_stage or ReportResearchStage()
         self.analysis_stage = analysis_stage or ReportAnalysisStage()
         self.narrative_stage = narrative_stage or ReportNarrativeStage()
         self.document_stage = document_stage or DocumentRenderStage()
+        self.preflight_stage = preflight_stage or ReportPreflightQualityStage()
         self.quality_stage = quality_stage or ReportQualityStage()
 
     def run(
@@ -165,6 +178,7 @@ class ReportPipeline:
             context,
             macro_trends,
         )
+        preflight_quality = self.preflight_stage.run(executive_snapshot, report_sections)
         document = self.document_stage.run(context, executive_snapshot, report_sections)
         quality = self.quality_stage.run(
             document,
@@ -175,6 +189,7 @@ class ReportPipeline:
             context,
             macro_trends,
         )
+        quality["preflight"] = preflight_quality
         filename = (
             f"Inixindo_Feedback_Intelligence_Report_{context.score_profile['label']}_{timeframe}"
         ).replace(" ", "_")

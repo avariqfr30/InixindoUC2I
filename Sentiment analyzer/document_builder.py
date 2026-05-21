@@ -34,6 +34,14 @@ def append_field(paragraph, instruction):
     field_end.set(qn("w:fldCharType"), "end")
     run._r.extend([field_begin, field_instruction, field_separator, field_end])
 
+def enable_update_fields_on_open(doc):
+    settings = doc.settings.element
+    update_fields = settings.find(qn("w:updateFields"))
+    if update_fields is None:
+        update_fields = OxmlElement("w:updateFields")
+        settings.append(update_fields)
+    update_fields.set(qn("w:val"), "true")
+
 class StyleEngine:
     @staticmethod
     def _configure_text_style(style, font_name, font_size, color, bold=False):
@@ -200,6 +208,26 @@ class DocumentBuilder:
     )
 
     SOURCE_REPLACEMENTS = (
+        (r"\bNama\s+Perusahaan\s+Klien\s*:", "catatan klien:"),
+        (r"\bReferenceAccount\s+mencatat\b", "catatan klien menunjukkan"),
+        (r"\bsource\s*=\s*(?:https?://\S+|/api/[A-Za-z0-9_./-]+)?", ""),
+        (r"\bdataset[_\s-]*code\s*=\s*ConsultantProjectExpertHistory\b", "riwayat pengalaman konsultan"),
+        (r"\bConsultantProjectExpertHistory\b", "riwayat pengalaman konsultan"),
+        (r"\bDirangkum\s+dari\s+sumber[^:]*:\s*", "Berdasarkan catatan pendukung yang sudah dipadatkan: "),
+        (r"\bProblem\s*,\s*Opportunity\s*,\s*Directive\b", "kebutuhan prioritas yang perlu dipertegas"),
+        (r"\bReferenceAccount\b", "catatan klien"),
+        (r"\bPain\s+Points\b", "titik masalah"),
+        (r"\bS\s*T\s*R\s*I\s*C\s*T\s*L\s*Y\s+C\s*O\s*N\s*F\s*I\s*D\s*E\s*N\s*T\s*I\s*A\s*L\b", "SANGAT RAHASIA"),
+        (r"HOLISTIC CUSTOMER EXPERIENCE REPORT", "LAPORAN MENYELURUH PENGALAMAN PELANGGAN"),
+        (r"Prepared for Executive Board by:", "Disiapkan untuk Dewan Eksekutif oleh:"),
+        (r"EXECUTIVE SUMMARY", "Ringkasan Eksekutif"),
+        (r"\bBLUF\b", "Inti Keputusan"),
+        (r"Key Findings", "Temuan Utama"),
+        (r"Recommendation", "Rekomendasi"),
+        (r"DESCRIPTIVE ANALYTICS\s*&\s*FEEDBACK GOVERNANCE", "ANALITIK DESKRIPTIF DAN TATA KELOLA UMPAN BALIK"),
+        (r"DIAGNOSTIC ANALYTICS", "ANALITIK DIAGNOSTIK"),
+        (r"PREDICTIVE ANALYTICS", "ANALITIK PREDIKTIF"),
+        (r"PRESCRIPTIVE ANALYTICS", "ANALITIK PRESKRIPTIF"),
         (r"Semua Data APIDog \(tanggal tidak tersedia\)", "Seluruh Periode Evaluasi"),
         (r"Semua Data sistem data evaluasi \(tanggal tidak tersedia\)", "Seluruh Periode Evaluasi"),
         (r"APIDog", "sistem data evaluasi"),
@@ -213,6 +241,32 @@ class DocumentBuilder:
         (r"OSINT benchmark", "pembanding eksternal"),
         (r"OSINT", "konteks eksternal"),
         (r"Jejak sumber yang dipakai", "Jejak bukti yang dipakai"),
+        (r"BRAND EQUITY\s*\(Mengapa Inixindo Jogja menjadi pilihan\?\)\s*Pilih\s+\d+\s+Bintang\s+untuk\s+mengisi", "Reputasi dan alasan memilih Inixindo"),
+        (r"\bPilih\s+\d+\s+Bintang\s+untuk\s+mengisi\b", ""),
+        (r"\bCustomer\s+journey\b", "perjalanan pelanggan"),
+        (r"\bcustomer\s+journey\b", "perjalanan pelanggan"),
+        (r"\bScore\s+Engine\b", "Perspektif Skor"),
+        (r"\bscore\s+engine\b", "perspektif skor"),
+        (r"\bExperience\s+Index\b", "Indeks Pengalaman"),
+        (r"\bLearning\s+Score\b", "Skor Pembelajaran"),
+        (r"\bService\s+Score\b", "Skor Layanan"),
+        (r"\bFacility\s+Score\b", "Skor Fasilitas"),
+        (r"\bfeedback\b", "umpan balik"),
+        (r"\brating\b", "penilaian"),
+        (r"\bdashboard\b", "dasbor"),
+        (r"\binsight\b", "wawasan"),
+        (r"\bstakeholder\b", "pemangku kepentingan"),
+        (r"\bbenchmark\b", "pembanding"),
+        (r"\bowner\b", "penanggung jawab"),
+        (r"\breview\b", "tinjauan"),
+        (r"\bquick wins?\b", "perbaikan cepat"),
+        (r"\bapproval gate\b", "gerbang persetujuan"),
+        (r"\bpain point\b", "titik keluhan"),
+        (r"\bfield\b", "kolom"),
+        (r"\brecord\b", "catatan"),
+        (r"\bdelivery\b", "pelaksanaan"),
+        (r"\boutcome\b", "dampak hasil"),
+        (r"\bclass_report\b", "laporan kelas"),
     )
 
     @staticmethod
@@ -220,6 +274,19 @@ class DocumentBuilder:
         clean_text = str(raw_text or "")
         for pattern, replacement in DocumentBuilder.SOURCE_REPLACEMENTS:
             clean_text = re.sub(pattern, replacement, clean_text, flags=re.IGNORECASE)
+        presentation_replacements = (
+            (r"Ringkasan Cakupan umpan balik", "Ringkasan Cakupan Umpan Balik"),
+            (r"Distribusi Sentimen, penilaian", "Distribusi Sentimen, Penilaian"),
+            (r"Distribusi pemangku kepentingan", "Distribusi Pemangku Kepentingan"),
+            (r"pemangku kepentingan dengan volume", "Pemangku kepentingan dengan volume"),
+            (r"Akar Masalah Utama dan titik keluhan", "Akar Masalah Utama dan Titik Keluhan"),
+            (r"Tahap perjalanan pelanggan", "Tahap Perjalanan Pelanggan"),
+            (r"tahapan perjalanan pelanggan", "tahapan perjalanan pelanggan"),
+            (r"Penjelasan Perhitungan Indeks Pengalaman", "Penjelasan Perhitungan Indeks Pengalaman"),
+            (r"umpan balik Score\\.xlsx", "Parameter Skor Evaluasi.xlsx"),
+        )
+        for pattern, replacement in presentation_replacements:
+            clean_text = re.sub(pattern, replacement, clean_text)
         clean_text = re.sub(r"\b(endpoint|schema|sync status|source-of-truth|Waitress|thread|runtime)\b", "kesiapan operasional", clean_text, flags=re.IGNORECASE)
         clean_text = re.sub(r"\s+", " ", clean_text) if "\n" not in clean_text else "\n".join(re.sub(r"[ \t]+", " ", line).rstrip() for line in clean_text.splitlines())
         return clean_text.strip()
@@ -463,10 +530,8 @@ class DocumentBuilder:
 
     @staticmethod
     def add_table_of_contents(doc, items=None):
+        enable_update_fields_on_open(doc)
         doc.add_heading("DAFTAR ISI", level=1)
-        for item in (items or DocumentBuilder.DEFAULT_TOC_ITEMS):
-            paragraph = doc.add_paragraph(str(item), style="List Bullet")
-            DocumentBuilder._format_paragraph(paragraph, alignment=WD_ALIGN_PARAGRAPH.LEFT, after=2, line_spacing=1.0)
         toc_paragraph = doc.add_paragraph()
         DocumentBuilder._format_paragraph(toc_paragraph, alignment=WD_ALIGN_PARAGRAPH.LEFT, after=8)
         append_field(toc_paragraph, 'TOC \\o "1-3" \\h \\z \\u')
@@ -478,12 +543,12 @@ class DocumentBuilder:
         for _ in range(4):
             DocumentBuilder._add_spacer(doc, height=8)
 
-        confidentiality = doc.add_paragraph("S T R I C T L Y   C O N F I D E N T I A L")
+        confidentiality = doc.add_paragraph("S A N G A T   R A H A S I A")
         DocumentBuilder._format_paragraph(confidentiality, alignment=WD_ALIGN_PARAGRAPH.CENTER, after=10)
         confidentiality.runs[0].font.size, confidentiality.runs[0].font.color.rgb, confidentiality.runs[0].font.bold = Pt(10), RGBColor(128, 128, 128), True
 
         DocumentBuilder._add_spacer(doc, height=8)
-        report_title = doc.add_paragraph("HOLISTIC CUSTOMER EXPERIENCE REPORT")
+        report_title = doc.add_paragraph("LAPORAN MENYELURUH PENGALAMAN PELANGGAN")
         DocumentBuilder._format_paragraph(report_title, alignment=WD_ALIGN_PARAGRAPH.CENTER, after=4, line_spacing=1.0)
         report_title.runs[0].font.name, report_title.runs[0].font.size = "Calibri", Pt(20)
 
@@ -501,7 +566,7 @@ class DocumentBuilder:
 
         for _ in range(6):
             DocumentBuilder._add_spacer(doc, height=8)
-        prepared_for = doc.add_paragraph(f"Prepared for Executive Board by:\n{WRITER_FIRM_NAME}")
+        prepared_for = doc.add_paragraph(f"Disiapkan untuk Dewan Eksekutif oleh:\n{WRITER_FIRM_NAME}")
         DocumentBuilder._format_paragraph(prepared_for, alignment=WD_ALIGN_PARAGRAPH.CENTER, after=0, line_spacing=1.0)
         prepared_for.runs[0].font.bold = True
 

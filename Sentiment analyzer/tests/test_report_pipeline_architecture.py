@@ -17,6 +17,7 @@ class ReportPipelineArchitectureTests(unittest.TestCase):
             "ReportResearchStage",
             "ReportAnalysisStage",
             "ReportNarrativeStage",
+            "ReportPreflightQualityStage",
             "DocumentRenderStage",
             "ReportQualityStage",
             "ReportPipeline",
@@ -70,6 +71,70 @@ class ReportPipelineArchitectureTests(unittest.TestCase):
                 }
             ],
         )
+
+    def test_narrative_stage_synthesizes_executive_snapshot_after_sections(self):
+        from report_pipeline import ReportNarrativeStage, ReportRequestContext
+
+        class FakeAnalytics:
+            def __init__(self):
+                self.sections_built = False
+
+            def build_report_sections(self, *args, **kwargs):
+                self.sections_built = True
+                return [
+                    {
+                        "title": "Analisis Pengalaman Pelanggan",
+                        "content": "Keluhan onboarding terkonsentrasi pada proses aktivasi awal.",
+                    }
+                ]
+
+            def build_executive_snapshot(self, *args, **kwargs):
+                self.assert_sections_ready(kwargs.get("report_sections"))
+                return "## Ringkasan Eksekutif\nKeluhan onboarding terkonsentrasi pada proses aktivasi awal."
+
+            def assert_sections_ready(self, report_sections):
+                assert self.sections_built
+                assert report_sections[0]["content"].startswith("### Bukti yang Dipakai")
+                assert "Keluhan onboarding" in report_sections[0]["content"]
+
+        snapshot, sections = ReportNarrativeStage().run(
+            FakeAnalytics(),
+            ReportRequestContext("Seluruh Periode"),
+            "Tren eksternal ringkas.",
+        )
+
+        self.assertIn("Keluhan onboarding", snapshot)
+        self.assertEqual(sections[0]["title"], "Analisis Pengalaman Pelanggan")
+
+    def test_preflight_quality_runs_before_document_rendering(self):
+        from report_pipeline import ReportPipeline
+
+        class FakeResearch:
+            def run(self, context):
+                return "Tren eksternal."
+
+        class FakeAnalysis:
+            def run(self, dataframe):
+                return object()
+
+        class FakeNarrative:
+            def run(self, analytics, context, macro_trends):
+                return "## Ringkasan Eksekutif\nRingkas.", [{"id": "cx_chap_1", "title": "Bab", "content": ""}]
+
+        class FakeDocument:
+            def run(self, *args, **kwargs):
+                raise AssertionError("document render should not run when preflight fails")
+
+        pipeline = ReportPipeline(
+            kb_instance=type("KB", (), {"df": object()})(),
+            research_stage=FakeResearch(),
+            analysis_stage=FakeAnalysis(),
+            narrative_stage=FakeNarrative(),
+            document_stage=FakeDocument(),
+        )
+
+        with self.assertRaises(ValueError):
+            pipeline.run("Seluruh Periode")
 
 
 if __name__ == "__main__":

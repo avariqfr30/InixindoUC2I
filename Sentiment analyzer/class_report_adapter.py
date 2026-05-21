@@ -22,6 +22,7 @@ CLASS_REPORT_LABEL_OVERRIDES = {
 }
 
 CLASS_REPORT_JOURNEY_RULES = (
+    (("brand equity", "mengapa inixindo", "menjadi pilihan", "alasan memilih"), "Reputasi dan alasan memilih Inixindo", "Tindak Lanjut dan Outcome"),
     (("materi", "bahan ajar", "kurikulum", "modul"), "Materi dan kurikulum", "Pelaksanaan Layanan"),
     (("instruktur", "trainer", "pengajar", "penyampaian"), "Kinerja instruktur", "Pelaksanaan Layanan"),
     (("fasilitas", "ruang", "kelas", "lab", "lokasi"), "Fasilitas pelatihan", "Persiapan dan Kesiapan Delivery"),
@@ -31,6 +32,13 @@ CLASS_REPORT_JOURNEY_RULES = (
 
 
 class ClassReportAdapter:
+    RAW_PROMPT_PATTERNS = (
+        r"\bpilih\s+\d+\s+bintang\b",
+        r"\buntuk mengisi\b",
+        r"\?.*\)",
+        r"^[A-Z0-9 _/-]{8,}\s*\(",
+    )
+
     @staticmethod
     def looks_like_class_report(dataframe):
         columns = {str(column).strip() for column in dataframe.columns}
@@ -47,6 +55,7 @@ class ClassReportAdapter:
     @staticmethod
     def clean_label(value):
         raw_label = re.sub(r"\s+", " ", str(value or "")).strip(" :-")
+        raw_label = re.sub(r"\bPilih\s+\d+\s+Bintang\s+untuk\s+mengisi\b", "", raw_label, flags=re.IGNORECASE).strip(" :-")
         if not raw_label:
             return "Evaluasi kelas"
         override = CLASS_REPORT_LABEL_OVERRIDES.get(raw_label.upper())
@@ -78,7 +87,16 @@ class ClassReportAdapter:
         for keywords, service_label, journey_hint in CLASS_REPORT_JOURNEY_RULES:
             if any(keyword in lowered for keyword in keywords):
                 return service_label, journey_hint
+        if ClassReportAdapter.looks_like_raw_prompt(clean_label):
+            return "Evaluasi umum kelas", "Pelaksanaan Layanan"
         return clean_label or "Evaluasi kelas", "Pelaksanaan Layanan"
+
+    @staticmethod
+    def looks_like_raw_prompt(value):
+        text = re.sub(r"\s+", " ", str(value or "")).strip()
+        if len(text) > 72 and any(mark in text for mark in ("?", "(", ")")):
+            return True
+        return any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in ClassReportAdapter.RAW_PROMPT_PATTERNS)
 
     @staticmethod
     def is_rating_response(row):
