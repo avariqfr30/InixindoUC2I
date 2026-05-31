@@ -51,6 +51,7 @@ from knowledge_base import KnowledgeBase
 from osint_research import Researcher
 from report_engine import ReportGenerator
 from runtime import QueueCapacityError, ReportJobManager
+from timeframe_filters import build_available_date_options, build_timeframe_options
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -327,11 +328,7 @@ def get_config():
             }
         )
 
-    timeframes = sorted(
-        value
-        for value in kb.df["Rentang Waktu"].dropna().astype(str).str.strip().unique().tolist()
-        if value
-    )
+    timeframes = build_timeframe_options(kb.df)
     segments = sorted(
         value
         for value in kb.df["Tipe Stakeholder"].fillna("").astype(str).str.strip().unique().tolist()
@@ -342,6 +339,7 @@ def get_config():
     return jsonify(
         {
             "timeframes": timeframes,
+            "available_dates": build_available_date_options(kb.df),
             "sentiments": SENTIMENT_OPTIONS,
             "segments": [{"id": "all", "label": "Semua Segmen"}]
             + [{"id": segment, "label": segment} for segment in segments],

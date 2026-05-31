@@ -32,6 +32,8 @@ CLASS_REPORT_JOURNEY_RULES = (
 
 
 class ClassReportAdapter:
+    START_DATE_FIELDS = ("class_start_date", "start_date", "tanggal_mulai", "tanggal_awal")
+    END_DATE_FIELDS = ("class_end_date", "end_date", "tanggal_selesai", "tanggal_akhir", "created_at", "submitted_at")
     RAW_PROMPT_PATTERNS = (
         r"\bpilih\s+\d+\s+bintang\b",
         r"\buntuk mengisi\b",
@@ -45,11 +47,19 @@ class ClassReportAdapter:
         return {"response_id", "response_name", "response_answer"}.issubset(columns)
 
     @staticmethod
-    def looks_like_reference_class_report(dataframe):
+    def looks_like_reference_class_report(dataframe, endpoint_name="", dataset_code=""):
         columns = {str(column).strip() for column in dataframe.columns}
+        endpoint_token = str(endpoint_name or "").strip().lower()
+        dataset_token = str(dataset_code or "").strip().lower()
+        explicitly_reference = "reference_class_report" in endpoint_token or dataset_token == "referenceclassreport"
+        has_answer_values = False
+        if "response_answer" in dataframe.columns:
+            answers = dataframe["response_answer"].fillna("").astype(str).str.strip()
+            has_answer_values = answers.ne("").any()
         return (
             {"response_id", "response_name", "response_type"}.issubset(columns)
-            and "response_answer" not in columns
+            and not has_answer_values
+            and (explicitly_reference or "response_answer" not in columns)
         )
 
     @staticmethod
@@ -74,12 +84,92 @@ class ClassReportAdapter:
             response_id = str(row.get("response_id") or "").strip()
             if not response_id:
                 continue
-            lookup[response_id] = {
+            current = lookup.setdefault(
+                response_id,
+                {
+                    "label": cls.clean_label(row.get("response_name")),
+                    "type": str(row.get("response_type") or "").strip(),
+                    "parent_id": str(row.get("response_parent_id") or "").strip(),
+                    "class_start_dates": [],
+                    "class_end_dates": [],
+                },
+            )
+            if not current.get("label"):
+                current["label"] = cls.clean_label(row.get("response_name"))
+            for field_name, target_name in (
+                ("class_start_date", "class_start_dates"),
+                ("class_end_date", "class_end_dates"),
+            ):
+                value = str(row.get(field_name) or "").strip()
+                if value and value not in current[target_name]:
+                    current[target_name].append(value)
+            current.update({
                 "label": cls.clean_label(row.get("response_name")),
                 "type": str(row.get("response_type") or "").strip(),
                 "parent_id": str(row.get("response_parent_id") or "").strip(),
-            }
+            })
         return lookup
+
+    @staticmethod
+    def clean_date_value(value):
+        parsed = pd.to_datetime(str(value or "").strip(), errors="coerce")
+        if pd.isna(parsed):
+            return ""
+        return parsed.strftime("%Y-%m-%d")
+
+    @classmethod
+    def collect_date_context(cls, row):
+        start_dates = []
+        end_dates = []
+        for field_name in cls.START_DATE_FIELDS:
+            value = cls.clean_date_value(row.get(field_name))
+            if value and value not in start_dates:
+                start_dates.append(value)
+        for field_name in cls.END_DATE_FIELDS:
+            value = cls.clean_date_value(row.get(field_name))
+            if value and value not in end_dates:
+                end_dates.append(value)
+        return {"class_start_dates": start_dates, "class_end_dates": end_dates}
+
+    @staticmethod
+    def merge_date_context(target, source):
+        for field_name in ("class_start_dates", "class_end_dates"):
+            target_values = target.setdefault(field_name, [])
+            for value in source.get(field_name, []):
+                if value and value not in target_values:
+                    target_values.append(value)
+
+    @classmethod
+    def date_context_key(cls, row):
+        context = cls.collect_date_context(row)
+        start_dates = tuple(sorted(context.get("class_start_dates", [])))
+        end_dates = tuple(sorted(context.get("class_end_dates", [])))
+        if not start_dates and not end_dates:
+            return "__timeless__", context
+        return (start_dates, end_dates), context
+
+    @staticmethod
+    def date_context(reference=None):
+        reference = reference or {}
+        start_dates = sorted(
+            date_value
+            for item in reference.get("class_start_dates", [])
+            for date_value in [ClassReportAdapter.clean_date_value(item)]
+            if date_value
+        )
+        end_dates = sorted(
+            date_value
+            for item in reference.get("class_end_dates", [])
+            for date_value in [ClassReportAdapter.clean_date_value(item)]
+            if date_value
+        )
+        if not start_dates and not end_dates:
+            return APIDOG_UNKNOWN_DATE, APIDOG_TIMELESS_TIMEFRAME
+        start_date = start_dates[0] if start_dates else end_dates[0]
+        end_date = end_dates[-1] if end_dates else start_dates[-1]
+        if start_date == end_date:
+            return end_date, end_date
+        return end_date, f"{start_date} sampai {end_date}"
 
     @staticmethod
     def semantics(clean_label):
@@ -143,21 +233,22 @@ class ClassReportAdapter:
         return deduped
 
     @classmethod
-    def build_row(cls, endpoint_name, row_index, question, rating_value, explanation_texts):
+    def build_row(cls, endpoint_name, row_index, question, rating_value, explanation_texts, date_context=None):
         service_label, journey_hint = cls.semantics(question)
         average_text = f"Rata-rata rating {question}: {round(float(rating_value), 2)} dari 5" if pd.notna(rating_value) else question
         explanations = cls.dedupe_texts(explanation_texts, limit=5)
         why_text = f"Mengapa: {'; '.join(explanations)}" if explanations else "Mengapa: belum ada komentar teks yang terhubung ke rating ini."
+        feedback_date, timeframe = date_context or (APIDOG_UNKNOWN_DATE, APIDOG_TIMELESS_TIMEFRAME)
         return {
             "Record ID": f"{endpoint_name}-{row_index + 1:05d}",
             "Sumber Feedback": endpoint_name,
             "Kanal Feedback": APIDOG_CLASS_REPORT_CHANNEL,
-            "Tanggal Feedback": APIDOG_UNKNOWN_DATE,
+            "Tanggal Feedback": feedback_date,
             "Tipe Stakeholder": "Peserta Kelas",
             "Layanan": service_label,
             "Lokasi": "",
             "Tipe Instruktur": "",
-            "Rentang Waktu": APIDOG_TIMELESS_TIMEFRAME,
+            "Rentang Waktu": timeframe,
             "Rating": cls.format_rating_value(rating_value),
             "Komentar": f"{average_text}. {why_text}",
             "Customer Journey Hint": journey_hint,
@@ -179,37 +270,58 @@ class ClassReportAdapter:
             answer = str(row.get("response_answer") or "").strip()
             if not response_id and not answer:
                 continue
+            date_key, row_date_context = cls.date_context_key(row)
             if cls.is_rating_response(row):
                 rating = pd.to_numeric(answer, errors="coerce")
                 if pd.isna(rating):
                     continue
+                group_key = (response_id, date_key)
                 group = rating_groups.setdefault(
-                    response_id,
+                    group_key,
                     {
                         "first_index": index,
                         "question": cls.question_label(row, reference_lookup),
+                        "response_id": response_id,
                         "ratings": [],
+                        "class_start_dates": [],
+                        "class_end_dates": [],
                     },
                 )
                 group["ratings"].append(float(rating))
+                cls.merge_date_context(group, row_date_context)
                 continue
             if cls.is_text_response(row):
                 parent_id = str(row.get("response_parent_id") or "").strip()
                 if parent_id:
-                    text_by_parent.setdefault(parent_id, []).append(answer)
+                    text_by_parent.setdefault((parent_id, date_key), []).append(answer)
+                    group = rating_groups.get((parent_id, date_key))
+                    if group is not None:
+                        cls.merge_date_context(group, row_date_context)
                 else:
-                    orphan_text_rows.append((index, cls.question_label(row, reference_lookup), answer))
+                    orphan_text_rows.append((index, cls.question_label(row, reference_lookup), answer, row_date_context))
 
         rows = []
-        for response_id, group in sorted(rating_groups.items(), key=lambda item: item[1]["first_index"]):
+        for group_key, group in sorted(rating_groups.items(), key=lambda item: item[1]["first_index"]):
+            response_id = group["response_id"]
+            _, date_key = group_key
             ratings = group["ratings"]
             average_rating = sum(ratings) / len(ratings) if ratings else float("nan")
-            explanations = text_by_parent.get(response_id, [])
+            explanations = text_by_parent.get((response_id, date_key), [])
             distribution = {}
             for value in ratings:
                 label = cls.format_rating_value(value)
                 distribution[label] = distribution.get(label, 0) + 1
-            row_payload = cls.build_row(endpoint_name, len(rows), group["question"], average_rating, explanations)
+            reference = reference_lookup.get(response_id, {})
+            merged_reference = {**reference}
+            cls.merge_date_context(merged_reference, group)
+            row_payload = cls.build_row(
+                endpoint_name,
+                len(rows),
+                group["question"],
+                average_rating,
+                explanations,
+                date_context=cls.date_context(merged_reference),
+            )
             row_payload.update(
                 {
                     "Raw Response Count": str(len(ratings) + len(explanations)),
@@ -222,19 +334,20 @@ class ClassReportAdapter:
             )
             rows.append(row_payload)
 
-        for _, question, answer in orphan_text_rows:
+        for _, question, answer, row_date_context in orphan_text_rows:
             service_label, journey_hint = cls.semantics(question)
+            feedback_date, timeframe = cls.date_context(row_date_context)
             rows.append(
                 {
                     "Record ID": f"{endpoint_name}-{len(rows) + 1:05d}",
                     "Sumber Feedback": endpoint_name,
                     "Kanal Feedback": APIDOG_CLASS_REPORT_CHANNEL,
-                    "Tanggal Feedback": APIDOG_UNKNOWN_DATE,
+                    "Tanggal Feedback": feedback_date,
                     "Tipe Stakeholder": "Peserta Kelas",
                     "Layanan": service_label,
                     "Lokasi": "",
                     "Tipe Instruktur": "",
-                    "Rentang Waktu": APIDOG_TIMELESS_TIMEFRAME,
+                    "Rentang Waktu": timeframe,
                     "Rating": "",
                     "Komentar": f"{question}: {answer}".strip(": "),
                     "Customer Journey Hint": journey_hint,

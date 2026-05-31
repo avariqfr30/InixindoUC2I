@@ -12,9 +12,9 @@ from docx.shared import Twips
 
 from config import CX_SENTIMENT_STRUCTURE
 from document_builder import DocumentBuilder
-from report_evidence import ReportEvidenceBuilder
+from report_evidence import ContextIntelligenceDesk, ReportEvidenceBuilder
 from report_analytics import FeedbackAnalyticsEngine
-from report_agents import FeedbackProposalTeam
+from report_agents import FeedbackProposalTeam, HiddenAgentDesk
 from report_quality import ReportQualityValidator
 
 
@@ -55,6 +55,117 @@ class ReportAnalyticsContractTests(unittest.TestCase):
         for marker in required_markers:
             self.assertIn(marker, combined)
 
+    def test_rolling_month_timeframe_filters_by_feedback_date(self):
+        dataframe = pd.DataFrame(
+            [
+                {
+                    "Record ID": "A",
+                    "Tanggal Feedback": "2026-03-29",
+                    "Rentang Waktu": "2026-03-01 sampai 2026-03-31",
+                    "Tipe Stakeholder": "Peserta",
+                    "Layanan": "Materi",
+                    "Rating": "5",
+                    "Komentar": "Materi relevan.",
+                },
+                {
+                    "Record ID": "B",
+                    "Tanggal Feedback": "2026-02-15",
+                    "Rentang Waktu": "2026-02-01 sampai 2026-02-28",
+                    "Tipe Stakeholder": "Peserta",
+                    "Layanan": "Instruktur",
+                    "Rating": "4",
+                    "Komentar": "Instruktur jelas.",
+                },
+                {
+                    "Record ID": "C",
+                    "Tanggal Feedback": "2025-10-01",
+                    "Rentang Waktu": "2025-10-01 sampai 2025-10-31",
+                    "Tipe Stakeholder": "Peserta",
+                    "Layanan": "Fasilitas",
+                    "Rating": "2",
+                    "Komentar": "Fasilitas perlu diperbaiki.",
+                },
+            ]
+        )
+        engine = FeedbackAnalyticsEngine(dataframe)
+
+        one_month = engine._filter_view("1 Bulan Terakhir")
+        six_months = engine._filter_view("6 Bulan Terakhir")
+
+        self.assertEqual(set(one_month["Record ID"]), {"A", "B"})
+        self.assertEqual(set(six_months["Record ID"]), {"A", "B", "C"})
+
+    def test_timeframe_options_include_only_rolling_month_choices_when_dates_exist(self):
+        from timeframe_filters import build_available_date_options, build_timeframe_options
+
+        dataframe = pd.DataFrame(
+            [
+                {"Tanggal Feedback": "2026-04-03", "Rentang Waktu": "2026-04-01 sampai 2026-04-03"},
+                {"Tanggal Feedback": "2026-03-01", "Rentang Waktu": "2026-03"},
+                {"Tanggal Feedback": "2026-05-12", "Rentang Waktu": "2026-05-10 sampai 2026-05-12"},
+                {"Tanggal Feedback": "Tanggal tidak tersedia", "Rentang Waktu": "Semua Data APIDog (tanggal tidak tersedia)"},
+            ]
+        )
+
+        options = build_timeframe_options(dataframe)
+        available_dates = build_available_date_options(dataframe)
+
+        self.assertEqual(options, [
+            "1 Bulan Terakhir",
+            "3 Bulan Terakhir",
+            "6 Bulan Terakhir",
+            "12 Bulan Terakhir / 1 Tahun",
+        ])
+        self.assertNotIn("2026-04-01 sampai 2026-04-03", options)
+        self.assertNotIn("Semua Data APIDog (tanggal tidak tersedia)", options)
+        self.assertEqual(available_dates["min"], "2026-03-01")
+        self.assertEqual(available_dates["max"], "2026-05-12")
+        self.assertEqual(available_dates["dates"], ["2026-03-01", "2026-04-03", "2026-05-12"])
+
+    def test_custom_date_range_timeframe_filters_by_start_and_end_date(self):
+        from timeframe_filters import custom_timeframe_label
+
+        dataframe = pd.DataFrame(
+            [
+                {
+                    "Record ID": "A",
+                    "Tanggal Feedback": "2026-05-12",
+                    "Rentang Waktu": "2026-05",
+                    "Tipe Stakeholder": "Peserta",
+                    "Layanan": "Materi",
+                    "Rating": "5",
+                    "Komentar": "Materi relevan.",
+                },
+                {
+                    "Record ID": "B",
+                    "Tanggal Feedback": "2026-04-03",
+                    "Rentang Waktu": "2026-04",
+                    "Tipe Stakeholder": "Peserta",
+                    "Layanan": "Instruktur",
+                    "Rating": "4",
+                    "Komentar": "Instruktur jelas.",
+                },
+                {
+                    "Record ID": "C",
+                    "Tanggal Feedback": "2026-03-01",
+                    "Rentang Waktu": "2026-03",
+                    "Tipe Stakeholder": "Peserta",
+                    "Layanan": "Fasilitas",
+                    "Rating": "2",
+                    "Komentar": "Fasilitas perlu diperbaiki.",
+                },
+            ]
+        )
+        engine = FeedbackAnalyticsEngine(dataframe)
+
+        scoped = engine._filter_view(custom_timeframe_label("2026-04-01", "2026-05-31"))
+
+        self.assertEqual(set(scoped["Record ID"]), {"A", "B"})
+
+        summary = engine.build_executive_snapshot(custom_timeframe_label("2026-04-01", "2026-05-31"))
+        self.assertIn("2026-04-01 sampai 2026-05-31", summary)
+        self.assertNotIn("custom_range:", summary)
+
     def test_report_evidence_cards_are_source_safe(self):
         sections = [
             {
@@ -71,6 +182,71 @@ class ReportAnalyticsContractTests(unittest.TestCase):
         self.assertIn("120 respons", content)
         for forbidden in ["APIDog", "/api/Resource/dataset", "source=", "Evidence Ledger"]:
             self.assertNotIn(forbidden, content)
+
+    def test_external_osint_brief_is_summarized_not_raw_links(self):
+        from osint_research import Researcher
+
+        brief = Researcher._format_osint_brief(
+            [
+                {
+                    "title": "Raw search result title",
+                    "snippet": "Survei pelanggan menunjukkan ekspektasi follow-up layanan meningkat 28% setelah program pelatihan digital.",
+                    "url": "https://example.com/report/customer-expectation",
+                    "date": "2026",
+                    "source_quality": 2,
+                }
+            ],
+            "Sinyal OSINT Makro (Indonesia)",
+        )
+
+        self.assertIn("ekspektasi follow-up layanan meningkat", brief)
+        self.assertIn("(Sumber: example.com, 2026)", brief)
+        self.assertNotIn("url=", brief)
+        self.assertNotIn("source=", brief)
+        self.assertNotIn("https://", brief)
+        self.assertNotIn("Raw search result title |", brief)
+
+    def test_executive_section_synthesis_summarizes_chapter_callouts(self):
+        synthesis = self.engine._executive_section_synthesis(
+            [
+                {
+                    "title": "Analisis Prediktif",
+                    "content": "### Bukti yang Dipakai\n- Raw callout: url=https://example.com source=example. Rating turun 12% pada layanan prioritas sehingga tindak lanjut perlu dipercepat.",
+                }
+            ]
+        )
+
+        self.assertIn("Analisis Prediktif", synthesis)
+        self.assertIn("Rating turun 12%", synthesis)
+        self.assertNotIn("url=", synthesis)
+        self.assertNotIn("source=", synthesis)
+
+    def test_context_intelligence_desk_turns_raw_notes_into_reader_safe_focus(self):
+        packet = ContextIntelligenceDesk.build(
+            dataframe=self.dataframe,
+            notes="APIDog source=/api/Resource/dataset meminta fokus Problem, Opportunity, Directive pada onboarding.",
+            timeframe=self.timeframe,
+            sentiment="all",
+            segment="all",
+            score_engine="experience_index",
+        )
+
+        self.assertIn("onboarding", packet["focus_note"].lower())
+        self.assertIn("periode", packet["coverage_note"].lower())
+        for forbidden in ["APIDog", "/api/Resource/dataset", "source=", "Problem, Opportunity, Directive", "Context Intelligence Desk"]:
+            self.assertNotIn(forbidden, "\n".join(str(value) for value in packet.values()))
+
+    def test_context_intelligence_desk_marks_weak_external_research_conservatively(self):
+        packet = ContextIntelligenceDesk.build(
+            dataframe=self.dataframe,
+            notes="Perlu cek tindak lanjut kelas.",
+            timeframe=self.timeframe,
+            macro_trends="Tidak ada tren eksternal yang berhasil dimuat.",
+        )
+
+        self.assertFalse(packet["external_context_ready"])
+        self.assertIn("belum cukup kuat", packet["external_context_note"].lower())
+        self.assertNotIn("OSINT", packet["external_context_note"])
 
     def test_narrative_preflight_rejects_empty_and_raw_source_content(self):
         result = ReportQualityValidator.evaluate_narrative(
@@ -114,6 +290,39 @@ class ReportAnalyticsContractTests(unittest.TestCase):
         )
         combined_sections = "\n".join(section["content"] for section in sections)
         self.assertIn("Penjelasan Perhitungan Indeks Pengalaman", combined_sections)
+
+    def test_executive_snapshot_uses_inixindo_management_interpretation_layer(self):
+        snapshot = self.engine.build_executive_snapshot(
+            self.timeframe,
+            self.notes,
+            score_engine="experience_index",
+        )
+
+        self.assertIn("### Interpretasi Manajemen", snapshot)
+        self.assertIn("| Sinyal | Makna | Keputusan | Aksi | Keyakinan |", snapshot)
+        self.assertIn("penilaian", snapshot.lower())
+        self.assertIn("pengalaman pelanggan", snapshot.lower())
+        self.assertIn("30 hari", snapshot)
+        self.assertLess(snapshot.index("### Interpretasi Manajemen"), snapshot.index("### Rekomendasi"))
+
+    def test_executive_snapshot_uses_finished_sections_without_generic_report_meta(self):
+        sections = [
+            {"title": "Analisis Deskriptif", "content": "### Bukti yang Dipakai\n- Evaluasi menunjukkan keluhan onboarding terkonsentrasi pada respons awal."},
+            {"title": "Kesiapan Implementasi", "content": "Owner layanan perlu menetapkan tindak lanjut 30 hari."},
+        ]
+
+        snapshot = self.engine.build_executive_snapshot(
+            self.timeframe,
+            self.notes,
+            score_engine="experience_index",
+            report_sections=sections,
+            section_context={"focus_note": "onboarding perlu dipercepat", "coverage_note": "Cakupan pembacaan memakai periode bulanan."},
+        )
+
+        self.assertIn("Sintesis Lintas Bab", snapshot)
+        self.assertIn("onboarding", snapshot.lower())
+        self.assertNotIn("Ringkasan ini dirancang", snapshot)
+        self.assertNotIn("Fokus tambahan:", snapshot)
 
     def test_executive_snapshot_reports_raw_response_volume_for_aggregated_class_report(self):
         dataframe = pd.DataFrame(
@@ -206,6 +415,20 @@ class ReportAnalyticsContractTests(unittest.TestCase):
         self.assertIn("kondisi perusahaan saat ini", predictive)
         self.assertIn("kondisi perusahaan ke depan", predictive)
 
+    def test_weak_osint_keeps_prediction_internal_data_first(self):
+        sections = self.engine.build_report_sections(
+            self.timeframe,
+            self.notes,
+            "Tidak ada tren eksternal yang berhasil dimuat.",
+            score_engine="experience_index",
+            section_context={"external_context_ready": False},
+        )
+        predictive = next(section["content"] for section in sections if section["id"] == "cx_chap_3")
+
+        self.assertIn("bukti evaluasi internal", predictive.lower())
+        self.assertNotIn("| Sinyal Eksternal | Sumber | Tanggal |", predictive)
+        self.assertNotIn("urgensi intervensi meningkat", predictive)
+
     def test_specialist_agents_generate_bounded_briefings_from_internal_datasets(self):
         briefing = FeedbackProposalTeam().run(
             self.engine,
@@ -246,6 +469,66 @@ class ReportAnalyticsContractTests(unittest.TestCase):
         self.assertTrue(all(item["source"] for item in briefing["evidence_ledger"]))
         self.assertTrue(all(item["confidence"] in {"Tinggi", "Sedang", "Rendah"} for item in briefing["specialists"]))
         self.assertTrue(all("temuan evaluasi" in item for item in briefing["qa_review"]))
+
+    def test_hidden_agent_desk_uses_one_model_across_role_separated_passes(self):
+        class FakeModelClient:
+            def __init__(self):
+                self.calls = []
+
+            def chat(self, **kwargs):
+                self.calls.append(kwargs)
+                return {"message": {"content": '{"finding":"cukup","implication":"lanjut","confidence":"Sedang"}'}}
+
+        client = FakeModelClient()
+        desk = HiddenAgentDesk(model_name="same-model:latest", model_client=client, mode="ollama")
+        briefing = FeedbackProposalTeam(agent_desk=desk).run(
+            self.engine,
+            self.dataframe,
+            self.timeframe,
+            self.macro_trends,
+            score_engine="experience_index",
+        )
+
+        passes = briefing["agent_desk"]["passes"]
+        self.assertEqual(len(client.calls), len(passes))
+        self.assertTrue(all(call["model"] == "same-model:latest" for call in client.calls))
+        self.assertEqual(len({item["model"] for item in passes}), 1)
+        self.assertEqual(
+            [item["role"] for item in passes],
+            [item["role"] for item in briefing["specialists"]],
+        )
+        self.assertTrue(all("Return JSON with keys" in item["prompt_contract"] for item in passes))
+        self.assertTrue(all(item["model_status"] == "completed" for item in passes))
+
+    def test_hidden_agent_desk_produces_deterministic_ledger_and_final_quality_gate(self):
+        briefing_one = FeedbackProposalTeam().run(
+            self.engine,
+            self.dataframe,
+            self.timeframe,
+            self.macro_trends,
+            score_engine="experience_index",
+        )
+        briefing_two = FeedbackProposalTeam().run(
+            self.engine,
+            self.dataframe,
+            self.timeframe,
+            self.macro_trends,
+            score_engine="experience_index",
+        )
+
+        ledger_one = briefing_one["evidence_ledger"]
+        ledger_two = briefing_two["evidence_ledger"]
+        self.assertEqual(ledger_one, ledger_two)
+        self.assertTrue(all(item["evidence_id"] for item in ledger_one))
+        self.assertEqual(
+            [(item["evidence_type"], item["evidence_id"]) for item in ledger_one],
+            sorted((item["evidence_type"], item["evidence_id"]) for item in ledger_one),
+        )
+        gate = briefing_one["agent_desk"]["final_quality_gate"]
+        editor = briefing_one["agent_desk"]["editor_review"]
+        self.assertTrue(gate["passes"], briefing_one["agent_desk"])
+        self.assertTrue(editor["reader_safe"], editor)
+        self.assertTrue(editor["ledger_complete"], editor)
 
     def test_specialist_briefing_adds_audit_trend_contradiction_and_prediction_controls(self):
         briefing = FeedbackProposalTeam().run(

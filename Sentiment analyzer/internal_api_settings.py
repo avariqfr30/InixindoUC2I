@@ -15,38 +15,24 @@ DEFAULT_APIDOG_DATASETS = (
 )
 RECOMMENDED_ENDPOINT_CONTRACTS = (
     {
-        "name": "feedback_records",
-        "purpose": "Core feedback/evaluation records for sentiment, rating, journey, and service-risk analysis.",
+        "name": "class_report",
+        "dataset": "ClassReport",
+        "purpose": "Live class evaluation records for sentiment, rating, journey, and service-risk analysis.",
         "required_fields": [
-            "record_id",
-            "feedback_date",
-            "stakeholder_type",
-            "service_name",
-            "rating",
-            "comment",
+            "response_id",
+            "response_name",
+            "response_type",
+            "response_answer",
         ],
-        "optional_fields": ["channel", "source", "location", "instructor_type", "journey_stage"],
+        "optional_fields": ["response_parent_id", "class_name", "class_id"],
         "record_path": "data.dataset_result",
     },
     {
-        "name": "learner_profile",
-        "purpose": "Participant/company segment context so feedback can be grouped by customer type and future retention risk.",
-        "required_fields": ["participant_id", "company_or_institution", "stakeholder_type"],
-        "optional_fields": ["industry", "department", "role", "city", "account_owner"],
-        "record_path": "data.dataset_result",
-    },
-    {
-        "name": "class_delivery",
-        "purpose": "Class/session metadata for linking satisfaction to course, instructor, delivery mode, schedule, and location.",
-        "required_fields": ["class_id", "class_name", "class_date", "delivery_mode", "instructor_name"],
-        "optional_fields": ["venue", "city", "duration", "capacity", "attendance_count"],
-        "record_path": "data.dataset_result",
-    },
-    {
-        "name": "follow_up_actions",
-        "purpose": "Closed-loop action tracking so negative feedback can be connected to owner, SLA, status, and resolution outcome.",
-        "required_fields": ["feedback_id", "action_owner", "action_status", "created_at"],
-        "optional_fields": ["due_date", "closed_at", "resolution_note", "escalation_level"],
+        "name": "reference_class_report",
+        "dataset": "ReferenceClassReport",
+        "purpose": "Question dictionary for interpreting ClassReport response IDs and labels without adding feedback rows.",
+        "required_fields": ["response_id", "response_name", "response_type"],
+        "optional_fields": ["response_parent_id"],
         "record_path": "data.dataset_result",
     },
 )
@@ -197,6 +183,8 @@ def _simple_endpoints_from_payload(data):
     for endpoint_name, dataset_code in _dataset_codes_from_payload(data):
         dataset_request_data = dict(request_data)
         dataset_request_data.setdefault("dataset", dataset_code)
+        if str(dataset_code).strip().lower() == "referenceclassreport":
+            dataset_request_data["dataset_cache"] = "disabled"
         endpoints.append(
             {
                 "endpoint_name": endpoint_name,

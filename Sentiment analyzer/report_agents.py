@@ -1,7 +1,13 @@
+import hashlib
+import json
+import os
 import re
 from datetime import datetime
+from dataclasses import dataclass
 
 import pandas as pd
+
+from config import OLLAMA_HOST
 
 
 class FeedbackSpecialistAgent:
@@ -40,6 +46,230 @@ class FeedbackSpecialistAgent:
 
     def run(self, engine, dataframe, context):
         raise NotImplementedError
+
+
+@dataclass(frozen=True)
+class AgentPassContract:
+    role: str
+    objective: str
+    evidence_type: str
+    required_context_keys: tuple
+    output_fields: tuple = ("finding", "implication", "confidence")
+
+    def prompt(self, context_packet):
+        return "\n".join(
+            [
+                f"Role: {self.role}",
+                f"Objective: {self.objective}",
+                "Use only the supplied context packet.",
+                "Do not reveal role names, agent status, source endpoints, or internal ledger labels in reader-facing prose.",
+                "Return JSON with keys: " + ", ".join(self.output_fields) + ".",
+                "Context packet:",
+                json.dumps(context_packet, ensure_ascii=False, sort_keys=True, default=str),
+            ]
+        )
+
+
+class HiddenAgentDesk:
+    """Internal single-model, multi-pass desk for report quality evidence.
+
+    The default path remains deterministic so report generation is stable in tests
+    and offline deployments. Operators can enable live Ollama passes with
+    REPORT_AGENT_DESK_MODE=ollama; every role then uses the same LLM_MODEL value
+    while keeping role separation in the prompt contract.
+    """
+
+    contracts = (
+        AgentPassContract(
+            "Data Steward",
+            "Validate coverage, completeness, and source-channel limits.",
+            "operational_evidence",
+            ("governance",),
+        ),
+        AgentPassContract(
+            "Rating Analyst",
+            "Read score direction, rating shape, and the highest-risk service.",
+            "rating",
+            ("score_metrics", "score_profile", "top_risk"),
+        ),
+        AgentPassContract(
+            "Voice-of-Customer Analyst",
+            "Explain the strongest customer voice behind ratings.",
+            "text",
+            ("governance", "top_issue"),
+        ),
+        AgentPassContract(
+            "External Context Analyst",
+            "Keep external research as context and never as a substitute for internal evidence.",
+            "osint",
+            ("macro_trends", "has_osint_signal"),
+        ),
+        AgentPassContract(
+            "Action Planner",
+            "Translate evidence into bounded management actions.",
+            "recommendation",
+            ("top_risk", "top_issue", "dominant_journey"),
+        ),
+    )
+
+    forbidden_reader_terms = (
+        "Agent",
+        "Data Steward",
+        "Rating Analyst",
+        "Voice-of-Customer Analyst",
+        "External Context Analyst",
+        "Action Planner",
+        "Evidence Ledger",
+        "QA Guardrail",
+        "Report Audit Trail",
+        "endpoint",
+        "source=",
+        "APIDog",
+        "Internal API",
+    )
+
+    def __init__(self, model_name=None, model_client=None, mode=None):
+        self.model_name = model_name or os.getenv("LLM_MODEL", "gpt-oss:120b-cloud")
+        self.model_client = model_client
+        self.mode = (mode or os.getenv("REPORT_AGENT_DESK_MODE", "deterministic")).strip().lower()
+
+    @staticmethod
+    def _context_packet(context, contract):
+        return {
+            key: context.get(key)
+            for key in contract.required_context_keys
+            if key in context
+        }
+
+    @staticmethod
+    def _stable_evidence_id(evidence_type, source, detail):
+        payload = json.dumps(
+            {"detail": detail, "evidence_type": evidence_type, "source": source},
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+    @classmethod
+    def evidence_card(cls, evidence_type, source, detail):
+        return {
+            "evidence_id": cls._stable_evidence_id(evidence_type, source, detail),
+            "evidence_type": evidence_type,
+            "source": source,
+            "detail": detail,
+        }
+
+    def _client(self):
+        if self.model_client is not None:
+            return self.model_client
+        if self.mode != "ollama":
+            return None
+        try:
+            from ollama import Client
+        except Exception:
+            return None
+        return Client(host=OLLAMA_HOST)
+
+    @staticmethod
+    def _parse_model_response(response):
+        if not response:
+            return {}
+        if isinstance(response, dict):
+            content = response.get("message", {}).get("content", "")
+        else:
+            content = getattr(getattr(response, "message", None), "content", "")
+        if not content:
+            return {}
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError:
+            return {"finding": str(content).strip()[:500]}
+        return parsed if isinstance(parsed, dict) else {}
+
+    def _run_model_pass(self, client, contract, context_packet):
+        if client is None:
+            return {"status": "skipped", "content": {}}
+        prompt = contract.prompt(context_packet)
+        try:
+            response = client.chat(
+                model=self.model_name,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a hidden report desk. Keep output concise, evidence-bound, and source-safe.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                format="json",
+                options={"temperature": 0},
+            )
+        except Exception as exc:
+            return {"status": "failed", "error": str(exc)[:240], "content": {}}
+        return {"status": "completed", "content": self._parse_model_response(response)}
+
+    def run_passes(self, context):
+        client = self._client()
+        passes = []
+        for contract in self.contracts:
+            packet = self._context_packet(context, contract)
+            model_result = self._run_model_pass(client, contract, packet)
+            passes.append(
+                {
+                    "role": contract.role,
+                    "model": self.model_name,
+                    "evidence_type": contract.evidence_type,
+                    "required_context_keys": list(contract.required_context_keys),
+                    "output_contract": list(contract.output_fields),
+                    "prompt_contract": contract.prompt(packet),
+                    "model_status": model_result["status"],
+                    "model_output": model_result.get("content", {}),
+                    **({"model_error": model_result["error"]} if "error" in model_result else {}),
+                }
+            )
+        return passes
+
+    def final_editor_review(self, manager_summary, specialist_outputs, evidence_ledger):
+        combined = "\n".join(
+            [
+                manager_summary or "",
+                *[item.get("finding", "") for item in specialist_outputs],
+                *[item.get("implication", "") for item in specialist_outputs],
+            ]
+        )
+        leaked_terms = [
+            term
+            for term in self.forbidden_reader_terms
+            if re.search(rf"\b{re.escape(term)}\b", combined, flags=re.IGNORECASE)
+        ]
+        expected_evidence = {"operational_evidence", "rating", "komentar"}
+        available_evidence = {item.get("evidence_type") for item in evidence_ledger}
+        missing_evidence = sorted(expected_evidence - available_evidence)
+        return {
+            "reader_safe": not leaked_terms,
+            "leaked_terms": sorted(set(leaked_terms)),
+            "ledger_complete": not missing_evidence,
+            "missing_evidence": missing_evidence,
+            "evidence_item_count": len(evidence_ledger),
+        }
+
+    @staticmethod
+    def final_quality_gate(editor_review, pass_reports):
+        contract_failures = [
+            item["role"]
+            for item in pass_reports
+            if not item.get("required_context_keys") or not item.get("output_contract")
+        ]
+        failed_model_passes = [
+            item["role"]
+            for item in pass_reports
+            if item.get("model_status") == "failed"
+        ]
+        return {
+            "passes": bool(editor_review.get("reader_safe")) and bool(editor_review.get("ledger_complete")) and not contract_failures,
+            "contract_failures": contract_failures,
+            "failed_model_passes": failed_model_passes,
+            "model_failures_block_reader_output": False,
+        }
 
 
 class DataStewardAgent(FeedbackSpecialistAgent):
@@ -186,6 +416,9 @@ class FeedbackProposalTeam:
         ActionPlannerAgent(),
     )
 
+    def __init__(self, agent_desk=None):
+        self.agent_desk = agent_desk or HiddenAgentDesk()
+
     @staticmethod
     def _sources_used(specialists):
         source_tokens = set()
@@ -230,31 +463,31 @@ class FeedbackProposalTeam:
     def _evidence_ledger(context, specialist_outputs):
         governance = context["governance"]
         ledger = [
-            {
-                "evidence_type": "operational_evidence",
-                "source": "Basis evaluasi layanan",
-                "detail": f"{governance['total_rows']} respons mentah; {governance.get('dimension_count', 0)} dimensi evaluasi.",
-            },
-            {
-                "evidence_type": "rating",
-                "source": "Rating response",
-                "detail": f"{governance.get('rating_response_count', 0)} rating dipakai untuk skor dan risiko.",
-            },
-            {
-                "evidence_type": "komentar",
-                "source": "Text response / komentar",
-                "detail": f"{governance.get('text_response_count', 0)} komentar dipakai untuk menjelaskan alasan rating.",
-            },
+            HiddenAgentDesk.evidence_card(
+                "operational_evidence",
+                "Basis evaluasi layanan",
+                f"{governance['total_rows']} respons mentah; {governance.get('dimension_count', 0)} dimensi evaluasi.",
+            ),
+            HiddenAgentDesk.evidence_card(
+                "rating",
+                "Rating response",
+                f"{governance.get('rating_response_count', 0)} rating dipakai untuk skor dan risiko.",
+            ),
+            HiddenAgentDesk.evidence_card(
+                "komentar",
+                "Text response / komentar",
+                f"{governance.get('text_response_count', 0)} komentar dipakai untuk menjelaskan alasan rating.",
+            ),
         ]
         if any(item.get("evidence_type") == "osint" for item in specialist_outputs):
             ledger.append(
-                {
-                    "evidence_type": "osint",
-                    "source": "Pembanding eksternal",
-                    "detail": "Dipakai sebagai konteks eksternal, bukan pengganti bukti operasional.",
-                }
+                HiddenAgentDesk.evidence_card(
+                    "osint",
+                    "Pembanding eksternal",
+                    "Dipakai sebagai konteks eksternal, bukan pengganti bukti operasional.",
+                )
             )
-        return ledger
+        return sorted(ledger, key=lambda item: (item["evidence_type"], item["evidence_id"]))
 
     @staticmethod
     def _qa_review(context, overall_confidence):
@@ -398,15 +631,31 @@ class FeedbackProposalTeam:
         specialist_outputs = [specialist.run(engine, scoped_df, context) for specialist in self.specialists]
         overall_confidence = self._overall_confidence(context, specialist_outputs)
         audit_trail = self._audit_trail(context, timeframe, sentiment, segment, score_engine)
+        evidence_ledger = self._evidence_ledger(context, specialist_outputs)
+        manager_summary = self._manager_summary(context)
+        agent_passes = self.agent_desk.run_passes(context)
+        editor_review = self.agent_desk.final_editor_review(
+            manager_summary,
+            specialist_outputs,
+            evidence_ledger,
+        )
+        final_quality_gate = self.agent_desk.final_quality_gate(editor_review, agent_passes)
         return {
-            "manager_summary": self._manager_summary(context),
+            "manager_summary": manager_summary,
             "sources_used": self._sources_used(specialist_outputs),
             "confidence": overall_confidence,
             "audit_trail": audit_trail,
             "contradiction_review": self._contradiction_review(scoped_df),
             "trend_review": self._trend_review(engine, scoped_df, timeframe),
             "prediction_review": self._prediction_review(context),
-            "evidence_ledger": self._evidence_ledger(context, specialist_outputs),
+            "evidence_ledger": evidence_ledger,
             "qa_review": self._qa_review(context, overall_confidence),
+            "agent_desk": {
+                "mode": self.agent_desk.mode,
+                "model": self.agent_desk.model_name,
+                "passes": agent_passes,
+                "editor_review": editor_review,
+                "final_quality_gate": final_quality_gate,
+            },
             "specialists": specialist_outputs,
         }

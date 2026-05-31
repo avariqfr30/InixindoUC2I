@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+from dataclasses import replace
 
 import pandas as pd
 
@@ -152,6 +153,21 @@ class InternalApiProvider(InternalDataProvider):
             self.client.auth_mode = "api_key"
             self.client.auth_prefix = self.client.auth_prefix or "Bearer"
 
+    @staticmethod
+    def _endpoint_dataset_code(endpoint):
+        request_data = getattr(endpoint, "request_data", {}) or {}
+        return str(request_data.get("dataset") or request_data.get("dataset_code") or "").strip()
+
+    @classmethod
+    def _endpoint_spec_for_fetch(cls, endpoint):
+        endpoint_spec = endpoint.to_endpoint_spec()
+        dataset_code = cls._endpoint_dataset_code(endpoint)
+        if dataset_code.lower() != "referenceclassreport":
+            return endpoint_spec
+        query_params = dict(endpoint_spec.query_params or {})
+        query_params["dataset_cache"] = "disabled"
+        return replace(endpoint_spec, query_params=query_params)
+
     def _load_via_connector(self):
         if not self.connector or not self.connector.enabled:
             return None
@@ -160,7 +176,8 @@ class InternalApiProvider(InternalDataProvider):
         endpoint_payloads = []
         reference_lookup = {}
         for endpoint in self.connector.active_endpoints():
-            interpreted = self.client.interpret_payload(endpoint.to_endpoint_spec())
+            endpoint_spec = self._endpoint_spec_for_fetch(endpoint)
+            interpreted = self.client.interpret_payload(endpoint_spec)
             raw_df = pd.DataFrame(interpreted["records"])
             if raw_df.empty:
                 logger.warning(
@@ -169,7 +186,12 @@ class InternalApiProvider(InternalDataProvider):
                 )
                 continue
 
-            if ClassReportAdapter.looks_like_reference_class_report(raw_df):
+            dataset_code = self._endpoint_dataset_code(endpoint)
+            if ClassReportAdapter.looks_like_reference_class_report(
+                raw_df,
+                endpoint_name=endpoint.endpoint_name,
+                dataset_code=dataset_code,
+            ):
                 reference_lookup.update(ClassReportAdapter.question_lookup(raw_df))
                 continue
             endpoint_payloads.append((endpoint, raw_df))

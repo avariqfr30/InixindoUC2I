@@ -12,8 +12,8 @@
         h2 { color: #0f172a; margin: 0 0 10px 0; font-size: 1.8rem; }
         p.sub { color: #64748b; margin: 0 0 25px 0; font-size: 1rem; line-height: 1.4; }
         label { display: block; font-weight: 600; margin-bottom: 8px; font-size: 0.95rem; }
-        select, input[type="text"], input[type="url"], textarea, button { width: 100%; padding: 12px; margin-bottom: 15px; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 1rem; background: white; box-sizing: border-box; font-family: 'Segoe UI', sans-serif;}
-        select:focus, input[type="text"]:focus, input[type="url"]:focus, textarea:focus { border-color: #cc0000; outline: none; }
+        select, input[type="text"], input[type="url"], input[type="date"], textarea, button { width: 100%; padding: 12px; margin-bottom: 15px; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 1rem; background: white; box-sizing: border-box; font-family: 'Segoe UI', sans-serif;}
+        select:focus, input[type="text"]:focus, input[type="url"]:focus, input[type="date"]:focus, textarea:focus { border-color: #cc0000; outline: none; }
         button { background: #cc0000; color: white; border: none; font-weight: bold; cursor: pointer; transition: 0.2s; margin-top: 10px; }
         button:hover { background: #990000; }
         button:disabled { background: #94a3b8; cursor: not-allowed; }
@@ -29,6 +29,11 @@
         .field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
         .field-grid .full-width { grid-column: 1 / -1; }
         .helper { color: #64748b; font-size: 0.85rem; margin: -8px 0 14px 0; line-height: 1.4; }
+        .date-range-panel { grid-column: 1 / -1; border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px; background: #f8fafc; }
+        .date-range-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+        .date-range-panel input { margin-bottom: 8px; }
+        .date-chip-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+        .date-chip { font-size: 0.78rem; padding: 4px 8px; border-radius: 999px; background: #e2e8f0; color: #475569; }
         .review-notes { background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; color: #475569; line-height: 1.5; white-space: pre-wrap; }
         .status-panel { display: none; margin: 18px 0 8px 0; border-radius: 10px; padding: 14px 16px; border: 1px solid #e2e8f0; background: #f8fafc; color: #475569; line-height: 1.5; }
         .status-panel.active { display: block; }
@@ -131,6 +136,20 @@
                     <select id="select-timeframe">
                         <option value="" disabled selected>Pilih Rentang Waktu...</option>
                     </select>
+                    <p class="helper">Pilihan utama memakai jendela bergulir. Gunakan kalender di bawah jika perlu rentang tanggal khusus.</p>
+                </div>
+                <div id="custom-date-panel" class="date-range-panel hidden">
+                    <label>Rentang Tanggal Khusus</label>
+                    <div class="date-range-grid">
+                        <div>
+                            <input type="date" id="custom-start-date" aria-label="Tanggal mulai khusus">
+                        </div>
+                        <div>
+                            <input type="date" id="custom-end-date" aria-label="Tanggal akhir khusus">
+                        </div>
+                    </div>
+                    <p id="available-date-helper" class="helper"></p>
+                    <div id="available-date-list" class="date-chip-list"></div>
                 </div>
                 <div>
                     <label for="select-sentiment">Filter Sentimen</label>
@@ -257,6 +276,11 @@
             successStep: document.getElementById('step-success'),
             
             selectTimeframe: document.getElementById('select-timeframe'),
+            customDatePanel: document.getElementById('custom-date-panel'),
+            customStartDate: document.getElementById('custom-start-date'),
+            customEndDate: document.getElementById('custom-end-date'),
+            availableDateHelper: document.getElementById('available-date-helper'),
+            availableDateList: document.getElementById('available-date-list'),
             selectSentiment: document.getElementById('select-sentiment'),
             selectSegment: document.getElementById('select-segment'),
             selectScoreEngine: document.getElementById('select-score-engine'),
@@ -290,6 +314,7 @@
             sentiments: [],
             segments: [],
             scoreEngines: [],
+            availableDates: {min: '', max: '', dates: []},
             currentJobId: null,
             pollTimer: null,
             notesQuill: null
@@ -317,6 +342,24 @@
         function getSelectedLabel(selectElement) {
             if (!selectElement.selectedOptions.length) return '-';
             return selectElement.selectedOptions[0].text;
+        }
+
+        function getSelectedTimeframeValue() {
+            const startDate = ui.customStartDate.value;
+            const endDate = ui.customEndDate.value;
+            if (startDate && endDate) {
+                return `custom_range:${startDate}..${endDate}`;
+            }
+            return ui.selectTimeframe.value;
+        }
+
+        function getSelectedPeriodLabel() {
+            const startDate = ui.customStartDate.value;
+            const endDate = ui.customEndDate.value;
+            if (startDate && endDate) {
+                return `Kustom: ${startDate} sampai ${endDate}`;
+            }
+            return getSelectedLabel(ui.selectTimeframe);
         }
 
         function escapeHtml(text) {
@@ -779,9 +822,36 @@
         }
 
         function updateReviewAvailability() {
-            const hasTimeframe = Boolean(ui.selectTimeframe.value);
+            const hasTimeframe = Boolean(getSelectedTimeframeValue());
             ui.btnReview.disabled = !hasTimeframe;
             ui.containerDiscovery.classList.toggle('hidden', !hasTimeframe);
+        }
+
+        function renderAvailableDates(dateInfo) {
+            appState.availableDates = dateInfo || {min: '', max: '', dates: []};
+            const dates = appState.availableDates.dates || [];
+            const hasDates = dates.length > 0;
+            ui.customDatePanel.classList.toggle('hidden', !hasDates);
+            ui.customStartDate.min = appState.availableDates.min || '';
+            ui.customStartDate.max = appState.availableDates.max || '';
+            ui.customEndDate.min = appState.availableDates.min || '';
+            ui.customEndDate.max = appState.availableDates.max || '';
+            ui.availableDateHelper.textContent = hasDates
+                ? `Data terbaca dari ${appState.availableDates.min} sampai ${appState.availableDates.max}. Pilih tanggal mulai dan akhir jika ingin analisis kustom.`
+                : '';
+            ui.availableDateList.innerHTML = '';
+            dates.slice(0, 12).forEach(dateValue => {
+                const chip = document.createElement('span');
+                chip.className = 'date-chip';
+                chip.textContent = dateValue;
+                ui.availableDateList.appendChild(chip);
+            });
+            if (dates.length > 12) {
+                const chip = document.createElement('span');
+                chip.className = 'date-chip';
+                chip.textContent = `+${dates.length - 12} tanggal lain`;
+                ui.availableDateList.appendChild(chip);
+            }
         }
 
         function renderSuggestions(suggestionsList) {
@@ -810,6 +880,7 @@
                         option.value = tf; option.text = tf;
                         ui.selectTimeframe.add(option);
                     });
+                    renderAvailableDates(data.available_dates);
                     appState.sentiments = data.sentiments || [];
                     appState.segments = data.segments || [];
                     appState.scoreEngines = data.score_engines || [];
@@ -845,6 +916,8 @@
         loadConfig();
 
         ui.selectTimeframe.onchange = updateReviewAvailability;
+        ui.customStartDate.onchange = updateReviewAvailability;
+        ui.customEndDate.onchange = updateReviewAvailability;
         ui.selectSentiment.onchange = updateReviewAvailability;
         ui.selectSegment.onchange = updateReviewAvailability;
         ui.selectScoreEngine.onchange = () => {
@@ -871,7 +944,7 @@
             const notesText = notesPayload.text.trim();
             const notesHtml = notesPayload.html.trim();
             let html = `
-                <div class="review-row"><span>Periode Analisis</span><span>${ui.selectTimeframe.value}</span></div>
+                <div class="review-row"><span>Periode Analisis</span><span>${getSelectedPeriodLabel()}</span></div>
                 <div class="review-row"><span>Filter Sentimen</span><span>${getSelectedLabel(ui.selectSentiment)}</span></div>
                 <div class="review-row"><span>Filter Segmen</span><span>${getSelectedLabel(ui.selectSegment)}</span></div>
                 <div class="review-row"><span>Sudut Pandang Analisis</span><span>${getSelectedLabel(ui.selectScoreEngine)}</span></div>
@@ -885,7 +958,7 @@
             ui.configStep.classList.add('hidden'); 
             ui.reviewStep.classList.remove('hidden'); 
             warmReportContext({
-                timeframe: ui.selectTimeframe.value,
+                timeframe: getSelectedTimeframeValue(),
                 sentiment: ui.selectSentiment.value,
                 segment: ui.selectSegment.value,
                 score_engine: ui.selectScoreEngine.value,
@@ -907,7 +980,7 @@
             const notesPayload = getNotesPayload();
             
             const payload = {
-                timeframe: ui.selectTimeframe.value,
+                timeframe: getSelectedTimeframeValue(),
                 sentiment: ui.selectSentiment.value,
                 segment: ui.selectSegment.value,
                 score_engine: ui.selectScoreEngine.value,

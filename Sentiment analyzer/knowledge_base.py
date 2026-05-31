@@ -17,6 +17,7 @@ from config import (
     OLLAMA_HOST,
 )
 from data_pipeline import DemoCsvProvider, InternalApiProvider
+from timeframe_filters import filter_by_timeframe, rolling_month_count
 
 
 logger = logging.getLogger(__name__)
@@ -121,7 +122,7 @@ class KnowledgeBase:
         if not self.enable_vector_index or self.collection is None:
             filtered_df = self.df if self.df is not None else pd.DataFrame()
             if timeframe and not filtered_df.empty:
-                filtered_df = filtered_df[filtered_df["Rentang Waktu"] == timeframe]
+                filtered_df = filter_by_timeframe(filtered_df, timeframe)
             if filtered_df.empty:
                 return "Tidak ada data feedback internal untuk periode ini."
             limited_rows = filtered_df.head(25)
@@ -138,7 +139,8 @@ class KnowledgeBase:
         ).strip()
         query_payload = {"query_texts": [query_text], "n_results": 25}
         if timeframe:
-            query_payload["where"] = {"Rentang Waktu": timeframe}
+            if rolling_month_count(timeframe) is None:
+                query_payload["where"] = {"Rentang Waktu": timeframe}
 
         try:
             result = self.collection.query(**query_payload)

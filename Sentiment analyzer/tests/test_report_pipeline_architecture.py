@@ -106,6 +106,39 @@ class ReportPipelineArchitectureTests(unittest.TestCase):
         self.assertIn("Keluhan onboarding", snapshot)
         self.assertEqual(sections[0]["title"], "Analisis Pengalaman Pelanggan")
 
+    def test_narrative_stage_passes_synthesized_context_to_sections_and_snapshot(self):
+        from report_pipeline import ReportNarrativeStage, ReportRequestContext
+
+        class FakeAnalytics:
+            full_df = None
+
+            def __init__(self):
+                self.section_context = None
+                self.snapshot_context = None
+
+            def build_report_sections(self, *args, **kwargs):
+                self.section_context = kwargs.get("section_context")
+                return [{"title": "Analisis", "content": "Konteks layanan perlu diprioritaskan."}]
+
+            def build_executive_snapshot(self, *args, **kwargs):
+                self.snapshot_context = kwargs.get("section_context")
+                return "## Ringkasan Eksekutif\nKonteks layanan perlu diprioritaskan."
+
+        analytics = FakeAnalytics()
+        ReportNarrativeStage().run(
+            analytics,
+            ReportRequestContext(
+                "Seluruh Periode",
+                notes="APIDog source=/api/Resource/dataset meminta fokus Problem, Opportunity, Directive pada onboarding.",
+            ),
+            "Tren eksternal.",
+        )
+
+        self.assertIsNotNone(analytics.section_context)
+        self.assertEqual(analytics.section_context, analytics.snapshot_context)
+        self.assertNotIn("APIDog", analytics.section_context["focus_note"])
+        self.assertIn("onboarding", analytics.section_context["focus_note"].lower())
+
     def test_preflight_quality_runs_before_document_rendering(self):
         from report_pipeline import ReportPipeline
 

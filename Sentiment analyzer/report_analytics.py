@@ -13,6 +13,7 @@ from config import (
 )
 from data_contract import CANONICAL_INTERNAL_COLUMNS
 from report_narratives import ReportNarrativeBuilderMixin
+from timeframe_filters import filter_by_timeframe, readable_timeframe_label
 
 class FeedbackAnalyticsEngine(ReportNarrativeBuilderMixin):
     THEME_LIBRARY = (
@@ -221,7 +222,7 @@ class FeedbackAnalyticsEngine(ReportNarrativeBuilderMixin):
     def _analysis_scope_text(self, timeframe, sentiment, segment, score_engine):
         sentiment_label = self._label_from_options(SENTIMENT_OPTIONS, sentiment, "Semua Sentimen")
         profile = self._score_engine_profile(score_engine)
-        scope_parts = [f"periode {timeframe}", f"perspektif {profile['label']}"]
+        scope_parts = [f"periode {readable_timeframe_label(timeframe)}", f"perspektif {profile['label']}"]
         if sentiment != "all":
             scope_parts.append(f"filter sentimen {sentiment_label.lower()}")
         if segment != "all":
@@ -276,7 +277,7 @@ class FeedbackAnalyticsEngine(ReportNarrativeBuilderMixin):
 
     def _filter_view(self, timeframe, sentiment="all", segment="all"):
         if self.full_df.empty: return self.full_df.copy()
-        filtered = self.full_df[self.full_df["Rentang Waktu"] == timeframe].copy()
+        filtered = filter_by_timeframe(self.full_df, timeframe)
         normalized_sentiment = self._normalize_sentiment_filter(sentiment)
         normalized_segment = self._normalize_segment_filter(segment)
         if normalized_sentiment != "all": filtered = filtered[filtered["Sentiment Label"] == normalized_sentiment]
@@ -530,7 +531,7 @@ class FeedbackAnalyticsEngine(ReportNarrativeBuilderMixin):
         instructor_type_counts = self._series_counts_for_column(timeframe_df, "Tipe Instruktur", limit=5)
 
         return {
-            "timeframe": timeframe, "sentiment": normalized_sentiment,
+            "timeframe": timeframe, "timeframe_label": readable_timeframe_label(timeframe), "sentiment": normalized_sentiment,
             "sentiment_label": self._label_from_options(SENTIMENT_OPTIONS, normalized_sentiment, "Semua Sentimen"),
             "segment": normalized_segment, "segment_label": normalized_segment if normalized_segment != "all" else "Semua Segmen",
             "score_engine": normalized_score_engine, "score_profile": score_profile, "score_metrics": score_metrics,

@@ -14,7 +14,9 @@ from ollama import Client
 from pydantic import BaseModel, Field
 
 from config import (
+    OLLAMA_API_KEY,
     OLLAMA_HOST,
+    OLLAMA_WEB_SEARCH_URL,
     OSINT_BASE_QUERIES,
     OSINT_BLOCKED_DOMAINS,
     OSINT_CACHE_DIR,
@@ -56,6 +58,10 @@ class Researcher:
     @staticmethod
     def _is_enabled():
         return (SERPER_API_KEY or "").strip() not in Researcher.INVALID_API_KEYS
+
+    @staticmethod
+    def _is_ollama_web_search_enabled():
+        return bool((OLLAMA_API_KEY or "").strip())
 
     @staticmethod
     def _normalize_cache_token(value):
@@ -234,6 +240,41 @@ class Researcher:
         return response.json()
 
     @staticmethod
+    def _search_ollama_web(query, max_results=OSINT_RESULTS_PER_QUERY):
+        normalized_query = Researcher._normalize_query(query)
+        if not normalized_query:
+            raise ValueError("OSINT query kosong setelah normalisasi.")
+        if not Researcher._is_ollama_web_search_enabled():
+            raise ValueError("OLLAMA_API_KEY belum diatur.")
+
+        response = requests.post(
+            OLLAMA_WEB_SEARCH_URL,
+            headers={
+                "Authorization": f"Bearer {(OLLAMA_API_KEY or '').strip()}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "query": normalized_query,
+                "max_results": min(max_results, 10),
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+        return Researcher._normalize_ollama_web_search_payload(response.json())
+
+    @staticmethod
+    def _normalize_ollama_web_search_payload(payload):
+        organic = []
+        for entry in (payload or {}).get("results", []):
+            organic.append({
+                "title": entry.get("title", "Tanpa Judul"),
+                "link": entry.get("url", "").strip(),
+                "snippet": entry.get("content", "").strip(),
+                "date": entry.get("date", "").strip(),
+            })
+        return {"organic": organic, "news": []}
+
+    @staticmethod
     def _extract_items(query, payload):
         items = []
         for position, entry in enumerate(payload.get("organic", []), start=1):
@@ -251,6 +292,26 @@ class Researcher:
             for item in items
             if item["url"] and Researcher._source_quality_score(item["url"]) > -10
         ]
+
+    @classmethod
+    def _search_items(cls, query, max_results=OSINT_RESULTS_PER_QUERY):
+        if cls._is_enabled():
+            try:
+                serper_payload = cls._search_serper(query, max_results=max_results)
+                serper_items = cls._extract_items(query, serper_payload)
+                if serper_items:
+                    return serper_items
+                logger.warning("Serper OSINT query returned no usable results (%s).", query)
+            except Exception as exc:
+                logger.warning("Serper OSINT query failed (%s): %s", query, exc)
+
+        if cls._is_ollama_web_search_enabled():
+            ollama_payload = cls._search_ollama_web(query, max_results=max_results)
+            return cls._extract_items(query, ollama_payload)
+
+        if not cls._is_enabled():
+            raise ValueError("SERPER_API_KEY belum diatur dan OLLAMA_API_KEY tidak tersedia.")
+        return []
 
     @staticmethod
     def _deduplicate_items(items):
@@ -283,20 +344,47 @@ class Researcher:
         return sorted(items, key=lambda value: value["score"], reverse=True)
 
     @staticmethod
+    def _summarize_signal(item, max_words=34):
+        raw = " ".join([str(item.get("snippet") or ""), str(item.get("title") or "")])
+        text = re.sub(r"https?://\S+|www\.\S+", "", raw)
+        text = text.replace("…", " ")
+        text = re.sub(r"\.{3,}", ". ", text)
+        text = re.sub(r"\s+", " ", text).strip(" -;,.")
+        if not text:
+            return ""
+        sentences = [part.strip(" -;,.") for part in re.split(r"(?<=[.!?])\s+|;\s+", text) if part.strip(" -;,.")]
+        priority_terms = (
+            "pelanggan", "layanan", "pelatihan", "konsultasi", "kepuasan", "keluhan",
+            "retensi", "digital", "AI", "pasar", "ekspektasi", "risiko",
+        )
+        if sentences:
+            sentences.sort(
+                key=lambda sentence: (
+                    any(term.lower() in sentence.lower() for term in priority_terms),
+                    bool(re.search(r"\b\d+(?:[,.]\d+)?%?\b", sentence)),
+                    len(sentence),
+                ),
+                reverse=True,
+            )
+            text = sentences[0]
+        words = text.split()
+        if len(words) > max_words:
+            text = " ".join(words[:max_words]).rstrip(" ,;:") + "."
+        if text and text[-1] not in ".!?":
+            text += "."
+        return text
+
+    @staticmethod
     def _format_osint_brief(items, title):
         if not items:
             return "Tidak ada sinyal OSINT eksternal yang dapat digunakan untuk benchmark periode ini."
         lines = [f"{title}:"]
         for index, item in enumerate(items, start=1):
-            date_part = f" | tanggal={item['date']}" if item["date"] else ""
             source = Researcher._source_domain(item["url"])
-            quality_part = f" | kualitas_sumber={item.get('source_quality', 0)}"
-            lines.append(
-                (
-                    f"{index}. {item['title']} | {item['snippet']} | "
-                    f"sumber={source}{date_part}{quality_part} | url={item['url']}"
-                ).strip()
-            )
+            date_part = f", {item['date']}" if item["date"] else ""
+            summary = Researcher._summarize_signal(item)
+            if summary:
+                lines.append(f"{index}. {summary} (Sumber: {source}{date_part})")
         return "\n".join(lines)
 
     @staticmethod
@@ -316,12 +404,11 @@ class Researcher:
         collected = []
         max_workers = min(OSINT_QUERY_WORKERS, max(1, len(normalized_queries)))
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
-            future_map = {pool.submit(Researcher._search_serper, query): query for query in normalized_queries}
+            future_map = {pool.submit(Researcher._search_items, query): query for query in normalized_queries}
             for future in concurrent.futures.as_completed(future_map):
                 query = future_map[future]
                 try:
-                    payload = future.result()
-                    collected.extend(Researcher._extract_items(query, payload))
+                    collected.extend(future.result())
                 except Exception as exc:
                     logger.warning("OSINT query gagal (%s): %s", query, exc)
 
@@ -353,7 +440,7 @@ class Researcher:
 
         queries = [f"{query} {scope}" for query in OSINT_BASE_QUERIES] + [contextual_query]
 
-        if not cls._is_enabled():
+        if not cls._is_enabled() and not cls._is_ollama_web_search_enabled():
             return "Data OSINT eksternal tidak tersedia (SERPER_API_KEY belum diatur)."
 
         try:

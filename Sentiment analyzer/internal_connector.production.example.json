@@ -58,7 +58,8 @@
       "method": "POST",
       "body_mode": "form",
       "request_data": {
-        "dataset": "ReferenceClassReport"
+        "dataset": "ReferenceClassReport",
+        "dataset_cache": "disabled"
       },
       "headers": {},
       "record_path": "data.dataset_result",

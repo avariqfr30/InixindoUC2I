@@ -48,7 +48,11 @@ class FakeClassReportApiClient:
     auth_mode = "api_key"
     auth_prefix = "Bearer"
 
+    def __init__(self):
+        self.seen_specs = []
+
     def interpret_payload(self, endpoint_spec):
+        self.seen_specs.append(endpoint_spec)
         records = {
             "class_report": [
                 {
@@ -61,10 +65,13 @@ class FakeClassReportApiClient:
             ],
             "reference_class_report": [
                 {
+                    "class_start_date": "2026-04-01",
+                    "class_end_date": "2026-04-03",
                     "response_id": "1",
                     "response_parent_id": "",
                     "response_name": "KESESUAIAN MATERIAL BAHAN AJAR",
                     "response_type": "rating_5",
+                    "response_answer": "",
                 }
             ],
         }[endpoint_spec.name]
@@ -142,13 +149,19 @@ class InternalApiSettingsTests(unittest.TestCase):
         state = connector_settings_state(path="/tmp/non-existent-internal-api-config.json")
         recommended = state["recommended_endpoints"]
 
-        self.assertGreaterEqual(len(recommended), 4)
-        self.assertIn("feedback_records", {item["name"] for item in recommended})
-        self.assertIn("learner_profile", {item["name"] for item in recommended})
+        self.assertEqual(
+            [(item.get("name"), item.get("dataset")) for item in recommended],
+            [
+                ("class_report", "ClassReport"),
+                ("reference_class_report", "ReferenceClassReport"),
+            ],
+        )
+        self.assertNotIn("FeedbackDataset", str(recommended))
         for endpoint in recommended:
             self.assertIn("purpose", endpoint)
             self.assertIn("required_fields", endpoint)
             self.assertTrue(endpoint["required_fields"])
+            self.assertEqual(endpoint["record_path"], "data.dataset_result")
 
     def test_connector_settings_state_reports_mapping_without_secrets(self):
         import tempfile
@@ -291,8 +304,169 @@ class InternalApiSettingsTests(unittest.TestCase):
         self.assertEqual(dataframe.loc[0, "Raw Response Count"], "1")
         self.assertEqual(dataframe.loc[0, "Rating Response Count"], "1")
         self.assertEqual(dataframe.loc[0, "Layanan"], "Materi dan kurikulum")
+        self.assertEqual(dataframe.loc[0, "Tanggal Feedback"], "2026-04-03")
+        self.assertEqual(dataframe.loc[0, "Rentang Waktu"], "2026-04-01 sampai 2026-04-03")
         self.assertIn("Rata-rata rating Kesesuaian materi bahan ajar: 5.0 dari 5", dataframe.loc[0, "Komentar"])
         self.assertNotIn("reference_class_report", set(dataframe["Sumber Feedback"]))
+
+        reference_specs = [spec for spec in provider.client.seen_specs if spec.name == "reference_class_report"]
+        self.assertEqual(reference_specs[0].query_params["dataset_cache"], "disabled")
+
+    def test_reference_class_report_detection_allows_response_answer_column_when_endpoint_is_reference(self):
+        reference_df = __import__("pandas").DataFrame(
+            [
+                {
+                    "class_start_date": "2024-07-01",
+                    "class_end_date": "2024-07-02",
+                    "response_id": "1",
+                    "response_parent_id": "",
+                    "response_name": "KESESUAIAN MATERIAL BAHAN AJAR",
+                    "response_type": "rating_5",
+                    "response_answer": "",
+                }
+            ]
+        )
+
+        self.assertTrue(
+            ClassReportAdapter.looks_like_reference_class_report(
+                reference_df,
+                endpoint_name="reference_class_report",
+                dataset_code="ReferenceClassReport",
+            )
+        )
+
+        lookup = ClassReportAdapter.question_lookup(reference_df)
+        self.assertEqual(lookup["1"]["class_start_dates"], ["2024-07-01"])
+        self.assertEqual(lookup["1"]["class_end_dates"], ["2024-07-02"])
+
+    def test_reference_class_report_with_actual_answers_is_processed_as_date_bearing_feedback(self):
+        reference_df = __import__("pandas").DataFrame(
+            [
+                {
+                    "class_start_date": "2024-07-01",
+                    "class_end_date": "2024-07-02",
+                    "response_id": "1",
+                    "response_parent_id": "",
+                    "response_name": "KESESUAIAN MATERIAL BAHAN AJAR",
+                    "response_type": "rating_5",
+                    "response_answer": "5",
+                }
+            ]
+        )
+
+        self.assertFalse(
+            ClassReportAdapter.looks_like_reference_class_report(
+                reference_df,
+                endpoint_name="reference_class_report",
+                dataset_code="ReferenceClassReport",
+            )
+        )
+        self.assertTrue(ClassReportAdapter.looks_like_class_report(reference_df))
+
+    def test_class_report_adapter_preserves_reference_class_dates(self):
+        class_report_df = __import__("pandas").DataFrame(
+            [
+                {
+                    "response_id": "1",
+                    "response_parent_id": "",
+                    "response_name": "KESESUAIAN MATERIAL BAHAN AJAR",
+                    "response_type": "rating_5",
+                    "response_answer": "4",
+                }
+            ]
+        )
+        reference_df = __import__("pandas").DataFrame(
+            [
+                {
+                    "class_start_date": "2026-04-01",
+                    "class_end_date": "2026-04-03",
+                    "response_id": "1",
+                    "response_parent_id": "",
+                    "response_name": "KESESUAIAN MATERIAL BAHAN AJAR",
+                    "response_type": "rating_5",
+                }
+            ]
+        )
+
+        dataframe = ClassReportAdapter.normalize(
+            class_report_df,
+            "class_report",
+            reference_lookup=ClassReportAdapter.question_lookup(reference_df),
+        )
+
+        self.assertEqual(dataframe.loc[0, "Tanggal Feedback"], "2026-04-03")
+        self.assertEqual(dataframe.loc[0, "Rentang Waktu"], "2026-04-01 sampai 2026-04-03")
+
+    def test_class_report_adapter_preserves_dates_from_class_report_rows(self):
+        raw_df = __import__("pandas").DataFrame(
+            [
+                {
+                    "class_start_date": "2026-05-10 09:00:00",
+                    "class_end_date": "2026-05-12 16:30:00",
+                    "response_id": "1",
+                    "response_parent_id": "",
+                    "response_name": "KESESUAIAN MATERIAL BAHAN AJAR",
+                    "response_type": "rating_5",
+                    "response_answer": "5",
+                },
+                {
+                    "class_start_date": "2026-05-10 09:00:00",
+                    "class_end_date": "2026-05-12 16:30:00",
+                    "response_id": "8",
+                    "response_parent_id": "1",
+                    "response_name": "Komentar material",
+                    "response_type": "text",
+                    "response_answer": "Materi sangat relevan.",
+                },
+            ]
+        )
+
+        dataframe = ClassReportAdapter.normalize(raw_df, "class_report")
+
+        self.assertEqual(dataframe.loc[0, "Tanggal Feedback"], "2026-05-12")
+        self.assertEqual(dataframe.loc[0, "Rentang Waktu"], "2026-05-10 sampai 2026-05-12")
+        self.assertNotIn("tanggal tidak tersedia", dataframe.loc[0, "Rentang Waktu"].lower())
+
+    def test_class_report_adapter_groups_repeated_question_by_class_date_window(self):
+        raw_df = __import__("pandas").DataFrame(
+            [
+                {
+                    "class_start_date": "2024-07-01",
+                    "class_end_date": "2024-07-02",
+                    "response_id": "1",
+                    "response_parent_id": "",
+                    "response_name": "KESESUAIAN MATERIAL BAHAN AJAR",
+                    "response_type": "rating_5",
+                    "response_answer": "4",
+                },
+                {
+                    "class_start_date": "2025-01-06",
+                    "class_end_date": "2025-01-07",
+                    "response_id": "1",
+                    "response_parent_id": "",
+                    "response_name": "KESESUAIAN MATERIAL BAHAN AJAR",
+                    "response_type": "rating_5",
+                    "response_answer": "2",
+                },
+                {
+                    "class_start_date": "2025-01-06",
+                    "class_end_date": "2025-01-07",
+                    "response_id": "9",
+                    "response_parent_id": "1",
+                    "response_name": "Komentar material",
+                    "response_type": "text",
+                    "response_answer": "Materi perlu contoh praktik tambahan.",
+                },
+            ]
+        )
+
+        dataframe = ClassReportAdapter.normalize(raw_df, "class_report")
+
+        self.assertEqual(len(dataframe), 2)
+        self.assertEqual(set(dataframe["Tanggal Feedback"]), {"2024-07-02", "2025-01-07"})
+        latest = dataframe[dataframe["Tanggal Feedback"] == "2025-01-07"].iloc[0]
+        self.assertEqual(latest["Rating"], "2")
+        self.assertIn("Materi perlu contoh praktik tambahan", latest["Representative Why"])
 
     def test_connector_auth_mode_updates_runtime_client(self):
         provider = InternalApiProvider.__new__(InternalApiProvider)

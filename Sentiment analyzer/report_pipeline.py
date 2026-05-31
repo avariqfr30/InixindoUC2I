@@ -9,8 +9,9 @@ from document_builder import DocumentBuilder
 from osint_research import Researcher
 from report_agents import FeedbackProposalTeam
 from report_analytics import FeedbackAnalyticsEngine
-from report_evidence import ReportEvidenceBuilder
+from report_evidence import ContextIntelligenceDesk, ReportEvidenceBuilder
 from report_quality import ReportQualityValidator
+from timeframe_filters import readable_timeframe_label
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,10 @@ class ReportRequestContext:
             SCORE_ENGINE_PROFILES[DEFAULT_SCORE_ENGINE],
         )
 
+    @property
+    def timeframe_label(self):
+        return readable_timeframe_label(self.timeframe)
+
 
 class ReportResearchStage:
     def __init__(self, executor=None):
@@ -38,7 +43,7 @@ class ReportResearchStage:
     def run(self, context):
         future = self.executor.submit(
             Researcher.get_macro_trends,
-            context.timeframe,
+            context.timeframe_label,
             context.notes,
             context.score_profile["label"],
         )
@@ -56,23 +61,34 @@ class ReportAnalysisStage:
 
 class ReportNarrativeStage:
     def run(self, analytics, context, macro_trends):
+        section_context = ContextIntelligenceDesk.build(
+            dataframe=getattr(analytics, "full_df", None),
+            notes=context.notes,
+            timeframe=context.timeframe,
+            sentiment=context.sentiment,
+            segment=context.segment,
+            score_engine=context.score_engine,
+            macro_trends=macro_trends,
+        )
         report_sections = analytics.build_report_sections(
             context.timeframe,
-            context.notes,
+            section_context["focus_note"],
             macro_trends,
             sentiment=context.sentiment,
             segment=context.segment,
             score_engine=context.score_engine,
+            section_context=section_context,
         )
         report_sections = ReportEvidenceBuilder.attach_to_sections(report_sections)
         executive_snapshot = analytics.build_executive_snapshot(
             context.timeframe,
-            context.notes,
+            section_context["focus_note"],
             sentiment=context.sentiment,
             segment=context.segment,
             score_engine=context.score_engine,
             macro_trends=macro_trends,
             report_sections=report_sections,
+            section_context=section_context,
         )
         return executive_snapshot, report_sections
 
@@ -88,7 +104,7 @@ class ReportPreflightQualityStage:
 class DocumentRenderStage:
     def run(self, context, executive_snapshot, report_sections):
         document = Document()
-        DocumentBuilder.create_cover(document, context.timeframe, DEFAULT_COLOR)
+        DocumentBuilder.create_cover(document, context.timeframe_label, DEFAULT_COLOR)
         document.add_heading("Ringkasan Eksekutif", level=1)
         DocumentBuilder.process_content(document, executive_snapshot, DEFAULT_COLOR)
         document.add_page_break()
@@ -135,6 +151,7 @@ class ReportQualityStage:
         quality["contradiction_review"] = briefing.get("contradiction_review", {})
         quality["trend_review"] = briefing.get("trend_review", {})
         quality["prediction_review"] = briefing.get("prediction_review", {})
+        quality["agent_desk"] = briefing.get("agent_desk", {})
         if not quality["verified_complete"]:
             logger.warning(
                 "Generated report is below completeness target: %s",
@@ -191,6 +208,6 @@ class ReportPipeline:
         )
         quality["preflight"] = preflight_quality
         filename = (
-            f"Inixindo_Feedback_Intelligence_Report_{context.score_profile['label']}_{timeframe}"
+            f"Inixindo_Feedback_Intelligence_Report_{context.score_profile['label']}_{context.timeframe_label}"
         ).replace(" ", "_")
         return document, filename, quality

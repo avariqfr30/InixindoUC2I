@@ -4,6 +4,7 @@ import pandas as pd
 
 from config import ADOPTION_READINESS_PILLARS, CX_SENTIMENT_STRUCTURE, DEFAULT_SCORE_ENGINE
 from document_builder import DocumentBuilder
+from management_interpretation import FeedbackManagementInterpreter
 from report_evidence import ReportEvidenceBuilder
 from report_trust_sections import build_specialist_review_markdown
 
@@ -36,6 +37,18 @@ class ReportNarrativeBuilderMixin:
             cleaned = line.strip()
             if not re.match(r"^\d+\.", cleaned): continue
             cleaned = re.sub(r"^\d+\.\s*", "", cleaned)
+            source_match = re.search(r"\(Sumber:\s*([^,)]+)(?:,\s*([^)]+))?\)", cleaned)
+            if source_match:
+                snippet = re.sub(r"\s*\(Sumber:[^)]+\)", "", cleaned).strip()
+                signals.append({
+                    "title": "Sinyal eksternal",
+                    "snippet": snippet,
+                    "source": source_match.group(1).strip() or "Tidak diketahui",
+                    "date": (source_match.group(2) or "-").strip(),
+                })
+                if len(signals) >= limit:
+                    break
+                continue
             parts = [part.strip() for part in cleaned.split(" | ") if part.strip()]
             if not parts: continue
             title = parts[0]
@@ -140,7 +153,8 @@ class ReportNarrativeBuilderMixin:
             "projected_formula": projected_formula,
         }
 
-    def _descriptive_markdown(self, timeframe_df, timeframe, notes, context):
+    def _descriptive_markdown(self, timeframe_df, timeframe, notes, context, section_context=None):
+        timeframe_label = context.get("timeframe_label", timeframe)
         governance = self._governance_summary(timeframe_df)
         total_rows = governance["total_rows"]
         if total_rows == 0:
@@ -167,14 +181,15 @@ class ReportNarrativeBuilderMixin:
         location_counts = context["location_counts"]
         instructor_type_counts = context["instructor_type_counts"]
 
-        cleaned_notes = notes.strip().rstrip(".!?")
-        focus_line = f"Fokus tambahan dari pengguna pada periode ini adalah: {cleaned_notes}." if notes and notes.strip() else "Tidak ada fokus tambahan dari pengguna, sehingga analisis dilakukan terhadap seluruh sinyal yang tersedia."
+        section_context = section_context or {}
+        cleaned_notes = str(section_context.get("focus_note") or notes or "").strip().rstrip(".!?")
+        focus_line = f"Fokus pembacaan tambahan pada periode ini adalah {cleaned_notes}." if cleaned_notes else "Tidak ada fokus tambahan dari pengguna, sehingga analisis dilakukan terhadap seluruh sinyal yang tersedia."
         governance_note = "Cakupan sumber sudah mulai terpetakan, tetapi pemetaan kanal masih perlu diperkuat." if governance["channel_count"] == 0 else "Pemetaan sumber dan kanal sudah tersedia sehingga jalur asal feedback lebih mudah diaudit."
         
         descriptive_intro = (
             f"Bagian ini menjelaskan kualitas dasar portofolio feedback yang menjadi fondasi laporan. Analisis dibaca pada {scope_text}. "
             f"Fokus pembacaannya menekankan {context['score_profile']['narrative_focus']}. "
-            f"Pada periode {timeframe}, sistem memproses {total_rows} feedback tervalidasi dengan "
+            f"Pada periode {timeframe_label}, sistem memproses {total_rows} feedback tervalidasi dengan "
             f"rata-rata rating {round(avg_rating, 2) if pd.notna(avg_rating) else 0.0} dari 5, yang menunjukkan kinerja "
             f"layanan berada pada kategori {self._rating_assessment(avg_rating)}. "
             f"Komposisi sentimen memperlihatkan {positive_share}% sinyal positif, {neutral_share}% sinyal netral, "
@@ -184,7 +199,7 @@ class ReportNarrativeBuilderMixin:
         indicator_table = self._markdown_table(
             ["Indikator", "Nilai"],
             [
-                ["Periode analisis", timeframe], ["Cakupan analisis", scope_text], ["Total feedback tervalidasi", f"{total_rows} record"],
+                ["Periode analisis", timeframe_label], ["Cakupan analisis", scope_text], ["Total feedback tervalidasi", f"{total_rows} record"],
                 ["Rata-rata rating", f"{round(avg_rating, 2) if pd.notna(avg_rating) else 0.0} dari 5"], [context["score_profile"]["label"], f"{score_metrics['current_score']} / 100"],
                 ["Sumber parameter skor", context["score_profile"].get("parameter_source", "Model internal")],
                 ["Kelengkapan field inti", f"{governance['completeness_pct']}%"], ["Jumlah sumber feedback", governance["source_count"]], ["Jumlah kanal feedback", governance["channel_count"]],
@@ -284,7 +299,7 @@ class ReportNarrativeBuilderMixin:
             "### Konteks lokasi pelatihan dan tipe instruktur", operational_context, "", location_instructor_table,
         ])
 
-    def _predictive_markdown(self, timeframe_df, macro_trends, context):
+    def _predictive_markdown(self, timeframe_df, macro_trends, context, section_context=None):
         if timeframe_df.empty: return "## 3.1 Risiko Jangka Pendek Jika Pola Saat Ini Berlanjut\nTidak ada feedback internal yang sesuai dengan kombinasi filter yang dipilih untuk periode ini.\n"
 
         service_risks = self._group_risk(timeframe_df, "Layanan", limit=5)
@@ -305,12 +320,16 @@ class ReportNarrativeBuilderMixin:
             else: journey_lines.append(f"- Tahap {item['stage_label']} diperkirakan relatif stabil, tetapi perlu dipantau karena sentimennya masih bercampur.")
         if not journey_lines: journey_lines = ["- Belum ada pembacaan customer journey yang cukup kuat untuk dijadikan proyeksi."]
 
-        osint_signals = self._extract_osint_signals(macro_trends, limit=4)
+        section_context = section_context or {}
+        external_ready = bool(section_context.get("external_context_ready", True))
+        osint_signals = self._extract_osint_signals(macro_trends, limit=4) if external_ready else []
         deep_insight = self._extract_deep_insight(macro_trends)
+        if not external_ready:
+            deep_insight = ""
         osint_lines = []
         if deep_insight: osint_lines.append(f"- {deep_insight}")
         osint_lines.extend([f"- {signal['title']} ({signal['source']}, {signal['date']}): {signal['snippet']}" for signal in osint_signals])
-        if not osint_lines: osint_lines = ["- Tren eksternal belum tersedia; prediksi saat ini sepenuhnya didasarkan pada data internal."]
+        if not osint_lines: osint_lines = ["- Pembanding eksternal belum cukup kuat; prediksi saat ini sepenuhnya didasarkan pada bukti evaluasi internal."]
 
         top_service_risk = service_risks[0] if service_risks else None
         top_segment_risk = stakeholder_risks[0] if stakeholder_risks else None
@@ -364,7 +383,7 @@ class ReportNarrativeBuilderMixin:
             "### Penjelasan Perhitungan Experience Index" if experience_formula else "", f"Experience Index pada laporan ini dihitung dari bobot komponen: {experience_formula['weight_summary']}." if experience_formula else "", "", formula_table if experience_formula else "", "",
             projection_chart_line, "", service_risk_table, "", *risk_lines, "", "## 3.2 Prediksi Segmen dan Layanan yang Paling Rentan", "Selain layanan, pemantauan juga perlu diarahkan pada segmen pelanggan yang memperlihatkan kombinasi antara volume feedback tinggi dan kualitas pengalaman yang menurun. Segmen seperti ini biasanya lebih cepat mempengaruhi reputasi, retensi, dan peluang repeat engagement.", "",
             stakeholder_risk_table, "", *segment_lines, "", "### Pembacaan customer journey ke depan", journey_projection_table, "", *journey_lines, "", "### Area operasional yang perlu diawasi", operational_projection_table, "", *operational_lines, "",
-            "## 3.3 Tren Eksternal yang Berpotensi Memperbesar Risiko", "Sinyal eksternal digunakan sebagai benchmark untuk membaca apakah tantangan yang muncul berasal murni dari kondisi internal atau juga diperkuat oleh perubahan ekspektasi pasar. Bila tren eksternal bergerak ke arah yang sama dengan keluhan pelanggan internal, maka urgensi intervensi meningkat.", "",
+            "## 3.3 Tren Eksternal yang Berpotensi Memperbesar Risiko", ("Pembanding eksternal pada bagian ini dipakai secara konservatif. Ketika sinyal publik belum cukup sebanding, prediksi tetap mengutamakan bukti evaluasi internal, pola penilaian, dan konsentrasi umpan balik." if not external_ready else "Sinyal eksternal digunakan sebagai benchmark untuk membaca apakah tantangan yang muncul berasal murni dari kondisi internal atau juga diperkuat oleh perubahan ekspektasi pasar. Bila tren eksternal bergerak ke arah yang sama dengan keluhan pelanggan internal, maka urgensi intervensi meningkat."), "",
             osint_table, "", *osint_lines[:6],
             "## 3.4 Keterkaitan Faktor Eksternal dengan Kondisi Perusahaan", *company_linkage,
         ])
@@ -398,7 +417,8 @@ class ReportNarrativeBuilderMixin:
             "## 4.3 Rencana Tindak Lanjut Lintas Fungsi", "Rencana tindak lanjut di bawah ini disusun agar forum internal tidak berhenti pada pembacaan laporan, tetapi langsung bergerak ke tahap eksekusi. Timeline dapat disesuaikan, namun disiplin implementasi antar fungsi tetap menjadi faktor penentu keberhasilan.", "", roadmap_table, "", *roadmap_actions,
         ])
 
-    def _implementation_readiness_markdown(self, timeframe_df, timeframe, notes, macro_trends, context):
+    def _implementation_readiness_markdown(self, timeframe_df, timeframe, notes, macro_trends, context, section_context=None):
+        timeframe_label = context.get("timeframe_label", timeframe)
         if timeframe_df.empty: return "## 5.1 Prioritas Sasaran Bisnis\nTidak ada feedback internal yang sesuai dengan kombinasi filter yang dipilih untuk periode ini.\n"
 
         total_rows = len(timeframe_df)
@@ -419,7 +439,8 @@ class ReportNarrativeBuilderMixin:
         osint_signals = self._extract_osint_signals(macro_trends, limit=2)
         deep_insight = self._extract_deep_insight(macro_trends)
         
-        focus_text = notes.strip().rstrip(".!?") if notes and notes.strip() else "Tidak ada fokus tambahan dari pengguna"
+        section_context = section_context or {}
+        focus_text = str(section_context.get("focus_note") or notes or "").strip().rstrip(".!?") or "Tidak ada fokus tambahan dari pengguna"
         top_service_name = top_service["label"] if top_service else self._primary_label(self._series_counts(timeframe_df["Layanan"], limit=1), "layanan prioritas")
         top_segment_name = top_segment["label"] if top_segment else self._primary_label(self._series_counts(timeframe_df["Tipe Stakeholder"], limit=1), "segmen utama")
 
@@ -483,19 +504,19 @@ class ReportNarrativeBuilderMixin:
 
         return "\n".join([
             "Bagian ini menerjemahkan hasil feedback intelligence ke dalam pertimbangan implementasi dan penguatan organisasi agar perusahaan tidak berhenti pada insight, tetapi bergerak menuju eksekusi yang terstruktur. Prinsipnya adalah memulai dari use case yang nyata, membangun fondasi secara bertahap, lalu belajar secara disiplin dari pilot yang dijalankan.", "",
-            f"Untuk periode {timeframe}, pertimbangan implementasi perlu dilihat bersama konteks berikut: {osint_note} Analisis saat ini dibaca menggunakan {context['score_profile']['label']} dengan fokus pada {context['score_profile']['narrative_focus']}. Dengan demikian, forum internal dapat menilai bukan hanya apa yang harus diperbaiki, tetapi juga seberapa siap organisasi untuk menjalankan inisiatif ini secara lebih sistematis.", "",
+            f"Untuk periode {timeframe_label}, pertimbangan implementasi perlu dilihat bersama konteks berikut: {osint_note} Analisis saat ini dibaca menggunakan {context['score_profile']['label']} dengan fokus pada {context['score_profile']['narrative_focus']}. Dengan demikian, forum internal dapat menilai bukan hanya apa yang harus diperbaiki, tetapi juga seberapa siap organisasi untuk menjalankan inisiatif ini secara lebih sistematis.", "",
             summary_table, "", *pillar_sections,
         ])
 
-    def build_report_sections(self, timeframe, notes, macro_trends, sentiment="all", segment="all", score_engine=DEFAULT_SCORE_ENGINE):
+    def build_report_sections(self, timeframe, notes, macro_trends, sentiment="all", segment="all", score_engine=DEFAULT_SCORE_ENGINE, section_context=None):
         timeframe_df = self._filter_view(timeframe, sentiment=sentiment, segment=segment)
         context = self._build_analysis_context(timeframe_df, timeframe, sentiment, segment, score_engine)
         section_map = {
-            "cx_chap_1": self._descriptive_markdown(timeframe_df, timeframe, notes, context),
+            "cx_chap_1": self._descriptive_markdown(timeframe_df, timeframe, notes, context, section_context=section_context),
             "cx_chap_2": self._diagnostic_markdown(timeframe_df, context),
-            "cx_chap_3": self._predictive_markdown(timeframe_df, macro_trends, context),
+            "cx_chap_3": self._predictive_markdown(timeframe_df, macro_trends, context, section_context=section_context),
             "cx_chap_4": self._prescriptive_markdown(timeframe_df, context),
-            "cx_chap_5": self._implementation_readiness_markdown(timeframe_df, timeframe, notes, macro_trends, context),
+            "cx_chap_5": self._implementation_readiness_markdown(timeframe_df, timeframe, notes, macro_trends, context, section_context=section_context),
         }
         return ReportEvidenceBuilder.attach_to_sections([
             {
@@ -582,10 +603,23 @@ class ReportNarrativeBuilderMixin:
         text = re.sub(r"```.*?```", " ", str(content or ""), flags=re.DOTALL)
         text = re.sub(r"^\s{0,3}#{1,6}\s*", "", text, flags=re.MULTILINE)
         text = re.sub(r"\|[^\n]*\|", " ", text)
+        text = re.sub(r"(?i)\b(?:url|source|sumber)\s*=\s*[^|.\n]+", " ", text)
+        text = re.sub(r"\bBukti yang Dipakai\b", " ", text, flags=re.IGNORECASE)
         text = re.sub(r"[*_`>|]+", " ", text)
         text = re.sub(r"\s+", " ", text).strip()
         if not text:
             return ""
+        sentences = [part.strip(" -;,.") for part in re.split(r"(?<=[.!?])\s+|;\s+", text) if part.strip(" -;,.")]
+        if sentences:
+            sentences.sort(
+                key=lambda sentence: (
+                    bool(re.search(r"\b\d+(?:[,.]\d+)?%?\b", sentence)),
+                    any(term in sentence.lower() for term in ("risiko", "feedback", "rating", "sentimen", "layanan", "rekomendasi")),
+                    len(sentence),
+                ),
+                reverse=True,
+            )
+            text = sentences[0]
         words = text.split()
         if len(words) <= max_words:
             return text
@@ -606,7 +640,7 @@ class ReportNarrativeBuilderMixin:
             return ""
         return "\n".join(rows)
 
-    def build_executive_snapshot(self, timeframe, notes="", sentiment="all", segment="all", score_engine=DEFAULT_SCORE_ENGINE, macro_trends="", report_sections=None):
+    def build_executive_snapshot(self, timeframe, notes="", sentiment="all", segment="all", score_engine=DEFAULT_SCORE_ENGINE, macro_trends="", report_sections=None, section_context=None):
         timeframe_df = self._filter_view(timeframe, sentiment=sentiment, segment=segment)
         if timeframe_df.empty: return "## Ringkasan Eksekutif\n- Belum ada bukti evaluasi yang cukup untuk menyusun ringkasan eksekutif pada kombinasi filter yang dipilih.\n"
 
@@ -623,7 +657,8 @@ class ReportNarrativeBuilderMixin:
         top_stakeholder = self._series_counts(timeframe_df["Tipe Stakeholder"], limit=1)
         top_risk = self._group_risk(timeframe_df, "Layanan", limit=1)
         top_issue = next((theme for theme in self._theme_hits(timeframe_df) if theme["negative_hits"] > 0), None)
-        focus_text = notes.strip() if notes and notes.strip() else "Tidak ada fokus tambahan dari pengguna."
+        section_context = section_context or {}
+        focus_text = str(section_context.get("focus_note") or notes or "").strip() or "Tidak ada fokus tambahan dari pengguna."
         dominant_journey, score_metrics = context["dominant_journey"], context["score_metrics"]
         top_location = self._series_counts_for_column(timeframe_df, "Lokasi", limit=1)
         top_instructor_type = self._series_counts_for_column(timeframe_df, "Tipe Instruktur", limit=1)
@@ -640,7 +675,7 @@ class ReportNarrativeBuilderMixin:
         context_table = self._markdown_table(
             ["Konteks Pendukung", "Nilai"],
             [
-                ["Periode", "Seluruh Periode Evaluasi" if "apidog" in timeframe.lower() else timeframe],
+                ["Periode", context.get("timeframe_label") or ("Seluruh Periode Evaluasi" if "apidog" in timeframe.lower() else timeframe)],
                 ["Cakupan analisis", context["scope_text"]],
                 ["Respons evaluasi dianalisis", f"{total_rows} respons"],
                 ["Dimensi evaluasi diringkas", f"{dimension_count} dimensi"],
@@ -676,6 +711,17 @@ class ReportNarrativeBuilderMixin:
             if positive_only
             else f"- Tetapkan owner lintas fungsi untuk {top_risk[0]['label'] if top_risk else 'prioritas layanan utama'} dan minta rencana aksi 30 hari dengan indikator keberhasilan yang terukur."
         )
+        management_interpretation = FeedbackManagementInterpreter.build(
+            avg_rating=avg_rating,
+            negative_share=negative_share,
+            top_risk_label=top_risk[0]["label"] if top_risk else self._primary_label(top_service, "area layanan utama"),
+            issue_label=top_issue["label"] if top_issue else "konsistensi kualitas layanan",
+            journey_label=dominant_journey["stage_label"] if dominant_journey else "customer journey utama",
+            score_label=context["score_profile"]["label"],
+            current_score=score_metrics["current_score"],
+            projected_score=score_metrics["projected_score"],
+        )
+        interpretation_table = FeedbackManagementInterpreter.to_markdown_table(management_interpretation)
         section_synthesis = self._executive_section_synthesis(report_sections)
         synthesis_block = ["### Sintesis Lintas Bab", section_synthesis, ""] if section_synthesis else []
         return DocumentBuilder.reader_facing_text("\n".join([
@@ -685,6 +731,7 @@ class ReportNarrativeBuilderMixin:
             "",
             "### Temuan Utama", *headlines, "",
             *synthesis_block,
+            "### Interpretasi Manajemen", interpretation_table, "",
             "### Rekomendasi",
             recommendation_first,
             f"- Gunakan {dominant_journey['stage_label'] if dominant_journey else 'customer journey utama'} sebagai titik awal perbaikan agar tindakan terasa langsung di pengalaman pelanggan.",
