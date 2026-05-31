@@ -42,6 +42,20 @@ class ClassReportAdapter:
     )
 
     @staticmethod
+    def clean_scalar(value):
+        if value is None:
+            return ""
+        try:
+            if pd.isna(value):
+                return ""
+        except (TypeError, ValueError):
+            pass
+        if isinstance(value, float) and value.is_integer():
+            return str(int(value))
+        text = str(value).strip()
+        return "" if text.lower() in {"nan", "none", "null", "nat", "<na>"} else text
+
+    @staticmethod
     def looks_like_class_report(dataframe):
         columns = {str(column).strip() for column in dataframe.columns}
         return {"response_id", "response_name", "response_answer"}.issubset(columns)
@@ -81,15 +95,15 @@ class ClassReportAdapter:
         if dataframe is None or dataframe.empty:
             return lookup
         for _, row in dataframe.iterrows():
-            response_id = str(row.get("response_id") or "").strip()
+            response_id = cls.clean_scalar(row.get("response_id"))
             if not response_id:
                 continue
             current = lookup.setdefault(
                 response_id,
                 {
                     "label": cls.clean_label(row.get("response_name")),
-                    "type": str(row.get("response_type") or "").strip(),
-                    "parent_id": str(row.get("response_parent_id") or "").strip(),
+                    "type": cls.clean_scalar(row.get("response_type")),
+                    "parent_id": cls.clean_scalar(row.get("response_parent_id")),
                     "class_start_dates": [],
                     "class_end_dates": [],
                 },
@@ -100,13 +114,13 @@ class ClassReportAdapter:
                 ("class_start_date", "class_start_dates"),
                 ("class_end_date", "class_end_dates"),
             ):
-                value = str(row.get(field_name) or "").strip()
+                value = cls.clean_scalar(row.get(field_name))
                 if value and value not in current[target_name]:
                     current[target_name].append(value)
             current.update({
                 "label": cls.clean_label(row.get("response_name")),
-                "type": str(row.get("response_type") or "").strip(),
-                "parent_id": str(row.get("response_parent_id") or "").strip(),
+                "type": cls.clean_scalar(row.get("response_type")),
+                "parent_id": cls.clean_scalar(row.get("response_parent_id")),
             })
         return lookup
 
@@ -190,15 +204,15 @@ class ClassReportAdapter:
 
     @staticmethod
     def is_rating_response(row):
-        response_type = str(row.get("response_type") or "").strip().lower()
+        response_type = ClassReportAdapter.clean_scalar(row.get("response_type")).lower()
         if response_type.startswith("rating"):
             return True
-        answer = str(row.get("response_answer") or "").strip()
+        answer = ClassReportAdapter.clean_scalar(row.get("response_answer"))
         return bool(answer) and pd.notna(pd.to_numeric(answer, errors="coerce"))
 
     @staticmethod
     def is_text_response(row):
-        response_type = str(row.get("response_type") or "").strip().lower()
+        response_type = ClassReportAdapter.clean_scalar(row.get("response_type")).lower()
         return response_type == "text"
 
     @staticmethod
@@ -213,9 +227,18 @@ class ClassReportAdapter:
     @classmethod
     def question_label(cls, row, reference_lookup=None):
         reference_lookup = reference_lookup or {}
-        response_id = str(row.get("response_id") or "").strip()
+        response_id = cls.clean_scalar(row.get("response_id"))
         reference = reference_lookup.get(response_id, {})
         return cls.clean_label(reference.get("label") or row.get("response_name"))
+
+    @classmethod
+    def parent_id_for_row(cls, row, reference_lookup=None):
+        explicit_parent_id = cls.clean_scalar(row.get("response_parent_id"))
+        if explicit_parent_id:
+            return explicit_parent_id
+        response_id = cls.clean_scalar(row.get("response_id"))
+        reference = (reference_lookup or {}).get(response_id, {})
+        return cls.clean_scalar(reference.get("parent_id"))
 
     @staticmethod
     def dedupe_texts(values, limit=5):
@@ -266,8 +289,8 @@ class ClassReportAdapter:
         text_by_parent = {}
         orphan_text_rows = []
         for index, row in dataframe.iterrows():
-            response_id = str(row.get("response_id") or "").strip()
-            answer = str(row.get("response_answer") or "").strip()
+            response_id = cls.clean_scalar(row.get("response_id"))
+            answer = cls.clean_scalar(row.get("response_answer"))
             if not response_id and not answer:
                 continue
             date_key, row_date_context = cls.date_context_key(row)
@@ -291,7 +314,7 @@ class ClassReportAdapter:
                 cls.merge_date_context(group, row_date_context)
                 continue
             if cls.is_text_response(row):
-                parent_id = str(row.get("response_parent_id") or "").strip()
+                parent_id = cls.parent_id_for_row(row, reference_lookup)
                 if parent_id:
                     text_by_parent.setdefault((parent_id, date_key), []).append(answer)
                     group = rating_groups.get((parent_id, date_key))

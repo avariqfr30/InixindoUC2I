@@ -1,0 +1,48 @@
+@startuml
+left to right direction
+skinparam packageStyle rectangle
+actor "Pengguna Internal" as User
+actor "Admin / Operator Data" as Admin
+actor "Internal API / APIDog" as APIDog
+actor "Provider OSINT" as OSINT
+actor "Ollama / Vector Service" as AI
+actor "Monitoring / Infra" as Infra
+rectangle "UC2 - Feedback Intelligence Analyzer" {
+  usecase "Login dan buka
+dashboard" as UC_Login
+  usecase "Pilih periode,
+sentimen, segmen" as UC_Filter
+  usecase "Tambahkan catatan
+analisis" as UC_Notes
+  usecase "Generate laporan
+feedback DOCX" as UC_Generate
+  usecase "Pantau job dan
+unduh laporan" as UC_Download
+  usecase "Simpan endpoint
+API internal" as UC_API
+  usecase "Refresh knowledge
+base feedback" as UC_Refresh
+  usecase "Jalankan analitik
+feedback" as UC_Analytics
+  usecase "Ambil benchmark
+OSINT" as UC_OSINT
+  usecase "Cek health dan
+ready" as UC_Health
+}
+User --> UC_Login
+User --> UC_Filter
+User --> UC_Notes
+User --> UC_Generate
+User --> UC_Download
+Admin --> UC_API
+Admin --> UC_Refresh
+APIDog --> UC_API
+APIDog --> UC_Refresh
+OSINT --> UC_OSINT
+AI --> UC_Analytics
+Infra --> UC_Health
+UC_Generate .> UC_Analytics : <<include>>
+UC_Generate .> UC_OSINT : <<include>>
+UC_Refresh .> UC_API : <<include>>
+UC_Download .> UC_Generate : <<extend>>
+@enduml

@@ -285,6 +285,62 @@ class InternalApiSettingsTests(unittest.TestCase):
         self.assertEqual(dataframe.loc[0, "Rentang Waktu"], "Semua Data APIDog (tanggal tidak tersedia)")
         self.assertTrue(dataframe["Tanggal Feedback"].astype(str).str.len().gt(0).all())
 
+    def test_class_report_adapter_uses_reference_parent_when_class_child_parent_is_missing(self):
+        pandas = __import__("pandas")
+        class_report_df = pandas.DataFrame(
+            [
+                {
+                    "response_id": "1",
+                    "response_parent_id": None,
+                    "response_name": "KESESUAIAN MATERIAL BAHAN AJAR",
+                    "response_type": "rating_5",
+                    "response_answer": "4",
+                },
+                {
+                    "response_id": "9",
+                    "response_parent_id": None,
+                    "response_name": "Komentar material",
+                    "response_type": "text",
+                    "response_answer": "Materi perlu contoh praktik tambahan.",
+                },
+            ]
+        )
+        reference_df = pandas.DataFrame(
+            [
+                {
+                    "class_start_date": "2026-04-01",
+                    "class_end_date": "2026-04-03",
+                    "response_id": "1",
+                    "response_parent_id": None,
+                    "response_name": "KESESUAIAN MATERIAL BAHAN AJAR",
+                    "response_type": "rating_5",
+                },
+                {
+                    "class_start_date": "2026-04-01",
+                    "class_end_date": "2026-04-03",
+                    "response_id": "9",
+                    "response_parent_id": "1",
+                    "response_name": "Komentar material",
+                    "response_type": "text",
+                },
+            ]
+        )
+
+        dataframe = ClassReportAdapter.normalize(
+            class_report_df,
+            "class_report",
+            reference_lookup=ClassReportAdapter.question_lookup(reference_df),
+        )
+
+        self.assertEqual(len(dataframe), 1)
+        self.assertEqual(dataframe.loc[0, "Raw Response Count"], "2")
+        self.assertEqual(dataframe.loc[0, "Rating Response Count"], "1")
+        self.assertEqual(dataframe.loc[0, "Text Response Count"], "1")
+        self.assertIn("Materi perlu contoh praktik tambahan", dataframe.loc[0, "Representative Why"])
+        self.assertIn("Rata-rata rating Kesesuaian materi bahan ajar", dataframe.loc[0, "Komentar"])
+        self.assertNotIn("Komentar material:", dataframe.loc[0, "Komentar"])
+        self.assertEqual(dataframe.loc[0, "Layanan"], "Materi dan kurikulum")
+
     def test_internal_api_provider_uses_reference_class_report_as_dictionary_not_feedback_rows(self):
         provider = InternalApiProvider.__new__(InternalApiProvider)
         provider.client = FakeClassReportApiClient()
@@ -338,6 +394,37 @@ class InternalApiSettingsTests(unittest.TestCase):
         lookup = ClassReportAdapter.question_lookup(reference_df)
         self.assertEqual(lookup["1"]["class_start_dates"], ["2024-07-01"])
         self.assertEqual(lookup["1"]["class_end_dates"], ["2024-07-02"])
+
+    def test_reference_class_report_lookup_retains_parent_child_relationships(self):
+        reference_df = __import__("pandas").DataFrame(
+            [
+                {
+                    "class_start_date": "2024-07-01",
+                    "class_end_date": "2024-07-02",
+                    "response_id": "1",
+                    "response_parent_id": None,
+                    "response_name": "KESESUAIAN MATERIAL BAHAN AJAR",
+                    "response_type": "rating_5",
+                },
+                {
+                    "class_start_date": "2024-07-01",
+                    "class_end_date": "2024-07-02",
+                    "response_id": "9",
+                    "response_parent_id": "1",
+                    "response_name": "Komentar material",
+                    "response_type": "text",
+                },
+            ]
+        )
+
+        lookup = ClassReportAdapter.question_lookup(reference_df)
+
+        self.assertEqual(lookup["1"]["parent_id"], "")
+        self.assertEqual(lookup["9"]["parent_id"], "1")
+        self.assertEqual(lookup["1"]["label"], "Kesesuaian materi bahan ajar")
+        self.assertEqual(lookup["9"]["label"], "Komentar material")
+        self.assertEqual(lookup["9"]["class_start_dates"], ["2024-07-01"])
+        self.assertEqual(lookup["9"]["class_end_dates"], ["2024-07-02"])
 
     def test_reference_class_report_with_actual_answers_is_processed_as_date_bearing_feedback(self):
         reference_df = __import__("pandas").DataFrame(
