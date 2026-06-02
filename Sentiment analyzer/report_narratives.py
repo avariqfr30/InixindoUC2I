@@ -5,7 +5,6 @@ import pandas as pd
 from config import ADOPTION_READINESS_PILLARS, CX_SENTIMENT_STRUCTURE, DEFAULT_SCORE_ENGINE
 from document_builder import DocumentBuilder
 from management_interpretation import FeedbackManagementInterpreter
-from report_evidence import ReportEvidenceBuilder
 from report_trust_sections import build_specialist_review_markdown
 
 
@@ -69,12 +68,28 @@ class ReportNarrativeBuilderMixin:
         return ""
 
     @staticmethod
+    def _summarized_external_trend_lines(osint_signals, deep_insight):
+        source_text = " ".join(
+            [
+                str(deep_insight or ""),
+                *[str(signal.get("snippet") or "") for signal in osint_signals or []],
+            ]
+        ).lower()
+        if not source_text.strip():
+            return []
+        lines = []
+        if any(term in source_text for term in ("skill", "kompetensi", "training", "pelatihan", "cloud", "ai", "security", "siber")):
+            lines.append("- Ringkasan tren eksternal: kebutuhan kompetensi digital bergerak cepat, sehingga materi dan contoh praktik perlu rutin diperbarui.")
+        if any(term in source_text for term in ("customer", "experience", "loyal", "follow", "cem", "dampak")):
+            lines.append("- Implikasi ke layanan: pelanggan semakin menilai pengalaman dari konsistensi tindak lanjut, bukti dampak, dan relevansi hasil setelah kelas.")
+        if not lines:
+            lines.append("- Ringkasan tren eksternal: konteks publik hanya dipakai sebagai pembanding umum; prioritas tetap ditentukan oleh bukti evaluasi internal.")
+        return lines
+
+    @staticmethod
     def _external_company_linkage(osint_signals, deep_insight, top_service_name, top_segment_name, top_issue_label, projection_sentence):
-        if deep_insight:
-            lead_signal = re.sub(r"\s+", " ", deep_insight).strip()
-        elif osint_signals:
-            signal = osint_signals[0]
-            lead_signal = f"{signal['title']} dari {signal['source']} menyoroti {signal['snippet']}"
+        if deep_insight or osint_signals:
+            lead_signal = "Ringkasan tren eksternal menunjukkan bahwa ekspektasi pelanggan terhadap relevansi materi, bukti dampak, dan tindak lanjut layanan perlu dibaca bersama temuan internal."
         else:
             lead_signal = "Sinyal eksternal belum cukup kuat untuk dijadikan pembanding utama."
 
@@ -153,6 +168,86 @@ class ReportNarrativeBuilderMixin:
             "projected_formula": projected_formula,
         }
 
+    def _experience_lens_markdown(self, context):
+        rows = []
+        for item in context.get("score_metrics", {}).get("experience_lenses", []):
+            rows.append([
+                item.get("lens", "-"),
+                item.get("score", "-"),
+                item.get("reading", "-"),
+                item.get("evidence", "-"),
+            ])
+        if not rows:
+            return ""
+        return self._markdown_table(
+            ["Lensa Experience Index", "Skor", "Pembacaan", "Bukti Analitis"],
+            rows,
+        )
+
+    def _prediction_defensibility_markdown(self, timeframe_df, context, external_ready):
+        governance = self._governance_summary(timeframe_df)
+        sentiment_summary = self._sentiment_summary(timeframe_df)
+        score_metrics = context["score_metrics"]
+        top_theme = (score_metrics.get("theme_rows") or [{}])[0]
+        dominant_journey = context.get("dominant_journey") or {}
+        text_count = int(governance.get("text_response_count", 0) or 0)
+        total_rows = int(governance.get("total_rows", 0) or 0)
+        completeness = float(governance.get("completeness_pct", 0.0) or 0.0)
+        confidence_level = "Tinggi" if total_rows >= 100 and text_count >= 20 and completeness >= 80 else "Sedang" if total_rows >= 20 and completeness >= 60 else "Rendah"
+        mixed_count = sentiment_summary.get("mixed", 0)
+        weak_count = sentiment_summary.get("weak_negative", 0)
+        high_rating_with_critique = "perlu dicek" if mixed_count else "tidak dominan"
+        weak_evidence = "perlu dibaca hati-hati" if weak_count or text_count < 5 else "cukup terkendali"
+        osint_check = "tersedia sebagai konteks pembanding" if external_ready else "lemah atau tidak tersedia, sehingga tidak menaikkan klaim prediksi"
+
+        factor_table = self._markdown_table(
+            ["Faktor Pembentuk Proyeksi", "Cara Dibaca"],
+            [
+                ["Rating", f"Rata-rata rating menjadi baseline skor saat ini untuk {context['score_profile']['label']}."],
+                ["Sentimen", f"Sinyal positif {sentiment_summary['positive_share']}% dibanding sinyal korektif tertimbang {sentiment_summary['issue_share']}% membentuk arah delta."],
+                ["Tema risiko", f"Tema prioritas {top_theme.get('label', 'belum terpetakan')} dipakai untuk melihat konsentrasi isu, bukan sekadar jumlah komentar."],
+                ["Perjalanan agenda", f"Tahap {dominant_journey.get('stage_label', 'belum terpetakan')} menunjukkan di mana touchpoint dan rasa pengalaman paling perlu dibaca."],
+                ["Bobot score engine", "Learning, Service, dan Facility Score menjadi proksi terukur untuk membaca Experience Index secara end-to-end."],
+                ["Konteks eksternal", "Konteks eksternal hanya menjadi tekanan pembanding; keputusan tetap bersandar pada bukti evaluasi internal."],
+            ],
+        )
+        confidence_table = self._markdown_table(
+            ["Penggerak Keyakinan", "Pembacaan"],
+            [
+                ["Volume data", f"{total_rows} respons dianalisis; tingkat keyakinan operasional: {confidence_level}."],
+                ["Komentar teks", f"{text_count} komentar tersedia untuk menjelaskan alasan di balik rating."],
+                ["Kelengkapan field", f"{completeness}% field inti tersedia untuk audit konteks layanan."],
+                ["OSINT", osint_check],
+                ["Status proyeksi", "Belum diklaim sebagai backtesting statistik; dipakai sebagai sinyal prioritas sampai data periode berikutnya memvalidasi arah."],
+            ],
+        )
+        challenge_lines = [
+            f"- Challenge check rating vs komentar: {high_rating_with_critique}; kritik konstruktif dipisahkan dari pujian penuh agar tidak terjadi false comfort.",
+            f"- Challenge check bukti lemah: {weak_evidence}; rating rendah dengan komentar terlalu tipis tidak langsung dibaca sebagai keluhan kuat.",
+            f"- Challenge check konsentrasi: layanan dan segmen berisiko dibaca bersama volume agar satu kelompok kecil tidak otomatis mewakili seluruh pengalaman pelanggan.",
+            f"- Challenge check eksternal: {osint_check}.",
+        ]
+        sensitivity_lines = [
+            f"- Sensitivitas terbesar datang dari perubahan proporsi sinyal korektif, terutama bila tema {top_theme.get('label', 'utama')} membaik atau memburuk pada periode berikutnya.",
+            f"- Jika tindak lanjut pada {dominant_journey.get('stage_label', 'tahap agenda utama')} membaik, proyeksi {score_metrics.get('direction', 'stabil')} perlu dikalibrasi ulang sebelum menjadi target operasional.",
+            "- Prospective validation: periode berikutnya harus membandingkan arah proyeksi ini dengan skor aktual agar model makin teruji secara historis.",
+        ]
+        return "\n".join([
+            "### Model Early-Warning dan Batas Prediksi",
+            "Proyeksi ini adalah early-warning atau early warning deterministik untuk prioritas manajemen, bukan forecast statistik dan bukan keputusan otomatis. Nilainya dapat diperdebatkan karena setiap faktor pembentuk, penggerak keyakinan, dan challenge check ditampilkan secara eksplisit.",
+            "",
+            factor_table,
+            "",
+            "### Penggerak Keyakinan Proyeksi",
+            confidence_table,
+            "",
+            "### Challenge Check dan Risiko Salah Baca",
+            *challenge_lines,
+            "",
+            "### Sensitivitas dan Validasi Berikutnya",
+            *sensitivity_lines,
+        ])
+
     def _descriptive_markdown(self, timeframe_df, timeframe, notes, context, section_context=None):
         timeframe_label = context.get("timeframe_label", timeframe)
         governance = self._governance_summary(timeframe_df)
@@ -161,20 +256,21 @@ class ReportNarrativeBuilderMixin:
             return "## 1.1 Ringkasan Cakupan Feedback dan Tata Kelola\nTidak ada feedback internal yang sesuai dengan kombinasi filter yang dipilih untuk periode ini.\n"
 
         avg_rating = timeframe_df["Rating Numeric"].mean()
-        positive_count = int((timeframe_df["Sentiment Label"] == "positive").sum())
-        neutral_count = int((timeframe_df["Sentiment Label"] == "neutral").sum())
-        negative_count = int((timeframe_df["Sentiment Label"] == "negative").sum())
+        sentiment_summary = self._sentiment_summary(timeframe_df)
+        positive_count = sentiment_summary["positive"]
+        mixed_count = sentiment_summary["mixed"]
+        neutral_count = sentiment_summary["neutral"]
+        negative_count = sentiment_summary["negative"]
+        weak_negative_count = sentiment_summary["weak_negative"]
 
         stakeholder_counts = self._series_counts(timeframe_df["Tipe Stakeholder"])
         service_counts = self._series_counts(timeframe_df["Layanan"])
-        source_counts = self._series_counts(timeframe_df["Sumber Feedback"])
-        channel_counts = self._series_counts(timeframe_df["Kanal Feedback"])
-
-        top_sources = source_counts.index.tolist() if not source_counts.empty else ["Sumber internal terstandar"]
-        top_channels = channel_counts.index.tolist() if not channel_counts.empty else ["Belum terpetakan"]
-        positive_share = self._safe_percentage(positive_count, total_rows)
-        neutral_share = self._safe_percentage(neutral_count, total_rows)
-        negative_share = self._safe_percentage(negative_count, total_rows)
+        positive_share = sentiment_summary["positive_share"]
+        mixed_share = sentiment_summary["mixed_share"]
+        neutral_share = sentiment_summary["neutral_share"]
+        negative_share = sentiment_summary["issue_share"]
+        strong_negative_share = sentiment_summary["negative_share"]
+        weak_negative_share = sentiment_summary["weak_negative_share"]
         score_metrics = context["score_metrics"]
         journey_rows = context["journey_rows"]
         scope_text = context["scope_text"]
@@ -192,8 +288,8 @@ class ReportNarrativeBuilderMixin:
             f"Pada periode {timeframe_label}, sistem memproses {total_rows} feedback tervalidasi dengan "
             f"rata-rata rating {round(avg_rating, 2) if pd.notna(avg_rating) else 0.0} dari 5, yang menunjukkan kinerja "
             f"layanan berada pada kategori {self._rating_assessment(avg_rating)}. "
-            f"Komposisi sentimen memperlihatkan {positive_share}% sinyal positif, {neutral_share}% sinyal netral, "
-            f"dan {negative_share}% sinyal negatif."
+            f"Komposisi sentimen memperlihatkan {positive_share}% sinyal positif, {mixed_share}% kritik konstruktif, "
+            f"{neutral_share}% sinyal netral, {strong_negative_share}% sinyal negatif kuat, dan {weak_negative_share}% sinyal negatif bukti lemah."
         )
         governance_intro = f"Dari sisi tata kelola, kelengkapan field inti mencapai {governance['completeness_pct']}%. Data berasal dari {governance['source_count']} sumber feedback dan {governance['channel_count']} kanal yang terpetakan. {governance_note} {focus_line}"
         indicator_table = self._markdown_table(
@@ -210,9 +306,18 @@ class ReportNarrativeBuilderMixin:
             [[context["score_profile"]["label"], f"{score_metrics['current_score']}", score_metrics["direction"].title(), context["dominant_theme"]["label"] if context["dominant_theme"] else "Belum terpetakan"]]
         )
 
-        sentiment_chart_line = f"[[PIE: Komposisi Sentimen Feedback | Positif,{positive_share}; Netral,{neutral_share}; Negatif,{negative_share}]]"
+        sentiment_chart_line = f"[[PIE: Komposisi Sentimen Feedback | Positif,{positive_share}; Kritik konstruktif,{mixed_share}; Netral,{neutral_share}; Negatif,{strong_negative_share}; Negatif bukti lemah,{weak_negative_share}]]"
         journey_chart_line = "[[CHART: Titik Customer Journey dengan Sinyal Negatif | Persentase Negatif | " + self._chart_pairs(pd.Series({item["stage_label"]: item["negative_share"] for item in journey_rows}), use_percentage=False, limit=4) + "]]" if journey_rows else ""
-        sentiment_table = self._markdown_table(["Kategori Sentimen", "Jumlah", "Persentase"], [["Positif", positive_count, f"{positive_share}%"], ["Netral", neutral_count, f"{neutral_share}%"], ["Negatif", negative_count, f"{negative_share}%"]])
+        sentiment_table = self._markdown_table(
+            ["Kategori Sentimen", "Jumlah", "Persentase"],
+            [
+                ["Positif", positive_count, f"{positive_share}%"],
+                ["Kritik konstruktif", mixed_count, f"{mixed_share}%"],
+                ["Netral", neutral_count, f"{neutral_share}%"],
+                ["Negatif", negative_count, f"{strong_negative_share}%"],
+                ["Negatif bukti lemah", weak_negative_count, f"{weak_negative_share}%"],
+            ],
+        )
         stakeholder_table = self._markdown_table(["Segmen Stakeholder", "Jumlah Feedback", "Persentase"], self._distribution_rows(stakeholder_counts, total_rows, limit=5))
         service_table = self._markdown_table(["Layanan", "Jumlah Feedback", "Persentase"], self._distribution_rows(service_counts, total_rows, limit=5))
         location_table = self._markdown_table(["Lokasi Pelatihan", "Jumlah Feedback", "Persentase"], self._distribution_rows(location_counts, total_rows, limit=5))
@@ -220,22 +325,18 @@ class ReportNarrativeBuilderMixin:
         
         location_pie_line = "[[PIE: Sebaran Lokasi Pelatihan | " + self._chart_pairs(location_counts, total_rows=total_rows, limit=5, use_percentage=True) + "]]" if not location_counts.empty else ""
         instructor_pie_line = "[[PIE: Komposisi Instruktur Internal vs OL | " + self._chart_pairs(instructor_type_counts, total_rows=total_rows, limit=5, use_percentage=True) + "]]" if not instructor_type_counts.empty else ""
-        source_lines = [f"- Sumber utama: {', '.join(top_sources[:3])}", f"- Kanal utama: {', '.join(top_channels[:3])}"]
-        
         distribution_paragraph = f"Sebaran volume feedback menunjukkan bahwa konsentrasi terbesar berasal dari segmen {self._format_count_summary(stakeholder_counts, limit=3)}. Dari sisi layanan, perhatian pengguna paling banyak tercurah pada {self._format_count_summary(service_counts, limit=3)}. Pola ini penting untuk dibaca secara hati-hati, karena volume tinggi belum otomatis berarti performa buruk, tetapi menandakan area yang paling banyak terekspos kepada pelanggan."
-        source_paragraph = f"Dari sisi asal data, sumber yang paling dominan saat ini adalah {', '.join(top_sources[:3])}. Pada saat yang sama, kanal yang tercatat masih didominasi oleh {', '.join(top_channels[:3])}. Informasi ini perlu dibaca sebagai indikator awal representativitas data: semakin luas sumber dan kanal, semakin kuat dasar analisis untuk pengambilan keputusan lintas fungsi."
         delivery_context_paragraph = f"Lokasi pelatihan pada cakupan terpilih paling banyak berlangsung di {self._format_count_summary(location_counts, limit=3)}. Dari sisi tipe instruktur, komposisi saat ini didominasi oleh {self._format_count_summary(instructor_type_counts, limit=3)}. Informasi ini penting karena performa layanan sering kali dipengaruhi oleh kesiapan lokasi, format delivery, dan model pengajar yang dipakai."
         journey_table = self._markdown_table(["Tahap Customer Journey", "Volume", "Rating Rata-rata", "Positif", "Netral", "Negatif", "Tema Dominan"], [[item["stage_label"], item["volume"], item["average_rating"], f"{item['positive_share']}%", f"{item['neutral_share']}%", f"{item['negative_share']}%", item["dominant_theme"]] for item in journey_rows])
         dominant_journey_text = f"Sentimen paling menantang pada filter yang dipilih saat ini muncul pada tahap {context['dominant_journey']['stage_label']} dengan porsi sinyal negatif {context['dominant_journey']['negative_share']}%." if context["dominant_journey"] else "Belum ada tahap customer journey yang dapat dipetakan secara cukup kuat."
 
         return "\n".join([
             "## 1.1 Ringkasan Cakupan Feedback dan Tata Kelola", descriptive_intro, "", governance_intro, "", indicator_table, "",
-            "## 1.2 Distribusi Sentimen, Rating, dan Volume", f"Distribusi sentimen menunjukkan bahwa proporsi sentimen negatif sebesar {negative_share}% {self._negative_share_assessment(negative_share)}. Sentimen positif tetap menjadi penopang utama pengalaman pelanggan, tetapi keberadaan sentimen netral yang cukup material mengindikasikan masih ada ruang untuk memperkuat pengalaman agar tidak berhenti pada persepsi 'cukup'.", "",
-            score_table, "", sentiment_table, "", "Visual berikut memperlihatkan distribusi sentimen untuk kombinasi input yang dipilih, sehingga pembaca dapat segera melihat apakah pengalaman pelanggan lebih banyak berada di area positif, netral, atau negatif.", "", sentiment_chart_line, "",
+            "## 1.2 Distribusi Sentimen, Rating, dan Volume", f"Distribusi sentimen menunjukkan bahwa proporsi sinyal korektif tertimbang sebesar {negative_share}% {self._negative_share_assessment(negative_share)}. Sentimen positif tetap menjadi penopang utama pengalaman pelanggan, tetapi kritik konstruktif dan sinyal negatif bukti lemah dipisahkan agar manajemen tidak membaca semua rating tinggi sebagai pujian penuh.", "",
+            score_table, "", sentiment_table, "", "Visual berikut memperlihatkan distribusi sentimen untuk kombinasi input yang dipilih, sehingga pembaca dapat melihat proporsi positif, kritik konstruktif, netral, negatif, dan sinyal negatif yang bukti komentarnya masih lemah.", "", sentiment_chart_line, "",
             "## 1.3 Distribusi Stakeholder, Layanan, dan Kanal/Sumber", distribution_paragraph, "", "### Stakeholder dengan volume feedback terbesar", stakeholder_table, "", "### Layanan dengan volume feedback terbesar", service_table, "",
             "### Pemetaan sentimen pada customer journey", dominant_journey_text, "", journey_table, "", "Visual berikut membantu melihat tahapan customer journey mana yang paling banyak menampung sinyal negatif pada input yang dipilih.", "", journey_chart_line, "",
-            "### Lokasi pelatihan dan tipe instruktur", delivery_context_paragraph, "", location_table, "", location_pie_line, "", instructor_type_table, "", instructor_pie_line, "",
-            "### Cakupan sumber dan kanal", source_paragraph, "", *source_lines,
+            "### Lokasi pelatihan dan tipe instruktur", delivery_context_paragraph, "", location_table, "", location_pie_line, "", instructor_type_table, "", instructor_pie_line,
         ])
 
     def _diagnostic_markdown(self, timeframe_df, context):
@@ -265,7 +366,7 @@ class ReportNarrativeBuilderMixin:
             positive_lines.append(f"- {theme['label']}: {theme['positive_hits']} sinyal positif. Paling banyak muncul pada layanan {', '.join(strongest_services.index.tolist()) or 'belum terpetakan'}.")
         if not positive_lines: positive_lines = ["- Belum ada kekuatan yang cukup konsisten untuk dikonfirmasi pada periode ini."]
 
-        negative_quotes = self._quote_lines(timeframe_df[timeframe_df["Sentiment Label"] == "negative"], limit=3)
+        negative_quotes = self._quote_lines(timeframe_df[timeframe_df["Sentiment Label"].isin({"negative", "mixed"})], limit=3)
         positive_quotes = self._quote_lines(timeframe_df[timeframe_df["Sentiment Label"] == "positive"], limit=2)
 
         service_risks = self._group_risk(timeframe_df, "Layanan", limit=5)
@@ -326,10 +427,9 @@ class ReportNarrativeBuilderMixin:
         deep_insight = self._extract_deep_insight(macro_trends)
         if not external_ready:
             deep_insight = ""
-        osint_lines = []
-        if deep_insight: osint_lines.append(f"- {deep_insight}")
-        osint_lines.extend([f"- {signal['title']} ({signal['source']}, {signal['date']}): {signal['snippet']}" for signal in osint_signals])
-        if not osint_lines: osint_lines = ["- Pembanding eksternal belum cukup kuat; prediksi saat ini sepenuhnya didasarkan pada bukti evaluasi internal."]
+        osint_lines = self._summarized_external_trend_lines(osint_signals, deep_insight)
+        if not osint_lines:
+            osint_lines = ["- Pembanding eksternal belum cukup kuat; prediksi saat ini sepenuhnya didasarkan pada bukti evaluasi internal."]
 
         top_service_risk = service_risks[0] if service_risks else None
         top_segment_risk = stakeholder_risks[0] if stakeholder_risks else None
@@ -341,6 +441,7 @@ class ReportNarrativeBuilderMixin:
         score_projection_table = self._markdown_table(["Score Engine", "Nilai Saat Ini", "Arah Proyeksi", "Nilai Proyeksi", "Horizon", "Estimasi Waktu"], [[context["score_profile"]["label"], score_metrics["current_score"], score_metrics["direction"].title(), score_metrics["projected_score"], context["horizon_text"], self._forecast_calendar_reference(context["timeframe"])]])
         component_breakdown = score_metrics.get("component_breakdown", [])
         experience_formula = self._experience_formula_details(context)
+        experience_lens_table = self._experience_lens_markdown(context)
         component_table = self._markdown_table(
             ["Komponen", "Bobot", "Skor Saat Ini", "Skor Proyeksi"],
             [
@@ -367,7 +468,6 @@ class ReportNarrativeBuilderMixin:
         journey_projection_table = self._markdown_table(["Tahap Customer Journey", "Rating Rata-rata", "Negatif", "Positif", "Tema Dominan"], [[item["stage_label"], item["average_rating"], f"{item['negative_share']}%", f"{item['positive_share']}%", item["dominant_theme"]] for item in journey_rows])
         operational_projection_table = self._markdown_table(["Area Operasional", "Label", "Level Risiko", "Rata-rata Rating", "Proporsi Negatif"], [["Lokasi", item["label"], self._risk_severity(item["risk_score"]).title(), item["average_rating"], f"{item['negative_ratio']}%"] for item in location_risks] + [["Tipe Instruktur", item["label"], self._risk_severity(item["risk_score"]).title(), item["average_rating"], f"{item['negative_ratio']}%"] for item in instructor_risks])
         projection_chart_line = f"[[CHART: Perbandingan Score Saat Ini vs Proyeksi | Skor | Saat Ini,{score_metrics['current_score']}; Proyeksi,{score_metrics['projected_score']}]]"
-        osint_table = self._markdown_table(["Sinyal Eksternal", "Sumber", "Tanggal"], [[signal["title"], signal["source"], signal["date"]] for signal in osint_signals])
         company_linkage = self._external_company_linkage(
             osint_signals,
             deep_insight,
@@ -376,15 +476,22 @@ class ReportNarrativeBuilderMixin:
             top_issue_label,
             self._projection_sentence(context),
         )
+        defensibility_block = self._prediction_defensibility_markdown(timeframe_df, context, external_ready)
 
         return "\n".join([
-            "## 3.1 Risiko Jangka Pendek Jika Pola Saat Ini Berlanjut", predictive_intro, "", "Prediksi pada dokumen ini tidak dimaksudkan sebagai forecast statistik jangka panjang, melainkan sebagai early warning berbasis pola rating, proporsi sentimen negatif, dan konsentrasi volume feedback. Dengan pendekatan ini, manajemen dapat lebih cepat memutuskan layanan mana yang perlu ditangani lebih dahulu.", "",
+            "## 3.1 Risiko Jangka Pendek Jika Pola Saat Ini Berlanjut", predictive_intro, "", "Prediksi pada dokumen ini tidak dimaksudkan sebagai prakiraan statistik jangka panjang, melainkan sebagai peringatan dini berbasis pola penilaian, proporsi sentimen negatif, konsentrasi isu, dan bobot perspektif skor. Dengan pendekatan ini, manajemen dapat lebih cepat memutuskan layanan mana yang perlu ditangani lebih dahulu.", "",
             score_projection_table, "", component_table if component_breakdown else "", "",
+            "### Makna Analitis Experience Index" if experience_lens_table else "",
+            "Experience Index pada laporan ini membaca pengalaman pelanggan sebagai gabungan titik sentuh layanan, rasa pengalaman yang dirasakan, dan perjalanan peserta saat mengikuti agenda perusahaan." if experience_lens_table else "",
+            "" if experience_lens_table else "",
+            experience_lens_table if experience_lens_table else "",
+            "",
             "### Penjelasan Perhitungan Experience Index" if experience_formula else "", f"Experience Index pada laporan ini dihitung dari bobot komponen: {experience_formula['weight_summary']}." if experience_formula else "", "", formula_table if experience_formula else "", "",
+            defensibility_block, "",
             projection_chart_line, "", service_risk_table, "", *risk_lines, "", "## 3.2 Prediksi Segmen dan Layanan yang Paling Rentan", "Selain layanan, pemantauan juga perlu diarahkan pada segmen pelanggan yang memperlihatkan kombinasi antara volume feedback tinggi dan kualitas pengalaman yang menurun. Segmen seperti ini biasanya lebih cepat mempengaruhi reputasi, retensi, dan peluang repeat engagement.", "",
             stakeholder_risk_table, "", *segment_lines, "", "### Pembacaan customer journey ke depan", journey_projection_table, "", *journey_lines, "", "### Area operasional yang perlu diawasi", operational_projection_table, "", *operational_lines, "",
-            "## 3.3 Tren Eksternal yang Berpotensi Memperbesar Risiko", ("Pembanding eksternal pada bagian ini dipakai secara konservatif. Ketika sinyal publik belum cukup sebanding, prediksi tetap mengutamakan bukti evaluasi internal, pola penilaian, dan konsentrasi umpan balik." if not external_ready else "Sinyal eksternal digunakan sebagai benchmark untuk membaca apakah tantangan yang muncul berasal murni dari kondisi internal atau juga diperkuat oleh perubahan ekspektasi pasar. Bila tren eksternal bergerak ke arah yang sama dengan keluhan pelanggan internal, maka urgensi intervensi meningkat."), "",
-            osint_table, "", *osint_lines[:6],
+            "## 3.3 Tren Eksternal yang Berpotensi Memperbesar Risiko", ("Pembanding eksternal pada bagian ini dipakai secara konservatif. Ketika sinyal publik belum cukup sebanding, prediksi tetap mengutamakan bukti evaluasi internal, pola penilaian, dan konsentrasi umpan balik." if not external_ready else "Ringkasan tren eksternal disederhanakan menjadi implikasi manajemen agar konteks pasar mendukung temuan internal tanpa menjadi daftar sumber mentah."), "",
+            *osint_lines[:3],
             "## 3.4 Keterkaitan Faktor Eksternal dengan Kondisi Perusahaan", *company_linkage,
         ])
 
@@ -423,10 +530,9 @@ class ReportNarrativeBuilderMixin:
 
         total_rows = len(timeframe_df)
         avg_rating = timeframe_df["Rating Numeric"].mean()
-        positive_count = int((timeframe_df["Sentiment Label"] == "positive").sum())
-        negative_count = int((timeframe_df["Sentiment Label"] == "negative").sum())
-        positive_share = self._safe_percentage(positive_count, total_rows)
-        negative_share = self._safe_percentage(negative_count, total_rows)
+        sentiment_summary = self._sentiment_summary(timeframe_df)
+        positive_share = sentiment_summary["positive_share"]
+        negative_share = sentiment_summary["issue_share"]
         governance = self._governance_summary(timeframe_df)
         theme_hits = self._theme_hits(timeframe_df)
         service_risks = self._group_risk(timeframe_df, "Layanan", limit=3)
@@ -497,8 +603,8 @@ class ReportNarrativeBuilderMixin:
             summary_rows.append([" ".join(pillar["title"].split(" ")[1:]), status, pillar_data["reading"], pillar["guiding_question"]])
             pillar_sections.extend([f"## {pillar['title']}", pillar_data["reading"], "", f"Status kesiapan saat ini: **{status}**.", "", f"Pertanyaan pemandu: {pillar['guiding_question']}", "", "### Implikasi untuk Pengambilan Keputusan", pillar_data["implication"], "", "### Aksi Prioritas", *[f"- {action}" for action in pillar_data["actions"]], ""])
 
-        if deep_insight and osint_signals: osint_note = f"{deep_insight} Sinyal eksternal lainnya yang relevan antara lain {osint_signals[0]['title']} dari {osint_signals[0]['source']}."
-        elif osint_signals: osint_note = f"Sinyal eksternal yang paling relevan saat ini antara lain {osint_signals[0]['title']} dari {osint_signals[0]['source']}."
+        if deep_insight and osint_signals: osint_note = f"Ringkasan tren eksternal: pasar menuntut bukti dampak pelatihan, tindak lanjut yang lebih jelas, dan materi yang mengikuti kebutuhan kompetensi terbaru."
+        elif osint_signals: osint_note = f"Ringkasan tren eksternal: sinyal publik yang tersedia menekankan kebutuhan konsistensi hasil, pembaruan kompetensi, dan tindak lanjut layanan."
         else: osint_note = "Sinyal eksternal belum tersedia, sehingga pembacaan kesiapan implementasi terutama bersandar pada data internal."
         summary_table = self._markdown_table(["Area", "Status", "Pembacaan Saat Ini", "Pertanyaan Diskusi"], summary_rows)
 
@@ -518,14 +624,14 @@ class ReportNarrativeBuilderMixin:
             "cx_chap_4": self._prescriptive_markdown(timeframe_df, context),
             "cx_chap_5": self._implementation_readiness_markdown(timeframe_df, timeframe, notes, macro_trends, context, section_context=section_context),
         }
-        return ReportEvidenceBuilder.attach_to_sections([
+        return [
             {
                 "id": chapter["id"],
                 "title": DocumentBuilder.reader_facing_text(chapter["title"]),
                 "content": DocumentBuilder.reader_facing_text(section_map.get(chapter["id"], "")),
             }
             for chapter in CX_SENTIMENT_STRUCTURE
-        ])
+        ]
 
     def _executive_headlines(self, total_rows, dimension_count, avg_rating, negative_share, top_risk, top_issue, dominant_journey, score_metrics, context):
         rating_text = round(avg_rating, 2) if pd.notna(avg_rating) else 0.0
@@ -642,7 +748,7 @@ class ReportNarrativeBuilderMixin:
 
     def build_executive_snapshot(self, timeframe, notes="", sentiment="all", segment="all", score_engine=DEFAULT_SCORE_ENGINE, macro_trends="", report_sections=None, section_context=None):
         timeframe_df = self._filter_view(timeframe, sentiment=sentiment, segment=segment)
-        if timeframe_df.empty: return "## Ringkasan Eksekutif\n- Belum ada bukti evaluasi yang cukup untuk menyusun ringkasan eksekutif pada kombinasi filter yang dipilih.\n"
+        if timeframe_df.empty: return "- Belum ada bukti evaluasi yang cukup untuk menyusun ringkasan eksekutif pada kombinasi filter yang dipilih.\n"
 
         context = self._build_analysis_context(timeframe_df, timeframe, sentiment, segment, score_engine)
         governance = self._governance_summary(timeframe_df)
@@ -651,8 +757,8 @@ class ReportNarrativeBuilderMixin:
         rating_response_count = governance.get("rating_response_count", 0)
         text_response_count = governance.get("text_response_count", 0)
         avg_rating = timeframe_df["Rating Numeric"].mean()
-        negative_count = int((timeframe_df["Sentiment Label"] == "negative").sum())
-        negative_share = self._safe_percentage(negative_count, max(dimension_count, 1))
+        sentiment_summary = self._sentiment_summary(timeframe_df)
+        negative_share = round((sentiment_summary["issue_weight"] / max(dimension_count, 1)) * 100, 1)
         top_service = self._series_counts(timeframe_df["Layanan"], limit=1)
         top_stakeholder = self._series_counts(timeframe_df["Tipe Stakeholder"], limit=1)
         top_risk = self._group_risk(timeframe_df, "Layanan", limit=1)
@@ -690,14 +796,8 @@ class ReportNarrativeBuilderMixin:
             f"- Bagaimana praktik baik pada {top_risk[0]['label']} dapat distandardisasi dan direplikasi pada 30 hari ke depan?" if positive_only and top_risk else f"- Apakah layanan {top_risk[0]['label']} memerlukan intervensi prioritas lintas fungsi pada 30 hari ke depan?" if top_risk else "- Apakah perusahaan perlu memperluas pengumpulan feedback agar risiko layanan lebih mudah dibaca?",
             f"- Bagaimana tindak lanjut yang paling tepat untuk tema {top_issue['label']} agar tidak berkembang menjadi keluhan berulang?" if top_issue else "- Kekuatan layanan mana yang paling layak distandardisasi dan direplikasi?",
             f"- Tahap customer journey mana yang paling perlu dijadikan contoh praktik baik, mengingat kekuatan utama saat ini berada pada {dominant_journey['stage_label']}?" if positive_only and dominant_journey else f"- Tahap customer journey mana yang paling perlu dikoreksi lebih dulu, mengingat titik gesekan terbesar saat ini berada pada {dominant_journey['stage_label']}?" if dominant_journey else "- Tahap customer journey mana yang paling perlu dipetakan lebih rinci pada periode berikutnya?",
-            "- Apakah tata kelola kanal, owner, dan tindak lanjut sudah cukup jelas untuk mendukung evaluasi periodik berikutnya?",
+            "- Apakah tata kelola kanal, penanggung jawab, dan tindak lanjut sudah cukup jelas untuk mendukung evaluasi periodik berikutnya?",
         ]
-        decision_headline = headlines[0].lstrip("- ").strip() if headlines else "Manajemen perlu menetapkan prioritas perbaikan layanan berdasarkan sinyal evaluasi paling kuat."
-        opening = (
-            f"{decision_headline} Ringkasan ini dirancang untuk pembaca eksekutif: mulai dari keputusan yang perlu dibuat, "
-            f"implikasi bisnisnya, lalu bukti pendukung yang paling relevan. Evaluasi mencakup {total_rows} respons yang "
-            f"diringkas menjadi {dimension_count} dimensi pada {context['scope_text']}. Fokus tambahan: {focus_text}"
-        )
         technical_note = (
             "Detail formula, distribusi kanal, bukti verbatim, dan konteks eksternal ditempatkan setelah ringkasan ini agar eksekutif memperoleh inti keputusan lebih dulu."
         )
@@ -709,8 +809,39 @@ class ReportNarrativeBuilderMixin:
         recommendation_first = (
             f"- Tetapkan penanggung jawab lintas fungsi untuk menjaga standar {top_risk[0]['label'] if top_risk else 'prioritas layanan utama'} dan dokumentasikan praktik yang layak direplikasi."
             if positive_only
-            else f"- Tetapkan owner lintas fungsi untuk {top_risk[0]['label'] if top_risk else 'prioritas layanan utama'} dan minta rencana aksi 30 hari dengan indikator keberhasilan yang terukur."
+            else f"- Tetapkan penanggung jawab lintas fungsi untuk {top_risk[0]['label'] if top_risk else 'prioritas layanan utama'} dan minta rencana aksi 30 hari dengan indikator keberhasilan yang terukur."
         )
+        risk_label = top_risk[0]["label"] if top_risk else self._primary_label(top_service, "area layanan utama")
+        issue_label = top_issue["label"] if top_issue else "konsistensi kualitas layanan"
+        journey_label = dominant_journey["stage_label"] if dominant_journey else "customer journey utama"
+        conclusion_sentence = (
+            f"Jawaban utama laporan ini: manajemen sebaiknya mempertahankan dan mereplikasi standar {risk_label} karena area tersebut menjadi bukti paling kuat bahwa pengalaman pelanggan dapat distandardisasi lintas agenda."
+            if positive_only
+            else f"Jawaban utama laporan ini: manajemen sebaiknya memprioritaskan {risk_label} sekarang karena area tersebut menjadi titik paling jelas yang dapat memengaruhi pengalaman pelanggan, tindak lanjut, dan kepercayaan pada agenda perusahaan."
+        )
+        reason_lines = [
+            f"- **Dampak pengalaman:** {risk_label} adalah area yang paling menentukan apakah pelanggan merasakan agenda perusahaan berjalan konsisten.",
+            f"- **Konsentrasi masalah:** isu {issue_label} menjadi alasan utama agar perbaikan tidak disebar terlalu luas.",
+            f"- **Titik perjalanan:** {journey_label} menunjukkan tahap titik sentuh dan rasa pengalaman yang paling perlu dibahas dalam tindak lanjut.",
+            f"- **Arah skor:** {context['score_profile']['label']} bergerak {score_metrics['direction']} dari {score_metrics['current_score']} menuju {score_metrics['projected_score']} sebagai peringatan dini, bukan kepastian statistik.",
+        ]
+        evidence_lines = [
+            f"- Laporan membaca {total_rows} respons yang diringkas menjadi {dimension_count} dimensi evaluasi pada {context['scope_text']}.",
+            f"- Komposisi bukti terdiri dari {rating_response_count} rating dan {text_response_count} komentar teks, dengan kelengkapan field inti {governance['completeness_pct']}%.",
+            f"- Experience Index dipakai sebagai lensa gabungan titik sentuh pelanggan, pengalaman yang dirasakan, dan perjalanan peserta saat mengikuti agenda perusahaan.",
+            *headlines,
+        ]
+        decision_lines = [
+            recommendation_first,
+            f"- Sepakati indikator keberhasilan, target 30 hari, dan ritme tinjauan mingguan untuk {risk_label}.",
+            f"- Gunakan {journey_label} sebagai titik awal agar keputusan terasa langsung pada pengalaman pelanggan.",
+        ]
+        confidence_lines = [
+            f"- Proyeksi skor dipakai sebagai peringatan dini deterministik berbasis penilaian, sentimen, tema risiko, perjalanan pelanggan, dan bobot perspektif skor.",
+            f"- Klaim belum diposisikan sebagai backtesting statistik; periode berikutnya harus membandingkan arah proyeksi dengan skor aktual.",
+            f"- Fokus tambahan dari pengguna: {focus_text}",
+            f"- {technical_note}",
+        ]
         management_interpretation = FeedbackManagementInterpreter.build(
             avg_rating=avg_rating,
             negative_share=negative_share,
@@ -725,20 +856,17 @@ class ReportNarrativeBuilderMixin:
         section_synthesis = self._executive_section_synthesis(report_sections)
         synthesis_block = ["### Sintesis Lintas Bab", section_synthesis, ""] if section_synthesis else []
         return DocumentBuilder.reader_facing_text("\n".join([
-            "## Ringkasan Eksekutif",
-            "### Inti Keputusan",
-            decision_sentence,
+            "### Kesimpulan Utama",
+            conclusion_sentence,
             "",
-            "### Temuan Utama", *headlines, "",
-            *synthesis_block,
-            "### Interpretasi Manajemen", interpretation_table, "",
-            "### Rekomendasi",
-            recommendation_first,
-            f"- Gunakan {dominant_journey['stage_label'] if dominant_journey else 'customer journey utama'} sebagai titik awal perbaikan agar tindakan terasa langsung di pengalaman pelanggan.",
-            f"- Review ulang bukti komentar dan rating pada forum manajemen berikutnya sebelum memperluas intervensi ke area lain.",
-            "",
+            "### Keputusan yang Diminta", *decision_lines, "",
             "### Dasbor Keputusan", dashboard_table, "",
-            "### Keputusan yang Perlu Diambil", action_table, "",
-            "### Agenda Diskusi", *meeting_agenda, "",
-            "### Konteks Pendukung", context_table, "", technical_note,
+            "### Matriks Keputusan", action_table, "",
+            "### Interpretasi Manajemen", interpretation_table, "",
+            "### Alasan Utama", *reason_lines, "",
+            "### Bukti Pendukung", *evidence_lines, "",
+            "### Catatan Keyakinan dan Batasan", *confidence_lines, "",
+            "### Agenda Follow-up Meeting", *meeting_agenda, "",
+            *synthesis_block,
+            "### Konteks Pendukung", context_table,
         ]))

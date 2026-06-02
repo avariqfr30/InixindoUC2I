@@ -16,6 +16,39 @@ from report_narratives import ReportNarrativeBuilderMixin
 from timeframe_filters import filter_by_timeframe, readable_timeframe_label
 
 class FeedbackAnalyticsEngine(ReportNarrativeBuilderMixin):
+    PLACEHOLDER_DIMENSION_PATTERNS = (
+        "brand equity",
+        "mengapa inixindo",
+        "menjadi pilihan",
+        "alasan memilih inixindo",
+        "reputasi dan alasan memilih inixindo",
+    )
+    CONSTRUCTIVE_CRITIQUE_PATTERNS = (
+        r"\bperlu\b",
+        r"\bkurang\b",
+        r"\btidak\s+sesuai\b",
+        r"\bbelum\b",
+        r"\bupdate\b",
+        r"\bdiupdate\b",
+        r"\bversi\s+lama\b",
+        r"\bout\s+of\s+date\b",
+        r"\bterlalu\b",
+        r"\bbeda\b|\bberbeda\b",
+        r"\bmepet\b",
+        r"\bmasih\b",
+    )
+    LOW_DETAIL_FEEDBACK = {
+        "",
+        "tidak",
+        "ya",
+        "iya",
+        "ada",
+        "ok",
+        "okay",
+        "sesuai",
+        "benar",
+        "mungkin",
+    }
     THEME_LIBRARY = (
         {
             "id": "responsiveness", "label": "Respons dan SLA",
@@ -69,24 +102,84 @@ class FeedbackAnalyticsEngine(ReportNarrativeBuilderMixin):
             self.full_df["Rating"] = self.full_df["Rating Numeric"].apply(self._format_rating_for_display)
             self.full_df["Layanan"] = self.full_df["Layanan"].apply(self._reader_safe_dimension_label)
             self.full_df["Komentar"] = self.full_df["Komentar"].apply(self._reader_safe_text_label)
-            self.full_df["Sentiment Label"] = self.full_df["Rating Numeric"].apply(
-                self._sentiment_label
+            self.full_df["Sentiment Label"] = self.full_df.apply(
+                lambda row: self._sentiment_label(row.get("Rating Numeric"), row.get("Komentar")),
+                axis=1,
             )
             self.full_df["Komentar Lower"] = self.full_df["Komentar"].astype(str).str.lower()
+            self.full_df["Reportable Analysis Row"] = ~self.full_df["Layanan"].apply(self._is_placeholder_dimension)
 
     @classmethod
     def from_records(cls, records):
         return cls(pd.DataFrame.from_records(records))
 
-    @staticmethod
-    def _sentiment_label(value):
+    @classmethod
+    def _sentiment_label(cls, value, comment=""):
         if pd.isna(value):
             return "unknown"
+        low_detail = cls._is_low_detail_comment(comment)
+        has_critique = cls._has_constructive_critique(comment)
         if value >= 4:
+            if has_critique and not low_detail:
+                return "mixed"
             return "positive"
         if value <= 2:
+            if low_detail:
+                return "weak_negative"
             return "negative"
+        if has_critique and not low_detail:
+            return "mixed"
         return "neutral"
+
+    @classmethod
+    def _is_placeholder_dimension(cls, value):
+        text = re.sub(r"\s+", " ", str(value or "").strip().lower())
+        return any(pattern in text for pattern in cls.PLACEHOLDER_DIMENSION_PATTERNS)
+
+    @classmethod
+    def _has_constructive_critique(cls, value):
+        text = str(value or "").lower()
+        return any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in cls.CONSTRUCTIVE_CRITIQUE_PATTERNS)
+
+    @classmethod
+    def _is_low_detail_comment(cls, value):
+        text = re.sub(r"rata-rata (?:rating|penilaian).*?mengapa:", " ", str(value or ""), flags=re.IGNORECASE)
+        text = re.sub(r"belum ada komentar teks yang terhubung ke (?:rating|penilaian) ini", " ", text, flags=re.IGNORECASE)
+        text = re.sub(r"[^a-zA-Z0-9\s]+", " ", text).lower()
+        tokens = [token for token in text.split() if token]
+        if not tokens:
+            return True
+        if len(tokens) <= 2 and " ".join(tokens) in cls.LOW_DETAIL_FEEDBACK:
+            return True
+        return len(tokens) <= 1 and tokens[0] in cls.LOW_DETAIL_FEEDBACK
+
+    @classmethod
+    def _sentiment_issue_weight(cls, value):
+        return {
+            "negative": 1.0,
+            "mixed": 0.55,
+            "weak_negative": 0.2,
+        }.get(str(value or ""), 0.0)
+
+    @classmethod
+    def _sentiment_summary(cls, dataframe):
+        total = len(dataframe) if dataframe is not None else 0
+        labels = dataframe["Sentiment Label"] if total and "Sentiment Label" in dataframe.columns else pd.Series(dtype="object")
+        counts = {label: int((labels == label).sum()) for label in ("positive", "mixed", "neutral", "negative", "weak_negative")}
+        issue_weight = float(labels.apply(cls._sentiment_issue_weight).sum()) if total else 0.0
+        counts.update(
+            {
+                "total": total,
+                "issue_weight": issue_weight,
+                "positive_share": cls._safe_percentage(counts["positive"], total),
+                "mixed_share": cls._safe_percentage(counts["mixed"], total),
+                "neutral_share": cls._safe_percentage(counts["neutral"], total),
+                "negative_share": cls._safe_percentage(counts["negative"], total),
+                "weak_negative_share": cls._safe_percentage(counts["weak_negative"], total),
+                "issue_share": round((issue_weight / total) * 100, 1) if total else 0.0,
+            }
+        )
+        return counts
 
     @staticmethod
     def _normalize_rating_value(value):
@@ -278,6 +371,8 @@ class FeedbackAnalyticsEngine(ReportNarrativeBuilderMixin):
     def _filter_view(self, timeframe, sentiment="all", segment="all"):
         if self.full_df.empty: return self.full_df.copy()
         filtered = filter_by_timeframe(self.full_df, timeframe)
+        if "Reportable Analysis Row" in filtered.columns:
+            filtered = filtered[filtered["Reportable Analysis Row"]].copy()
         normalized_sentiment = self._normalize_sentiment_filter(sentiment)
         normalized_segment = self._normalize_segment_filter(segment)
         if normalized_sentiment != "all": filtered = filtered[filtered["Sentiment Label"] == normalized_sentiment]
@@ -331,17 +426,15 @@ class FeedbackAnalyticsEngine(ReportNarrativeBuilderMixin):
             if stage_df.empty: continue
 
             total = len(stage_df)
-            positive_count = int((stage_df["Sentiment Label"] == "positive").sum())
-            neutral_count = int((stage_df["Sentiment Label"] == "neutral").sum())
-            negative_count = int((stage_df["Sentiment Label"] == "negative").sum())
+            sentiment_summary = self._sentiment_summary(stage_df)
             stage_theme_hits = self._theme_hits(stage_df)
             dominant_theme = next((theme["label"] for theme in stage_theme_hits if theme["negative_hits"] > 0 or theme["positive_hits"] > 0), "Sinyal umum customer journey")
 
             rows.append({
                 "stage_id": stage["id"], "stage_label": label, "description": stage["description"], "volume": total,
                 "average_rating": round(stage_df["Rating Numeric"].mean(), 2) if stage_df["Rating Numeric"].notna().any() else 0.0,
-                "positive_share": self._safe_percentage(positive_count, total), "neutral_share": self._safe_percentage(neutral_count, total),
-                "negative_share": self._safe_percentage(negative_count, total), "dominant_theme": dominant_theme,
+                "positive_share": sentiment_summary["positive_share"], "neutral_share": sentiment_summary["neutral_share"],
+                "negative_share": sentiment_summary["issue_share"], "dominant_theme": dominant_theme,
             })
         rows.sort(key=lambda item: (item["negative_share"], item["volume"]), reverse=True)
         return rows
@@ -367,8 +460,9 @@ class FeedbackAnalyticsEngine(ReportNarrativeBuilderMixin):
         avg_rating = dataframe["Rating Numeric"].mean()
         base_score = ((avg_rating / 5) * 100) if pd.notna(avg_rating) else 0.0
         total_rows = len(dataframe)
-        positive_share = self._safe_percentage(int((dataframe["Sentiment Label"] == "positive").sum()), total_rows)
-        negative_share = self._safe_percentage(int((dataframe["Sentiment Label"] == "negative").sum()), total_rows)
+        sentiment_summary = self._sentiment_summary(dataframe)
+        positive_share = sentiment_summary["positive_share"]
+        negative_share = sentiment_summary["issue_share"]
 
         weighted_balance, weighted_positive_ratio, weighted_negative_ratio, total_weight = 0.0, 0.0, 0.0, 0.0
         theme_rows = []
@@ -422,6 +516,7 @@ class FeedbackAnalyticsEngine(ReportNarrativeBuilderMixin):
                 "direction": "stabil",
                 "theme_rows": [],
                 "component_breakdown": [],
+                "experience_lenses": [],
             }
 
         component_weights = profile.get(
@@ -508,7 +603,7 @@ class FeedbackAnalyticsEngine(ReportNarrativeBuilderMixin):
             )
         component_breakdown.sort(key=lambda item: item["weight"], reverse=True)
 
-        return {
+        result = {
             "label": profile["label"],
             "current_score": round(float(current_score), 1),
             "projected_score": round(float(projected_score), 1),
@@ -517,6 +612,68 @@ class FeedbackAnalyticsEngine(ReportNarrativeBuilderMixin):
             "theme_rows": theme_rows,
             "component_breakdown": component_breakdown,
         }
+        result["experience_lenses"] = self._experience_lens_rows(dataframe, result)
+        return result
+
+    def _experience_lens_rows(self, dataframe, score_metrics):
+        """Translate score components into the business meaning of Experience Index."""
+        if dataframe.empty:
+            return []
+        component_by_id = {
+            item["component_id"]: item
+            for item in score_metrics.get("component_breakdown", [])
+        }
+        sentiment_summary = self._sentiment_summary(dataframe)
+        journey_rows = self._customer_journey_rows(dataframe)
+        dominant_journey = journey_rows[0] if journey_rows else None
+
+        def component_score(*component_ids):
+            values = [
+                component_by_id[component_id]["current_score"]
+                for component_id in component_ids
+                if component_id in component_by_id
+            ]
+            if not values:
+                return score_metrics.get("current_score", 0.0)
+            return round(sum(values) / len(values), 1)
+
+        top_touchpoint = next(
+            (
+                row["label"]
+                for row in score_metrics.get("theme_rows", [])
+                if row.get("theme_id") in {"responsiveness", "communication", "schedule", "facility"}
+            ),
+            "touchpoint layanan utama",
+        )
+        top_felt_theme = next(
+            (
+                row["label"]
+                for row in score_metrics.get("theme_rows", [])
+                if row.get("theme_id") in {"instructor", "material", "outcome"}
+            ),
+            "rasa manfaat layanan",
+        )
+
+        return [
+            {
+                "lens": "Touchpoint pelanggan",
+                "score": component_score("service_score", "facility_score"),
+                "reading": f"Interaksi pelanggan paling perlu dibaca pada {top_touchpoint}.",
+                "evidence": f"Service Score dan Facility Score dipakai sebagai proksi mutu kontak layanan, kesiapan fasilitas, koordinasi, dan dukungan operasional.",
+            },
+            {
+                "lens": "Pengalaman yang dirasakan",
+                "score": score_metrics.get("current_score", 0.0),
+                "reading": f"Pelanggan menunjukkan {sentiment_summary['positive_share']}% sinyal positif dan {sentiment_summary['issue_share']}% sinyal korektif tertimbang.",
+                "evidence": f"Komentar, rating, kritik konstruktif, dan tema {top_felt_theme} dipakai untuk membaca rasa jelas, relevan, nyaman, atau friksi yang dialami.",
+            },
+            {
+                "lens": "Perjalanan agenda pelanggan",
+                "score": component_score("learning_score", "service_score"),
+                "reading": f"Tahap paling menentukan saat ini adalah {dominant_journey['stage_label'] if dominant_journey else 'perjalanan agenda yang belum cukup terpetakan'}.",
+                "evidence": "Customer journey dibaca dari pra-layanan, kesiapan pelaksanaan, delivery agenda, hingga tindak lanjut dan outcome pasca-layanan.",
+            },
+        ]
 
     def _build_analysis_context(self, timeframe_df, timeframe, sentiment, segment, score_engine):
         normalized_sentiment = self._normalize_sentiment_filter(sentiment)
@@ -550,7 +707,7 @@ class FeedbackAnalyticsEngine(ReportNarrativeBuilderMixin):
             matched = dataframe[match_mask]
             if matched.empty: continue
             positive_hits = int((matched["Sentiment Label"] == "positive").sum())
-            negative_hits = int((matched["Sentiment Label"] == "negative").sum())
+            negative_hits = int(matched["Sentiment Label"].isin({"negative", "mixed"}).sum())
             neutral_hits = int((matched["Sentiment Label"] == "neutral").sum())
             theme_stats.append({
                 "id": theme["id"], "label": theme["label"], "prescription": theme["prescription"], "total_hits": int(len(matched)),
@@ -576,7 +733,8 @@ class FeedbackAnalyticsEngine(ReportNarrativeBuilderMixin):
         for label, group in grouped:
             clean_label = str(label).strip() or "Tidak terklasifikasi"
             rating_avg = group["Rating Numeric"].mean()
-            negative_ratio = (group["Sentiment Label"] == "negative").mean()
+            issue_weight = group["Sentiment Label"].apply(self._sentiment_issue_weight).sum()
+            negative_ratio = issue_weight / max(len(group), 1)
             volume = len(group)
             safe_avg_rating = round(rating_avg, 2) if pd.notna(rating_avg) else 0.0
             risk_score = round((negative_ratio * 70) + ((5 - safe_avg_rating) * 6) + min(volume, 10), 1)

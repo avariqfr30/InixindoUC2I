@@ -247,7 +247,7 @@ class DocumentBuilder:
         (r"\bcustomer\s+journey\b", "perjalanan pelanggan"),
         (r"\bScore\s+Engine\b", "Perspektif Skor"),
         (r"\bscore\s+engine\b", "perspektif skor"),
-        (r"\bExperience\s+Index\b", "Indeks Pengalaman"),
+        (r"\bExperience\s+Index\b", "Experience Index"),
         (r"\bLearning\s+Score\b", "Skor Pembelajaran"),
         (r"\bService\s+Score\b", "Skor Layanan"),
         (r"\bFacility\s+Score\b", "Skor Fasilitas"),
@@ -277,6 +277,9 @@ class DocumentBuilder:
         presentation_replacements = (
             (r"Ringkasan Cakupan umpan balik", "Ringkasan Cakupan Umpan Balik"),
             (r"Distribusi Sentimen, penilaian", "Distribusi Sentimen, Penilaian"),
+            (r"penilaian Rata-rata", "Rata-rata Penilaian"),
+            (r"Rating Rata-rata", "Rata-rata Penilaian"),
+            (r"penanggung jawab Utama", "Penanggung Jawab Utama"),
             (r"Distribusi pemangku kepentingan", "Distribusi Pemangku Kepentingan"),
             (r"pemangku kepentingan dengan volume", "Pemangku kepentingan dengan volume"),
             (r"Akar Masalah Utama dan titik keluhan", "Akar Masalah Utama dan Titik Keluhan"),
@@ -284,6 +287,18 @@ class DocumentBuilder:
             (r"tahapan perjalanan pelanggan", "tahapan perjalanan pelanggan"),
             (r"Penjelasan Perhitungan Indeks Pengalaman", "Penjelasan Perhitungan Indeks Pengalaman"),
             (r"umpan balik Score\\.xlsx", "Parameter Skor Evaluasi.xlsx"),
+            (r"\.kondisi", ". Kondisi"),
+            (r"\bfalse comfort\b", "rasa aman semu"),
+            (r"\bChallenge Check\b", "Uji Kewajaran"),
+            (r"\bchallenge check\b", "uji kewajaran"),
+            (r"\bProspective Validation\b", "Validasi Periode Berikutnya"),
+            (r"\bprospective validation\b", "validasi periode berikutnya"),
+            (r"\bearly-warning\b", "peringatan dini"),
+            (r"\bearly warning\b", "peringatan dini"),
+            (r"\btouchpoint\b", "titik sentuh"),
+            (r"\bjourney\b", "perjalanan"),
+            (r"\bBelum terpetakan\b", "Perlu pemetaan data"),
+            (r"\bTidak terklasifikasi\b", "Perlu klasifikasi"),
         )
         for pattern, replacement in presentation_replacements:
             clean_text = re.sub(pattern, replacement, clean_text)

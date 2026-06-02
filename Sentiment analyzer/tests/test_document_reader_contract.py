@@ -136,11 +136,12 @@ class ReaderFacingDocumentContractTests(unittest.TestCase):
 
         summary = engine.build_executive_snapshot("Semua Data APIDog (tanggal tidak tersedia)")
 
-        self.assertIn("## Ringkasan Eksekutif", summary)
-        self.assertIn("### Inti Keputusan", summary)
-        self.assertIn("### Temuan Utama", summary)
-        self.assertIn("### Rekomendasi", summary)
-        self.assertIn("### Keputusan yang Perlu Diambil", summary)
+        self.assertNotIn("## Ringkasan Eksekutif", summary)
+        self.assertIn("### Kesimpulan Utama", summary)
+        self.assertIn("### Alasan Utama", summary)
+        self.assertIn("### Bukti Pendukung", summary)
+        self.assertIn("### Keputusan yang Diminta", summary)
+        self.assertIn("### Agenda Follow-up Meeting", summary)
         for token in ["APIDog", "Internal API", "internal_api", "internal facts", "Dataset Spesialis", "BLUF", "Key Findings", "Recommendation"]:
             self.assertNotIn(token, summary)
 
@@ -168,16 +169,17 @@ class ReaderFacingDocumentContractTests(unittest.TestCase):
         sections = engine.build_report_sections("Semua Data APIDog (tanggal tidak tersedia)", "", "")
         combined = summary + "\n" + "\n".join(section["content"] for section in sections)
 
-        self.assertIn("4.76/5", summary)
+        self.assertNotIn("4.76/5", summary)
         for forbidden in [
             "BRAND EQUITY",
             "Mengapa Inixindo Jogja menjadi pilihan",
             "Pilih 4 Bintang untuk mengisi",
             "47.6/5",
             "rating 47.6",
+            "Reputasi dan alasan memilih Inixindo",
         ]:
             self.assertNotIn(forbidden, combined)
-        self.assertIn("Reputasi dan alasan memilih Inixindo", combined)
+        self.assertIn("Belum ada bukti evaluasi", summary)
 
     def test_executive_summary_uses_bluf_and_hides_agentic_desk_terms(self):
         data = [
@@ -199,10 +201,15 @@ class ReaderFacingDocumentContractTests(unittest.TestCase):
         summary = engine.build_executive_snapshot("1 Bulan Terakhir (Monthly)")
 
         expected_order = [
-            "### Inti Keputusan",
-            "### Temuan Utama",
-            "### Rekomendasi",
-            "### Keputusan yang Perlu Diambil",
+            "### Kesimpulan Utama",
+            "### Keputusan yang Diminta",
+            "### Dasbor Keputusan",
+            "### Matriks Keputusan",
+            "### Interpretasi Manajemen",
+            "### Alasan Utama",
+            "### Bukti Pendukung",
+            "### Catatan Keyakinan dan Batasan",
+            "### Agenda Follow-up Meeting",
         ]
         for marker in expected_order:
             self.assertIn(marker, summary)
@@ -230,10 +237,10 @@ class ReaderFacingDocumentContractTests(unittest.TestCase):
                 "Kanal Feedback": "Evaluasi Kelas Internal",
                 "Tanggal Feedback": "Tanggal tidak tersedia",
                 "Tipe Stakeholder": "Peserta Kelas",
-                "Layanan": "Reputasi dan alasan memilih Inixindo",
+                "Layanan": "Kinerja instruktur",
                 "Rentang Waktu": "Semua Data APIDog (tanggal tidak tersedia)",
                 "Rating": "5",
-                "Komentar": "Peserta memilih Inixindo karena reputasi dan kualitas instruktur.",
+                "Komentar": "Instruktur jelas dan praktiknya mudah diikuti.",
                 "Customer Journey Hint": "Pelaksanaan Layanan",
             }
         ]
@@ -242,7 +249,7 @@ class ReaderFacingDocumentContractTests(unittest.TestCase):
         summary = engine.build_executive_snapshot("Semua Data APIDog (tanggal tidak tersedia)")
 
         self.assertIn("mempertahankan dan mereplikasi", summary)
-        self.assertIn("kekuatan pengalaman pelanggan", summary)
+        self.assertIn("kekuatan pengalaman pelanggan", summary.lower())
         self.assertNotIn("sinyal risiko pengalaman pelanggan paling jelas", summary)
         self.assertNotIn("memerlukan intervensi prioritas lintas fungsi", summary)
 

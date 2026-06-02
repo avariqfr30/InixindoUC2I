@@ -31,6 +31,8 @@ def build_specialist_review_markdown(engine, markdown_table, timeframe, macro_tr
     contradiction = briefing["contradiction_review"]
     trend = briefing["trend_review"]
     prediction = briefing["prediction_review"]
+    confidence_driver_lines = [f"- {item}" for item in prediction.get("confidence_drivers", [])]
+    challenge_check_lines = [f"- {item}" for item in prediction.get("challenge_checks", [])]
     audit_rows = [
         ["Generated at", audit["generated_at_utc"]],
         ["Periode", audit["timeframe"]],
@@ -76,6 +78,12 @@ def build_specialist_review_markdown(engine, markdown_table, timeframe, macro_tr
         "### Prediction Boundary",
         f"{prediction['method']} Arah saat ini: {prediction['direction']} dari {prediction['current_score']} menuju {prediction['projected_score']}. "
         f"{prediction['confidence_note']}",
+        "",
+        "Penggerak keyakinan:",
+        *confidence_driver_lines,
+        "",
+        "Challenge check:",
+        *challenge_check_lines,
         "",
         f"Jejak bukti yang dipakai: {sources}.",
     ])

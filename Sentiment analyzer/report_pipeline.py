@@ -9,7 +9,7 @@ from document_builder import DocumentBuilder
 from osint_research import Researcher
 from report_agents import FeedbackProposalTeam
 from report_analytics import FeedbackAnalyticsEngine
-from report_evidence import ContextIntelligenceDesk, ReportEvidenceBuilder
+from report_evidence import ContextIntelligenceDesk
 from report_quality import ReportQualityValidator
 from timeframe_filters import readable_timeframe_label
 
@@ -79,7 +79,6 @@ class ReportNarrativeStage:
             score_engine=context.score_engine,
             section_context=section_context,
         )
-        report_sections = ReportEvidenceBuilder.attach_to_sections(report_sections)
         executive_snapshot = analytics.build_executive_snapshot(
             context.timeframe,
             section_context["focus_note"],

@@ -41,19 +41,113 @@ class ReportAnalyticsContractTests(unittest.TestCase):
         self.assertEqual([item["id"] for item in sections], [item["id"] for item in CX_SENTIMENT_STRUCTURE])
         self.assertEqual([item["title"] for item in sections], [item["title"] for item in CX_SENTIMENT_STRUCTURE])
         self.assertTrue(all(section["content"].strip() for section in sections))
-        self.assertTrue(all(section["content"].lstrip().startswith("### Bukti yang Dipakai") for section in sections))
+        self.assertTrue(all(not section["content"].lstrip().startswith("### Bukti yang Dipakai") for section in sections))
 
         combined = "\n".join(section["content"] for section in sections)
+        self.assertNotIn("Bukti yang Dipakai", combined)
+        self.assertNotIn("### Cakupan sumber dan kanal", combined)
         required_markers = [
             "## 1.1 Ringkasan Cakupan Umpan Balik dan Tata Kelola",
             "## 2.1 Akar Masalah Utama dan Titik Keluhan Dominan",
             "## 3.1 Risiko Jangka Pendek Jika Pola Saat Ini Berlanjut",
             "## 4.1 Intervensi Prioritas 30 Hari",
             "## 5.1 Prioritas Sasaran Bisnis",
-            "Indeks Pengalaman",
+            "Experience Index",
         ]
         for marker in required_markers:
             self.assertIn(marker, combined)
+
+    def test_placeholder_brand_reason_dimension_is_not_promoted_to_report_priority(self):
+        dataframe = pd.DataFrame(
+            [
+                {
+                    "Record ID": "brand-placeholder",
+                    "Tanggal Feedback": "2026-05-20",
+                    "Rentang Waktu": "2026-05",
+                    "Tipe Stakeholder": "Peserta Kelas",
+                    "Layanan": "BRAND EQUITY (Mengapa Inixindo Jogja menjadi pilihan?) Pilih 4 Bintang untuk mengisi",
+                    "Rating": "1",
+                    "Komentar": "Rata-rata rating BRAND EQUITY (Mengapa Inixindo Jogja menjadi pilihan?): 1.0 dari 5. Mengapa: TIDAK",
+                    "Customer Journey Hint": "Tindak Lanjut dan Outcome",
+                },
+                {
+                    "Record ID": "material-critique",
+                    "Tanggal Feedback": "2026-05-20",
+                    "Rentang Waktu": "2026-05",
+                    "Tipe Stakeholder": "Peserta Kelas",
+                    "Layanan": "Materi dan kurikulum",
+                    "Rating": "4",
+                    "Komentar": "Materi menggunakan versi lama dan perlu diupdate agar sesuai kebutuhan peserta.",
+                    "Customer Journey Hint": "Pelaksanaan Layanan",
+                },
+                {
+                    "Record ID": "instructor-positive",
+                    "Tanggal Feedback": "2026-05-20",
+                    "Rentang Waktu": "2026-05",
+                    "Tipe Stakeholder": "Peserta Kelas",
+                    "Layanan": "Kinerja instruktur",
+                    "Rating": "5",
+                    "Komentar": "Instruktur jelas dan praktiknya mudah diikuti.",
+                    "Customer Journey Hint": "Pelaksanaan Layanan",
+                },
+            ]
+        )
+        engine = FeedbackAnalyticsEngine(dataframe)
+
+        snapshot = engine.build_executive_snapshot("2026-05", score_engine="experience_index")
+        sections = engine.build_report_sections("2026-05", "", "Tidak ada tren eksternal yang berhasil dimuat.", score_engine="experience_index")
+        combined = snapshot + "\n" + "\n".join(section["content"] for section in sections)
+
+        self.assertNotIn("Reputasi dan alasan memilih Inixindo", combined)
+        self.assertNotIn("BRAND EQUITY", combined)
+        self.assertNotIn("Mengapa Inixindo Jogja menjadi pilihan", combined)
+        self.assertIn("Materi dan kurikulum", combined)
+
+    def test_text_aware_sentiment_reclassifies_four_star_critique_and_weak_low_rating(self):
+        dataframe = pd.DataFrame(
+            [
+                {
+                    "Record ID": "four-critique",
+                    "Tanggal Feedback": "2026-05-20",
+                    "Rentang Waktu": "2026-05",
+                    "Tipe Stakeholder": "Peserta Kelas",
+                    "Layanan": "Materi dan kurikulum",
+                    "Rating": "4",
+                    "Komentar": "Materi masih menggunakan versi lama dan perlu diupdate.",
+                },
+                {
+                    "Record ID": "weak-negative",
+                    "Tanggal Feedback": "2026-05-20",
+                    "Rentang Waktu": "2026-05",
+                    "Tipe Stakeholder": "Peserta Kelas",
+                    "Layanan": "Logistik",
+                    "Rating": "1",
+                    "Komentar": "TIDAK",
+                },
+                {
+                    "Record ID": "clean-positive",
+                    "Tanggal Feedback": "2026-05-20",
+                    "Rentang Waktu": "2026-05",
+                    "Tipe Stakeholder": "Peserta Kelas",
+                    "Layanan": "Kinerja instruktur",
+                    "Rating": "5",
+                    "Komentar": "Instruktur jelas dan contoh praktiknya relevan.",
+                },
+            ]
+        )
+        engine = FeedbackAnalyticsEngine(dataframe)
+        labels = dict(zip(engine.full_df["Record ID"], engine.full_df["Sentiment Label"]))
+
+        self.assertEqual(labels["four-critique"], "mixed")
+        self.assertEqual(labels["weak-negative"], "weak_negative")
+        self.assertEqual(labels["clean-positive"], "positive")
+
+        sections = engine.build_report_sections("2026-05", "", "Tidak ada tren eksternal yang berhasil dimuat.")
+        combined = "\n".join(section["content"] for section in sections)
+
+        self.assertIn("Kritik konstruktif", combined)
+        self.assertIn("Negatif bukti lemah", combined)
+        self.assertNotIn('"TIDAK"', combined)
 
     def test_rolling_month_timeframe_filters_by_feedback_date(self):
         dataframe = pd.DataFrame(
@@ -211,7 +305,7 @@ class ReportAnalyticsContractTests(unittest.TestCase):
             [
                 {
                     "title": "Analisis Prediktif",
-                    "content": "### Bukti yang Dipakai\n- Raw callout: url=https://example.com source=example. Rating turun 12% pada layanan prioritas sehingga tindak lanjut perlu dipercepat.",
+                    "content": "Rating turun 12% pada layanan prioritas sehingga tindak lanjut perlu dipercepat. url=https://example.com source=example.",
                 }
             ]
         )
@@ -265,22 +359,27 @@ class ReportAnalyticsContractTests(unittest.TestCase):
         )
 
         required_markers = [
-            "## Ringkasan Eksekutif",
-            "### Inti Keputusan",
-            "### Temuan Utama",
-            "### Rekomendasi",
+            "### Kesimpulan Utama",
+            "### Keputusan yang Diminta",
             "### Dasbor Keputusan",
+            "### Matriks Keputusan",
+            "### Interpretasi Manajemen",
+            "### Alasan Utama",
+            "### Bukti Pendukung",
+            "### Catatan Keyakinan dan Batasan",
+            "### Agenda Follow-up Meeting",
             "| Pertanyaan Eksekutif | Jawaban Singkat |",
-            "### Keputusan yang Perlu Diambil",
-            "### Agenda Diskusi",
         ]
         for marker in required_markers:
             self.assertIn(marker, snapshot)
         self.assertNotIn("Formula Experience Index", snapshot)
-        self.assertLess(snapshot.index("### Inti Keputusan"), snapshot.index("### Temuan Utama"))
-        self.assertLess(snapshot.index("### Temuan Utama"), snapshot.index("### Rekomendasi"))
-        self.assertLess(snapshot.index("### Rekomendasi"), snapshot.index("### Dasbor Keputusan"))
-        self.assertLess(snapshot.index("### Dasbor Keputusan"), snapshot.index("### Keputusan yang Perlu Diambil"))
+        self.assertLess(snapshot.index("### Kesimpulan Utama"), snapshot.index("### Keputusan yang Diminta"))
+        self.assertLess(snapshot.index("### Keputusan yang Diminta"), snapshot.index("### Dasbor Keputusan"))
+        self.assertLess(snapshot.index("### Dasbor Keputusan"), snapshot.index("### Matriks Keputusan"))
+        self.assertLess(snapshot.index("### Matriks Keputusan"), snapshot.index("### Interpretasi Manajemen"))
+        self.assertLess(snapshot.index("### Interpretasi Manajemen"), snapshot.index("### Alasan Utama"))
+        self.assertLess(snapshot.index("### Alasan Utama"), snapshot.index("### Bukti Pendukung"))
+        self.assertLess(snapshot.index("### Bukti Pendukung"), snapshot.index("### Catatan Keyakinan dan Batasan"))
 
         sections = self.engine.build_report_sections(
             self.timeframe,
@@ -289,7 +388,50 @@ class ReportAnalyticsContractTests(unittest.TestCase):
             score_engine="experience_index",
         )
         combined_sections = "\n".join(section["content"] for section in sections)
-        self.assertIn("Penjelasan Perhitungan Indeks Pengalaman", combined_sections)
+        self.assertIn("Penjelasan Perhitungan Experience Index", combined_sections)
+        self.assertIn("titik sentuh", combined_sections.lower())
+        self.assertIn("dirasakan", combined_sections.lower())
+        self.assertIn("agenda", combined_sections.lower())
+        self.assertNotIn("Indeks Pengalaman", snapshot + "\n" + combined_sections)
+
+    def test_predictive_section_explains_challengeable_early_warning_model(self):
+        sections = self.engine.build_report_sections(
+            self.timeframe,
+            self.notes,
+            self.macro_trends,
+            score_engine="experience_index",
+        )
+        predictive = next(section["content"] for section in sections if section["id"] == "cx_chap_3")
+
+        self.assertIn("peringatan dini", predictive.lower())
+        self.assertIn("faktor pembentuk proyeksi", predictive.lower())
+        self.assertIn("penggerak keyakinan", predictive.lower())
+        self.assertIn("uji kewajaran", predictive.lower())
+        self.assertIn("sensitivitas", predictive.lower())
+        self.assertIn("belum diklaim sebagai backtesting statistik", predictive.lower())
+
+    def test_executive_snapshot_follows_minto_decision_order(self):
+        snapshot = self.engine.build_executive_snapshot(
+            self.timeframe,
+            self.notes,
+            score_engine="experience_index",
+        )
+
+        expected_order = [
+            "### Kesimpulan Utama",
+            "### Keputusan yang Diminta",
+            "### Dasbor Keputusan",
+            "### Matriks Keputusan",
+            "### Interpretasi Manajemen",
+            "### Alasan Utama",
+            "### Bukti Pendukung",
+            "### Catatan Keyakinan dan Batasan",
+            "### Agenda Follow-up Meeting",
+        ]
+        for marker in expected_order:
+            self.assertIn(marker, snapshot)
+        for before, after in zip(expected_order, expected_order[1:]):
+            self.assertLess(snapshot.index(before), snapshot.index(after))
 
     def test_executive_snapshot_uses_inixindo_management_interpretation_layer(self):
         snapshot = self.engine.build_executive_snapshot(
@@ -303,11 +445,12 @@ class ReportAnalyticsContractTests(unittest.TestCase):
         self.assertIn("penilaian", snapshot.lower())
         self.assertIn("pengalaman pelanggan", snapshot.lower())
         self.assertIn("30 hari", snapshot)
-        self.assertLess(snapshot.index("### Interpretasi Manajemen"), snapshot.index("### Rekomendasi"))
+        self.assertLess(snapshot.index("### Dasbor Keputusan"), snapshot.index("### Interpretasi Manajemen"))
+        self.assertLess(snapshot.index("### Interpretasi Manajemen"), snapshot.index("### Alasan Utama"))
 
     def test_executive_snapshot_uses_finished_sections_without_generic_report_meta(self):
         sections = [
-            {"title": "Analisis Deskriptif", "content": "### Bukti yang Dipakai\n- Evaluasi menunjukkan keluhan onboarding terkonsentrasi pada respons awal."},
+            {"title": "Analisis Deskriptif", "content": "Evaluasi menunjukkan keluhan onboarding terkonsentrasi pada respons awal."},
             {"title": "Kesiapan Implementasi", "content": "Owner layanan perlu menetapkan tindak lanjut 30 hari."},
         ]
 
@@ -382,6 +525,12 @@ class ReportAnalyticsContractTests(unittest.TestCase):
         quality = ReportQualityValidator.evaluate(document, snapshot, sections, "Experience Index")
         self.assertTrue(quality["verified_complete"], quality)
         self.assertEqual(quality["passed_checks"], quality["total_checks"])
+        table_headers = [
+            [cell.text for cell in table.rows[0].cells]
+            for table in document.tables
+        ]
+        self.assertIn(["Lensa Experience Index", "Skor", "Pembacaan", "Bukti Analitis"], table_headers)
+        self.assertFalse(any("| Lensa Experience Index |" in paragraph.text for paragraph in document.paragraphs))
 
     def test_docx_ordered_lists_restart_and_use_hanging_indents(self):
         document = Document()
@@ -402,6 +551,22 @@ class ReportAnalyticsContractTests(unittest.TestCase):
             self.assertEqual(paragraph_format.left_indent, Twips(720))
             self.assertEqual(paragraph_format.first_line_indent, Twips(-360))
 
+    def test_experience_index_is_explained_as_touchpoint_journey_not_bare_metric(self):
+        sections = self.engine.build_report_sections(
+            self.timeframe,
+            self.notes,
+            self.macro_trends,
+            score_engine="experience_index",
+        )
+        predictive = next(section["content"] for section in sections if section["id"] == "cx_chap_3")
+        lower_predictive = predictive.lower()
+
+        self.assertNotRegex(predictive, r"(?m)^\|\s*Indeks Pengalaman\s*\|")
+        self.assertIn("titik sentuh", lower_predictive)
+        self.assertIn("dirasakan", lower_predictive)
+        self.assertIn("perjalanan", lower_predictive)
+        self.assertIn("agenda", lower_predictive)
+
     def test_predictive_section_links_osint_to_company_current_and_future_state(self):
         sections = self.engine.build_report_sections(
             self.timeframe,
@@ -414,6 +579,9 @@ class ReportAnalyticsContractTests(unittest.TestCase):
         self.assertIn("## 3.4 Keterkaitan Faktor Eksternal dengan Kondisi Perusahaan", predictive)
         self.assertIn("kondisi perusahaan saat ini", predictive)
         self.assertIn("kondisi perusahaan ke depan", predictive)
+        self.assertIn("Ringkasan tren eksternal", predictive)
+        self.assertNotIn("**Insight Mendalam", predictive)
+        self.assertNotIn("| Sinyal Eksternal | Sumber | Tanggal |", predictive)
 
     def test_weak_osint_keeps_prediction_internal_data_first(self):
         sections = self.engine.build_report_sections(
@@ -428,6 +596,24 @@ class ReportAnalyticsContractTests(unittest.TestCase):
         self.assertIn("bukti evaluasi internal", predictive.lower())
         self.assertNotIn("| Sinyal Eksternal | Sumber | Tanggal |", predictive)
         self.assertNotIn("urgensi intervensi meningkat", predictive)
+
+    def test_predictive_section_includes_challenge_and_confidence_defensibility_layer(self):
+        sections = self.engine.build_report_sections(
+            self.timeframe,
+            self.notes,
+            self.macro_trends,
+            score_engine="experience_index",
+        )
+        predictive = next(section["content"] for section in sections if section["id"] == "cx_chap_3")
+        lower_predictive = predictive.lower()
+
+        self.assertIn("peringatan dini", lower_predictive)
+        self.assertRegex(lower_predictive, r"penggerak keyakinan|pemicu keyakinan|confidence driver")
+        self.assertRegex(lower_predictive, r"uji kewajaran|uji tantangan")
+        self.assertNotRegex(
+            lower_predictive,
+            r"hasil backtesting|uji balik statistik|akurasi historis|validated forecast|statistical backtest",
+        )
 
     def test_specialist_agents_generate_bounded_briefings_from_internal_datasets(self):
         briefing = FeedbackProposalTeam().run(
@@ -560,9 +746,9 @@ class ReportAnalyticsContractTests(unittest.TestCase):
             score_engine="experience_index",
         )
 
-        self.assertIn("### Inti Keputusan", snapshot)
-        self.assertIn("### Temuan Utama", snapshot)
-        self.assertIn("### Rekomendasi", snapshot)
+        self.assertIn("### Kesimpulan Utama", snapshot)
+        self.assertIn("### Alasan Utama", snapshot)
+        self.assertIn("### Keputusan yang Diminta", snapshot)
         for forbidden in [
             "Review Tim Analis Internal",
             "Data Steward",

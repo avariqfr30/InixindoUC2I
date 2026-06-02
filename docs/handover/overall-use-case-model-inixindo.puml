@@ -1,0 +1,88 @@
+@startuml
+left to right direction
+skinparam packageStyle rectangle
+skinparam shadowing false
+
+actor "Pengguna Proposal" as ProposalUser
+actor "User Internal / CX" as FeedbackUser
+actor "User Finance" as FinanceUser
+actor "Manajemen" as Management
+actor "Admin / Operator Data" as Admin
+actor "Internal API / APIDog" as InternalAPI
+actor "Provider OSINT" as OSINT
+actor "Ollama / LLM" as LLM
+actor "Monitoring / Infra" as Infra
+
+rectangle "Ekosistem AI Inixindo" {
+  package "UC1 - Proposal Generator" {
+    usecase "Isi brief dan ruang lingkup proposal" as UC1_Brief
+    usecase "Ambil konteks klien dan KAK/TOR" as UC1_Context
+    usecase "Generate proposal DOCX" as UC1_Generate
+    usecase "Quality gate proposal" as UC1_QA
+  }
+
+  package "UC2 - Feedback Intelligence" {
+    usecase "Pilih periode, sentimen, dan segmen" as UC2_Filter
+    usecase "Refresh data feedback internal" as UC2_Refresh
+    usecase "Hitung Experience Index" as UC2_Index
+    usecase "Generate laporan feedback DOCX" as UC2_Report
+  }
+
+  package "UC3 - Cash In Intelligence" {
+    usecase "Validasi sumber data FinanceInvoice" as UC3_Validate
+    usecase "Lihat dashboard kesehatan arus kas" as UC3_Dashboard
+    usecase "Forecast cashflow per horizon" as UC3_Forecast
+    usecase "Generate laporan manajemen DOCX" as UC3_Report
+  }
+
+  package "Kapabilitas Bersama" {
+    usecase "Autentikasi dan kontrol akses" as Common_Auth
+    usecase "Adapter data internal" as Common_Data
+    usecase "Konteks eksternal selektif" as Common_OSINT
+    usecase "LLM dan penyusunan narasi" as Common_LLM
+    usecase "Job queue dan unduhan artefak" as Common_Jobs
+    usecase "Health, readiness, dan deployment VPS" as Common_Health
+  }
+}
+
+ProposalUser --> UC1_Brief
+ProposalUser --> UC1_Context
+ProposalUser --> UC1_Generate
+FeedbackUser --> UC2_Filter
+FeedbackUser --> UC2_Report
+FinanceUser --> UC3_Dashboard
+FinanceUser --> UC3_Forecast
+FinanceUser --> UC3_Report
+Management --> UC2_Report
+Management --> UC3_Dashboard
+Management --> UC3_Report
+Admin --> UC2_Refresh
+Admin --> UC3_Validate
+Admin --> Common_Data
+
+InternalAPI --> Common_Data
+OSINT --> Common_OSINT
+LLM --> Common_LLM
+Infra --> Common_Health
+
+UC1_Context .> Common_Data : <<include>>
+UC1_Generate .> Common_OSINT : <<include>>
+UC1_Generate .> Common_LLM : <<include>>
+UC1_Generate .> UC1_QA : <<include>>
+
+UC2_Refresh .> Common_Data : <<include>>
+UC2_Report .> UC2_Index : <<include>>
+UC2_Report .> Common_OSINT : <<include>>
+UC2_Report .> Common_LLM : <<include>>
+UC2_Report .> Common_Jobs : <<include>>
+
+UC3_Validate .> Common_Data : <<include>>
+UC3_Dashboard .> UC3_Forecast : <<include>>
+UC3_Report .> UC3_Forecast : <<include>>
+UC3_Report .> Common_OSINT : <<include>>
+UC3_Report .> Common_LLM : <<include>>
+UC3_Report .> Common_Jobs : <<include>>
+
+Common_Health ..> UC2_Report : monitors
+Common_Health ..> UC3_Report : monitors
+@enduml

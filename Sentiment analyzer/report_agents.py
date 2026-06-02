@@ -607,13 +607,26 @@ class FeedbackProposalTeam:
     @staticmethod
     def _prediction_review(context):
         metrics = context["score_metrics"]
+        governance = context["governance"]
+        top_issue = context["top_issue"]["label"] if context.get("top_issue") else "isu utama belum terpetakan"
+        dominant_journey = (context.get("dominant_journey") or {}).get("stage_label", "tahap journey utama")
         return {
-            "method": "Early warning projection berbasis rating, sentimen, tema risiko, dan score engine; bukan model statistik forecast.",
+            "method": "Early-warning / early warning deterministic projection berbasis rating, sentimen, tema risiko, journey, dan score engine; bukan model statistik forecast.",
             "statistical_forecast": False,
             "direction": metrics.get("direction", "stabil"),
             "current_score": metrics.get("current_score"),
             "projected_score": metrics.get("projected_score"),
             "confidence_note": "Gunakan sebagai sinyal prioritas manajemen, lalu validasi dengan owner layanan sebelum menjadi target operasional final.",
+            "confidence_drivers": [
+                f"{governance.get('total_rows', 0)} respons dan {governance.get('text_response_count', 0)} komentar teks tersedia.",
+                f"Kelengkapan field inti {governance.get('completeness_pct', 0.0)}%.",
+                "Konteks eksternal tersedia." if context.get("has_osint_signal") else "Konteks eksternal lemah atau belum tersedia.",
+            ],
+            "challenge_checks": [
+                f"Uji apakah tema {top_issue} benar-benar berulang, bukan keluhan insidental.",
+                f"Uji apakah tahap {dominant_journey} memiliki cukup bukti komentar sebelum menjadi agenda intervensi.",
+                "Belum diklaim sebagai backtesting statistik; validasi dilakukan dengan membandingkan proyeksi terhadap periode berikutnya.",
+            ],
         }
 
     def run(self, engine, dataframe, timeframe, macro_trends="", sentiment="all", segment="all", score_engine="experience_index"):

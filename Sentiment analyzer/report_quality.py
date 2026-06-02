@@ -44,9 +44,6 @@ class ReportQualityValidator:
             if cls._has_raw_source_label(content):
                 categories.add("raw_source_label")
                 findings.append(f"{title} masih memuat label sumber mentah.")
-            if not str(content or "").lstrip().startswith("### Bukti yang Dipakai"):
-                categories.add("missing_evidence_cards")
-                findings.append(f"{title} belum memiliki kartu bukti pembuka.")
         return {"passes": not categories, "categories": sorted(categories), "findings": findings}
 
     @classmethod

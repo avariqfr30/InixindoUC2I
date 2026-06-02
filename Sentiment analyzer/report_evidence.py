@@ -43,6 +43,8 @@ class ContextIntelligenceDesk:
         row_count = 0
         top_service = ""
         if dataframe is not None and not getattr(dataframe, "empty", True):
+            if "Reportable Analysis Row" in dataframe.columns:
+                dataframe = dataframe[dataframe["Reportable Analysis Row"]].copy()
             row_count = len(dataframe)
             if "Layanan" in dataframe.columns:
                 counts = dataframe["Layanan"].astype(str).value_counts()

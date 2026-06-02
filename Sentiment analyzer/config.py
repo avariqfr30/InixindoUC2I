@@ -203,8 +203,10 @@ SMART_SUGGESTIONS = [
 SENTIMENT_OPTIONS = [
     {"id": "all", "label": "Semua Sentimen"},
     {"id": "positive", "label": "Positif"},
+    {"id": "mixed", "label": "Kritik Konstruktif"},
     {"id": "neutral", "label": "Netral"},
     {"id": "negative", "label": "Negatif"},
+    {"id": "weak_negative", "label": "Negatif Bukti Lemah"},
 ]
 
 DEFAULT_SCORE_ENGINE = "experience_index"
@@ -227,7 +229,7 @@ SCORE_ENGINE_OPTIONS = [
     {
         "id": "experience_index",
         "label": "Experience Index",
-        "description": "Membaca pengalaman pelanggan secara menyeluruh lintas touchpoint dan tema.",
+        "description": "Membaca gabungan touchpoint pelanggan, pengalaman yang dirasakan, dan perjalanan peserta saat mengikuti agenda perusahaan.",
     },
 ]
 
@@ -335,8 +337,8 @@ SCORE_ENGINE_PROFILES = {
     },
     "experience_index": {
         "label": "Experience Index",
-        "summary_label": "pengalaman pelanggan end-to-end",
-        "narrative_focus": "keseluruhan customer journey, dari koordinasi awal hingga outcome pasca-layanan",
+        "summary_label": "pengalaman pelanggan lintas touchpoint, rasa layanan, dan perjalanan agenda",
+        "narrative_focus": "gabungan touchpoint pelanggan, pengalaman yang dirasakan, dan perjalanan peserta saat mengikuti agenda perusahaan dari pra-layanan hingga outcome pasca-layanan",
         "forecast_label": "Experience Index",
         "parameter_source": SCORE_ENGINE_PARAMETER_SOURCE,
         "component_weights": {

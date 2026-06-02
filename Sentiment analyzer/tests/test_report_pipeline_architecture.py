@@ -94,7 +94,7 @@ class ReportPipelineArchitectureTests(unittest.TestCase):
 
             def assert_sections_ready(self, report_sections):
                 assert self.sections_built
-                assert report_sections[0]["content"].startswith("### Bukti yang Dipakai")
+                assert not report_sections[0]["content"].startswith("### Bukti yang Dipakai")
                 assert "Keluhan onboarding" in report_sections[0]["content"]
 
         snapshot, sections = ReportNarrativeStage().run(
