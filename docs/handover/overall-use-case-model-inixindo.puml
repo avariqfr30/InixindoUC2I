@@ -1,88 +1,181 @@
 @startuml
-left to right direction
-skinparam packageStyle rectangle
+' Model use case keseluruhan Sistem AI Inixindo.
+' Dipecah menjadi beberapa halaman agar hasil render tetap terbaca.
+
 skinparam shadowing false
-
-actor "Pengguna Proposal" as ProposalUser
-actor "User Internal / CX" as FeedbackUser
-actor "User Finance" as FinanceUser
-actor "Manajemen" as Management
-actor "Admin / Operator Data" as Admin
-actor "Internal API / APIDog" as InternalAPI
-actor "Provider OSINT" as OSINT
-actor "Ollama / LLM" as LLM
-actor "Monitoring / Infra" as Infra
-
-rectangle "Ekosistem AI Inixindo" {
-  package "UC1 - Proposal Generator" {
-    usecase "Isi brief dan ruang lingkup proposal" as UC1_Brief
-    usecase "Ambil konteks klien dan KAK/TOR" as UC1_Context
-    usecase "Generate proposal DOCX" as UC1_Generate
-    usecase "Quality gate proposal" as UC1_QA
-  }
-
-  package "UC2 - Feedback Intelligence" {
-    usecase "Pilih periode, sentimen, dan segmen" as UC2_Filter
-    usecase "Refresh data feedback internal" as UC2_Refresh
-    usecase "Hitung Experience Index" as UC2_Index
-    usecase "Generate laporan feedback DOCX" as UC2_Report
-  }
-
-  package "UC3 - Cash In Intelligence" {
-    usecase "Validasi sumber data FinanceInvoice" as UC3_Validate
-    usecase "Lihat dashboard kesehatan arus kas" as UC3_Dashboard
-    usecase "Forecast cashflow per horizon" as UC3_Forecast
-    usecase "Generate laporan manajemen DOCX" as UC3_Report
-  }
-
-  package "Kapabilitas Bersama" {
-    usecase "Autentikasi dan kontrol akses" as Common_Auth
-    usecase "Adapter data internal" as Common_Data
-    usecase "Konteks eksternal selektif" as Common_OSINT
-    usecase "LLM dan penyusunan narasi" as Common_LLM
-    usecase "Job queue dan unduhan artefak" as Common_Jobs
-    usecase "Health, readiness, dan deployment VPS" as Common_Health
-  }
+skinparam packageStyle rectangle
+skinparam linetype ortho
+skinparam nodesep 90
+skinparam ranksep 80
+skinparam usecase {
+  BorderColor #1d4ed8
+  BackgroundColor #eff6ff
+  FontSize 13
+}
+skinparam actor {
+  FontSize 13
+}
+skinparam rectangle {
+  BorderColor #334155
+  FontSize 14
 }
 
-ProposalUser --> UC1_Brief
-ProposalUser --> UC1_Context
-ProposalUser --> UC1_Generate
-FeedbackUser --> UC2_Filter
-FeedbackUser --> UC2_Report
-FinanceUser --> UC3_Dashboard
-FinanceUser --> UC3_Forecast
-FinanceUser --> UC3_Report
-Management --> UC2_Report
-Management --> UC3_Dashboard
-Management --> UC3_Report
-Admin --> UC2_Refresh
-Admin --> UC3_Validate
-Admin --> Common_Data
+title Ekosistem AI Inixindo - Ringkasan Model Kasus Penggunaan
+left to right direction
 
-InternalAPI --> Common_Data
-OSINT --> Common_OSINT
-LLM --> Common_LLM
-Infra --> Common_Health
+actor "Pengguna Proposal" as PenggunaProposal
+actor "Pengguna Internal CX" as PenggunaCX
+actor "Pengguna Finance" as PenggunaFinance
+actor "Manajemen" as Manajemen
+actor "Admin / Operator Data" as Admin
+actor "Monitoring / Infrastruktur" as Infrastruktur
 
-UC1_Context .> Common_Data : <<include>>
-UC1_Generate .> Common_OSINT : <<include>>
-UC1_Generate .> Common_LLM : <<include>>
-UC1_Generate .> UC1_QA : <<include>>
+rectangle "UC1\nGenerator Proposal" as UC1 {
+  usecase "Menyusun proposal\nstrategis DOCX" as UC1_Utama
+}
 
-UC2_Refresh .> Common_Data : <<include>>
-UC2_Report .> UC2_Index : <<include>>
-UC2_Report .> Common_OSINT : <<include>>
-UC2_Report .> Common_LLM : <<include>>
-UC2_Report .> Common_Jobs : <<include>>
+rectangle "UC2\nIntelijen Umpan Balik" as UC2 {
+  usecase "Menyusun laporan\numpan balik DOCX" as UC2_Utama
+}
 
-UC3_Validate .> Common_Data : <<include>>
-UC3_Dashboard .> UC3_Forecast : <<include>>
-UC3_Report .> UC3_Forecast : <<include>>
-UC3_Report .> Common_OSINT : <<include>>
-UC3_Report .> Common_LLM : <<include>>
-UC3_Report .> Common_Jobs : <<include>>
+rectangle "UC3\nIntelijen Arus Kas" as UC3 {
+  usecase "Memantau arus kas dan\nmenyusun laporan DOCX" as UC3_Utama
+}
 
-Common_Health ..> UC2_Report : monitors
-Common_Health ..> UC3_Report : monitors
+rectangle "Kapabilitas Bersama" as Bersama {
+  usecase "Autentikasi dan\nkontrol akses" as Bersama_Autentikasi
+  usecase "Adapter data\ninternal" as Bersama_Data
+  usecase "Konteks OSINT\nselektif" as Bersama_OSINT
+  usecase "LLM dan\nrender dokumen" as Bersama_AI
+  usecase "Antrean pekerjaan,\nkesehatan, kesiapan" as Bersama_Operasi
+}
+
+PenggunaProposal --> UC1_Utama
+PenggunaCX --> UC2_Utama
+PenggunaFinance --> UC3_Utama
+Manajemen --> UC2_Utama
+Manajemen --> UC3_Utama
+Admin --> Bersama_Data
+Infrastruktur --> Bersama_Operasi
+
+UC1_Utama .down.> Bersama_Data : memakai
+UC1_Utama .down.> Bersama_OSINT : memakai
+UC1_Utama .down.> Bersama_AI : memakai
+UC2_Utama .down.> Bersama_Data : memakai
+UC2_Utama .down.> Bersama_OSINT : memakai
+UC2_Utama .down.> Bersama_AI : memakai
+UC2_Utama .down.> Bersama_Operasi : memakai
+UC3_Utama .down.> Bersama_Data : memakai
+UC3_Utama .down.> Bersama_OSINT : memakai
+UC3_Utama .down.> Bersama_AI : memakai
+UC3_Utama .down.> Bersama_Operasi : memakai
+
+newpage
+title Ekosistem AI Inixindo - Detail Kasus Penggunaan per UC
+top to bottom direction
+
+actor "Pengguna Proposal" as PUser
+actor "Pengguna Internal CX" as CXUser
+actor "Pengguna Finance" as FUser
+actor "Manajemen" as Exec
+actor "Admin / Operator Data" as Ops
+
+rectangle "UC1 - Generator Proposal" {
+  usecase "Mengisi brief dan\nruang lingkup" as U1_Brief
+  usecase "Mengunggah KAK/TOR" as U1_KAK
+  usecase "Mengambil konteks\nklien dan portofolio" as U1_Context
+  usecase "Membuat proposal\nDOCX" as U1_Doc
+  usecase "Memeriksa kualitas\nproposal" as U1_QA
+}
+
+rectangle "UC2 - Intelijen Umpan Balik" {
+  usecase "Memilih periode,\nsentimen, segmen" as U2_Filter
+  usecase "Memperbarui data\numpan balik internal" as U2_Refresh
+  usecase "Menghitung\nExperience Index" as U2_Index
+  usecase "Membuat laporan\numpan balik DOCX" as U2_Doc
+  usecase "Mengunduh artefak\nlaporan" as U2_Download
+}
+
+rectangle "UC3 - Intelijen Arus Kas" {
+  usecase "Memvalidasi sumber\nFinanceInvoice" as U3_Validate
+  usecase "Melihat dasbor\nkesehatan kas" as U3_Dashboard
+  usecase "Menghitung proyeksi\narus kas per horizon" as U3_Proyeksi
+  usecase "Membuat laporan\nmanajemen DOCX" as U3_Doc
+  usecase "Mengunduh artefak\nlaporan" as U3_Download
+}
+
+PUser --> U1_Brief
+PUser --> U1_KAK
+PUser --> U1_Doc
+CXUser --> U2_Filter
+CXUser --> U2_Doc
+FUser --> U3_Dashboard
+FUser --> U3_Proyeksi
+FUser --> U3_Doc
+Exec --> U2_Doc
+Exec --> U3_Dashboard
+Exec --> U3_Doc
+Ops --> U2_Refresh
+Ops --> U3_Validate
+
+U1_Doc .down.> U1_Context : memakai
+U1_Doc .down.> U1_QA : memakai
+U2_Doc .down.> U2_Index : memakai
+U2_Doc .down.> U2_Download : hasil
+U3_Dashboard .down.> U3_Proyeksi : memakai
+U3_Doc .down.> U3_Proyeksi : memakai
+U3_Doc .down.> U3_Download : hasil
+
+newpage
+title Ekosistem AI Inixindo - Sistem Eksternal dan Operasi VPS
+left to right direction
+
+actor "Admin / Operator Data" as DataOps
+actor "Monitoring / Infrastruktur" as InfraOps
+actor "Pengguna Aplikasi" as AppUser
+
+rectangle "Sumber Data dan Layanan Pendukung" as Sources {
+  usecase "API Internal /\ndataset APIDog" as Ext_API
+  usecase "ReferenceAccount /\nFinanceInvoice /\ndata umpan balik" as Ext_Data
+  usecase "Penyedia OSINT /\nSerper / pencarian web" as Ext_OSINT
+  usecase "Ollama /\nLLM + embedding" as Ext_LLM
+}
+
+rectangle "VPS Ubuntu / Operasi Aplikasi" as VPS {
+  usecase "nginx proksi\nbalik" as VPS_Nginx
+  usecase "layanan systemd:\ninixindo-feedback" as VPS_UC2
+  usecase "layanan systemd:\npayment-app" as VPS_UC3
+  usecase "Waitress WSGI\n6001 / 8001" as VPS_Waitress
+  usecase "Pemeriksaan kesehatan\ndan kesiapan" as VPS_Health
+}
+
+rectangle "Penyimpanan Operasional" as Storage {
+  usecase "Cache SQLite /\ndata ternormalisasi" as Store_DB
+  usecase "Status autentikasi\ndan sesi" as Store_Auth
+  usecase "Status pekerjaan\nSQLite/JSON" as Store_Jobs
+  usecase "Artefak DOCX\nyang dihasilkan" as Store_Docs
+  usecase "Cache OSINT" as Store_OSINT
+}
+
+AppUser --> VPS_Nginx
+DataOps --> Ext_API
+DataOps --> Ext_Data
+InfraOps --> VPS_Health
+
+Ext_API .down.> Store_DB : serap data
+Ext_Data .down.> Store_DB : normalisasi
+Ext_OSINT .down.> Store_OSINT : simpan sementara
+Ext_LLM .down.> VPS_UC2 : dukung narasi
+Ext_LLM .down.> VPS_UC3 : dukung narasi
+
+VPS_Nginx .down.> VPS_UC2 : feedback.inworx.id
+VPS_Nginx .down.> VPS_UC3 : payment.inworx.id
+VPS_UC2 .down.> VPS_Waitress
+VPS_UC3 .down.> VPS_Waitress
+VPS_UC2 .down.> Store_Jobs
+VPS_UC2 .down.> Store_Docs
+VPS_UC3 .down.> Store_Jobs
+VPS_UC3 .down.> Store_Docs
+VPS_Health .down.> VPS_UC2
+VPS_Health .down.> VPS_UC3
 @enduml

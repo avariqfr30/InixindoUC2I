@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1050" viewBox="0 0 1600 1050">
+<rect width="1600" height="1050" fill="#ffffff"/>
+<style>text{font-family:Inter,Arial,sans-serif;fill:#111827}.title{font-size:34px;font-weight:700;fill:#17213a}.sub{font-size:18px;fill:#475569}.head{font-size:21px;font-weight:700;fill:#0050c8}.small{font-size:15px;fill:#334155}.label{font-size:15px;fill:#475569}.actor{fill:#f8fafc;stroke:#0369a1;stroke-width:2}.uc{fill:#eff6ff;stroke:#2563eb;stroke-width:2}.shared{fill:#ecfdf5;stroke:#059669;stroke-width:2}.tech{fill:#fff7cc;stroke:#d97706;stroke-width:2}.store{fill:#f8fafc;stroke:#64748b;stroke-width:2}.line{stroke:#334155;stroke-width:2;fill:none}.dash{stroke:#64748b;stroke-width:2;stroke-dasharray:7 7;fill:none}</style>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="#334155"/></marker></defs>
+<text x="60" y="62" class="title">Model Kasus Penggunaan Sistem AI Inixindo</text>
+<text x="60" y="96" class="sub">Diagram serah terima lokal: aktor, UC1, UC2, UC3, kapabilitas bersama, dan operasi VPS</text>
+<line x1="60" y1="124" x2="1540" y2="124" stroke="#b45309" stroke-width="3"/>
+<rect x="60" y="175" width="220" height="88" rx="12" class="actor"/>
+<text x="78" y="207" class="head">Pengguna Proposal</text>
+<text x="78" y="237" class="small">Brief, KAK/TOR, ruang lingkup</text>
+<rect x="60" y="325" width="220" height="88" rx="12" class="actor"/>
+<text x="78" y="357" class="head">Pengguna CX</text>
+<text x="78" y="387" class="small">Periode, segmen, laporan</text>
+<rect x="60" y="475" width="220" height="88" rx="12" class="actor"/>
+<text x="78" y="507" class="head">Pengguna Finance</text>
+<text x="78" y="537" class="small">Horizon kas, proyeksi, laporan</text>
+<rect x="60" y="625" width="220" height="88" rx="12" class="actor"/>
+<text x="78" y="657" class="head">Manajemen</text>
+<text x="78" y="687" class="small">Pesan utama, risiko, tindakan</text>
+<rect x="60" y="775" width="220" height="88" rx="12" class="actor"/>
+<text x="78" y="807" class="head">Admin Data / Infrastruktur</text>
+<text x="78" y="837" class="small">Sumber data, layanan, pemeriksaan</text>
+<rect x="350" y="170" width="330" height="105" rx="12" class="uc"/>
+<text x="368" y="202" class="head">UC1 Generator Proposal</text>
+<text x="368" y="232" class="small">Menyusun proposal strategis DOCX</text>
+<text x="368" y="255" class="small">Konteks klien, portofolio, kualitas</text>
+<rect x="350" y="320" width="330" height="105" rx="12" class="uc"/>
+<text x="368" y="352" class="head">UC2 Intelijen Umpan Balik</text>
+<text x="368" y="382" class="small">Experience Index, bukti evaluasi</text>
+<text x="368" y="405" class="small">Laporan umpan balik DOCX</text>
+<rect x="350" y="470" width="330" height="105" rx="12" class="uc"/>
+<text x="368" y="502" class="head">UC3 Intelijen Arus Kas</text>
+<text x="368" y="532" class="small">Kesehatan kas, invoice, proyeksi</text>
+<text x="368" y="555" class="small">Dasbor dan laporan arus kas DOCX</text>
+<rect x="350" y="635" width="330" height="105" rx="12" class="shared"/>
+<text x="368" y="667" class="head">Keputusan Manajemen</text>
+<text x="368" y="697" class="small">Pesan utama lebih dulu</text>
+<text x="368" y="720" class="small">Detail teknis sebagai bukti</text>
+<rect x="795" y="215" width="340" height="105" rx="12" class="shared"/>
+<text x="813" y="247" class="head">Kapabilitas Data</text>
+<text x="813" y="277" class="small">Adapter API internal/APIDog</text>
+<text x="813" y="300" class="small">Peta kolom, records_key, validasi</text>
+<rect x="795" y="355" width="340" height="105" rx="12" class="shared"/>
+<text x="813" y="387" class="head">Analitik dan Model</text>
+<text x="813" y="417" class="small">ProposalEngine, Experience Index</text>
+<text x="813" y="440" class="small">CashflowForecaster, skor risiko</text>
+<rect x="795" y="495" width="340" height="105" rx="12" class="shared"/>
+<text x="813" y="527" class="head">Narasi dan Dokumen</text>
+<text x="813" y="557" class="small">LLM/Ollama dari konteks terstruktur</text>
+<text x="813" y="580" class="small">DOCX, tabel, grafik, sanitasi</text>
+<rect x="795" y="635" width="340" height="105" rx="12" class="shared"/>
+<text x="813" y="667" class="head">Operasi Aplikasi</text>
+<text x="813" y="697" class="small">Autentikasi, antrean pekerjaan</text>
+<text x="813" y="720" class="small">Kesehatan/kesiapan, artefak unduhan</text>
+<rect x="1260" y="200" width="280" height="120" rx="12" class="tech"/>
+<text x="1278" y="232" class="head">VPS Ubuntu</text>
+<text x="1278" y="262" class="small">nginx, systemd, Waitress</text>
+<text x="1278" y="285" class="small">UC1 :5500, UC2 :6001, UC3 :8001</text>
+<rect x="1260" y="390" width="280" height="120" rx="12" class="store"/>
+<text x="1278" y="422" class="head">Penyimpanan Operasional</text>
+<text x="1278" y="452" class="small">SQLite dan status pekerjaan</text>
+<text x="1278" y="475" class="small">auth/session, laporan hasil</text>
+<rect x="1260" y="580" width="280" height="120" rx="12" class="store"/>
+<text x="1278" y="612" class="head">Sumber dan Layanan</text>
+<text x="1278" y="642" class="small">FinanceInvoice, ReferenceAccount</text>
+<text x="1278" y="665" class="small">Umpan balik, catatan proyek, OSINT</text>
+<path d="M280,219 C 315,219 315,222 350,222" class="line" marker-end="url(#arrow)"/>
+<path d="M280,369 C 315,369 315,372 350,372" class="line" marker-end="url(#arrow)"/>
+<path d="M280,519 C 315,519 315,522 350,522" class="line" marker-end="url(#arrow)"/>
+<path d="M280,669 C 315,669 315,687 350,687" class="line" marker-end="url(#arrow)"/>
+<path d="M280,819 C 537,819 537,688 795,688" class="line" marker-end="url(#arrow)"/>
+<text x="517" y="745" class="label">kelola</text>
+<path d="M680,222 C 737,222 737,268 795,268" class="dash" marker-end="url(#arrow)"/>
+<text x="717" y="237" class="label">memakai</text>
+<path d="M680,372 C 737,372 737,408 795,408" class="dash" marker-end="url(#arrow)"/>
+<text x="717" y="382" class="label">memakai</text>
+<path d="M680,522 C 737,522 737,408 795,408" class="dash" marker-end="url(#arrow)"/>
+<text x="717" y="457" class="label">memakai</text>
+<path d="M680,687 C 737,687 737,548 795,548" class="dash" marker-end="url(#arrow)"/>
+<text x="717" y="609" class="label">ringkas</text>
+<path d="M1135,268 C 1197,268 1197,260 1260,260" class="line" marker-end="url(#arrow)"/>
+<path d="M1135,408 C 1197,408 1197,450 1260,450" class="line" marker-end="url(#arrow)"/>
+<path d="M1135,548 C 1197,548 1197,640 1260,640" class="line" marker-end="url(#arrow)"/>
+<path d="M1135,688 C 1197,688 1197,260 1260,260" class="line" marker-end="url(#arrow)"/>
+<rect x="60" y="950" width="1480" height="54" rx="10" fill="#f8fafc" stroke="#cbd5e1"/>
+<text x="82" y="982" class="small">Catatan: SVG ini untuk serah terima lokal. VPS produksi tidak perlu menyimpan dokumen PDF/SVG/PUML ini.</text>
+</svg>

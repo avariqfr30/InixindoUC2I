@@ -32,11 +32,14 @@ rsync -avz --delete \
   --exclude '.pytest_cache/' \
   --exclude '.mypy_cache/' \
   --exclude '*.example.*' \
+  --exclude 'run_pilot.sh' \
+  --exclude 'seed_demo_data.py' \
   --exclude 'profiles/*.env' \
   --exclude 'profiles/*.env.example' \
   --exclude 'internal_connector.production.json' \
   --exclude 'internal_connector.production.example.json' \
   --exclude 'internal_api_endpoints.example.json' \
+  --exclude 'data/db.csv' \
   --exclude 'data/auth.db' \
   --exclude 'data/cx_feedback.db' \
   --exclude 'data/*.db-shm' \
@@ -55,9 +58,14 @@ ssh "${SSH_OPTS[@]}" "$REMOTE_HOST" "
   source '$REMOTE_VENV_DIR/bin/activate'
   cd '$REMOTE_APP_DIR'
   rm -f \
+    run_pilot.sh \
+    seed_demo_data.py \
     profiles/*.env.example \
+    profiles/demo.env \
+    profiles/demo.env.example \
     internal_connector.production.example.json \
-    internal_api_endpoints.example.json
+    internal_api_endpoints.example.json \
+    data/db.csv
   find . -name '.DS_Store' -type f -delete
   find . -name '__pycache__' -type d -prune -exec rm -rf {} +
   pip install -r requirements.txt >/tmp/${SERVICE_NAME}_pip.log 2>&1 || { cat /tmp/${SERVICE_NAME}_pip.log; exit 1; }
