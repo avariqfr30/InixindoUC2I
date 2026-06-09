@@ -2,7 +2,6 @@ import re
 
 from document_builder import DocumentBuilder
 
-
 RAW_SOURCE_PATTERNS = [
     r"\bAPIDog\b",
     r"\bInternal API\b",
@@ -12,6 +11,26 @@ RAW_SOURCE_PATTERNS = [
     r"\bEvidence Ledger\b",
 ]
 
+# ── PII scrubbing ──
+_PII_PATTERNS = [
+    # Indonesian mobile numbers (+62xxx, 08xxx)
+    (re.compile(r"\+?62[\s\-]?\d{2,4}[\s\-]?\d{3,4}[\s\-]?\d{3,4}"), "[nomor telepon dirahasiakan]"),
+    (re.compile(r"0\d{2,3}[\s\-]?\d{3,4}[\s\-]?\d{3,4}"), "[nomor telepon dirahasiakan]"),
+    # Email addresses
+    (re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}"), "[email dirahasiakan]"),
+    # Indonesian NIK (16 consecutive digits)
+    (re.compile(r"\b\d{16}\b"), "[NIK dirahasiakan]"),
+    # Names preceded by common Indonesian honorifics
+    (re.compile(r"(?:Bapak|Ibu|Pak|Bu|Mas|Mbak|Bp\.?|Ibu\.?)\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}"), "[nama dirahasiakan]"),
+]
+
+
+def _scrub_pii(text: str) -> str:
+    """Remove personally identifiable information from text."""
+    for pattern, replacement in _PII_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text
+
 
 class ContextIntelligenceDesk:
     """Build hidden, reader-safe report context from UI notes and normalized feedback rows."""
@@ -19,6 +38,7 @@ class ContextIntelligenceDesk:
     @staticmethod
     def _safe_text(value, max_words=42):
         text = DocumentBuilder.reader_facing_text(str(value or ""))
+        text = _scrub_pii(text)
         text = re.sub(r"https?://\S+", "", text)
         text = re.sub(r"/api/\S+", "", text)
         text = re.sub(r"\b(?:APIDog|Internal API|endpoint|source\s*=|Evidence Ledger)\b", "", text, flags=re.IGNORECASE)
@@ -95,6 +115,7 @@ class ReportEvidenceBuilder:
     @staticmethod
     def clean(value, max_words=28):
         text = DocumentBuilder.reader_facing_text(str(value or ""))
+        text = _scrub_pii(text)
         text = re.sub(r"https?://\S+", "", text)
         text = re.sub(r"(?i)\b(?:source|url|link)\s*=\s*[^|,\n]+", "", text)
         text = re.sub(r"\s+", " ", text).strip(" -;,.")

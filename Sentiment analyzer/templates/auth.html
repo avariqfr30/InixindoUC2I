@@ -207,11 +207,7 @@
             <h2>{% if mode == "signup" %}Buat Akun{% else %}Selamat Datang Kembali{% endif %}</h2>
             <p class="sub">
                 {% if mode == "signup" %}
-                    {% if signup_requires_approval %}
-                    Buat permintaan akun menggunakan email internal yang terdaftar. Admin harus mengonfirmasi akun sebelum akses aplikasi dibuka.
-                    {% else %}
-                    Buat akun menggunakan email internal yang terdaftar. Email dengan domain yang benar bisa langsung digunakan untuk masuk.
-                    {% endif %}
+                Daftarkan email internal yang cocok dengan data referensi. Sistem akan mengirim token verifikasi dan kata sandi awal ke alamat itu.
                 {% else %}
                 Masuk dengan username dan password untuk membuka dashboard report.
                 {% endif %}
@@ -221,7 +217,7 @@
             <div class="error">{{ error }}</div>
             {% endif %}
             {% if notice %}
-            <div class="notice active">{{ notice }}</div>
+            <div class="notice active">{{ notice|safe }}</div>
             {% endif %}
             {% if warning %}
             <div id="signup-warning-popup" class="warning-popup" role="alert" aria-live="assertive">
@@ -233,19 +229,25 @@
 
             {% if mode == "signup" %}
             <form method="post" action="{{ url_for('signup') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <label for="username">Email Internal</label>
                 <input id="username" name="username" type="email" minlength="4" maxlength="96" placeholder="nama{{ signup_allowed_email_domain }}" required>
+                <button type="submit">Daftarkan Email</button>
+            </form>
+            {% elif mode == "verify_signup" %}
+            <form method="post" action="{{ url_for('verify_otp') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <label for="username">Email Internal</label>
+                <input id="username" name="username" type="email" value="{{ username }}" readonly required style="background: #f1f5f9; cursor: not-allowed;">
 
-                <label for="password">Kata Sandi</label>
-                <input id="password" name="password" type="password" minlength="8" required>
+                <label for="verification_token">Token Verifikasi</label>
+                <input id="verification_token" name="verification_token" type="text" minlength="6" maxlength="64" placeholder="Token dari email" required>
 
-                <label for="confirm_password">Konfirmasi Kata Sandi</label>
-                <input id="confirm_password" name="confirm_password" type="password" minlength="8" required>
-
-                <button type="submit">Buat Akun</button>
+                <button type="submit">Verifikasi & Aktifkan</button>
             </form>
             {% else %}
             <form method="post" action="{{ url_for('login') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <label for="username">Email / Username</label>
                 <input id="username" name="username" type="text" minlength="4" maxlength="64" required>
 
@@ -258,11 +260,7 @@
 
             <p class="hint">
                 {% if allow_signup %}
-                    {% if signup_requires_approval %}
-                    Hanya email berakhiran {{ signup_allowed_email_domain }} yang bisa mengajukan akun. Akun baru tidak langsung aktif sampai admin server mengonfirmasi akses.
-                    {% else %}
-                    Hanya email berakhiran {{ signup_allowed_email_domain }} yang bisa mendaftar dan langsung menggunakan aplikasi.
-                    {% endif %}
+                Hanya email yang cocok persis dengan ReferenceInternalAccount yang bisa mengajukan akun.
                 {% else %}
                 Pendaftaran mandiri sedang ditutup. Gunakan akun yang sudah disediakan oleh admin server.
                 {% endif %}

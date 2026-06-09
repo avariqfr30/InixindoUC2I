@@ -19,14 +19,14 @@ class FeedbackManagementInterpreter:
                 "meaning": f"Pengalaman pelanggan sedang cukup kuat, terutama pada {top_risk_label}.",
                 "decision": "Manajemen perlu memilih praktik baik yang layak dijadikan standar layanan.",
                 "action": f"Dokumentasikan pola positif pada {journey_label} dan replikasi ke layanan lain dalam 30 hari.",
-                "confidence": f"Cukup kuat - {score_label} berada di {current_score} dengan proyeksi {projected_score}.",
+                "confidence": "Cukup kuat - lensa pengalaman mendukung keputusan replikasi praktik baik.",
             }
         return {
             "signal": f"Rating pelanggan {rating_text}/5 dengan sentimen negatif {negative_share}%.",
             "meaning": f"Risiko pengalaman pelanggan terkonsentrasi pada {top_risk_label}, terutama terkait {issue_label}.",
             "decision": "Manajemen perlu memilih satu area intervensi utama agar perbaikan tidak tersebar terlalu luas.",
             "action": f"Tetapkan owner lintas fungsi untuk {top_risk_label} dan jalankan rencana 30 hari pada {journey_label}.",
-            "confidence": f"Cukup kuat - {score_label} bergerak dari {current_score} menuju {projected_score}.",
+            "confidence": "Cukup kuat - lensa pengalaman menunjukkan prioritas koreksi yang perlu diuji pada periode berikutnya.",
         }
 
     @staticmethod

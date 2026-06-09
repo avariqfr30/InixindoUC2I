@@ -13,3 +13,5 @@ sqlalchemy
 waitress
 pydantic
 diskcache
+flask-wtf
+flask-limiter

@@ -1,4 +1,5 @@
 import re
+from reasoning_policy import FeedbackHotsReasoningPolicy
 
 class ReportQualityValidator:
     REQUIRED_CHAPTER_IDS = {"cx_chap_1": "Descriptive chapter tersedia", "cx_chap_2": "Diagnostic chapter tersedia", "cx_chap_3": "Predictive chapter tersedia", "cx_chap_4": "Prescriptive chapter tersedia", "cx_chap_5": "Implementation readiness chapter tersedia"}
@@ -35,6 +36,13 @@ class ReportQualityValidator:
         if len(cls._plain_text(executive_snapshot)) < 80:
             categories.add("thin_executive_summary")
             findings.append("Ringkasan eksekutif terlalu tipis untuk dirender.")
+        combined_text = "\n".join([executive_snapshot or "", *[section.get("content", "") for section in report_sections or []]])
+        if FeedbackHotsReasoningPolicy.find_visible_reasoning(combined_text):
+            categories.add("visible_reasoning")
+            findings.append("Narasi masih memuat proses penalaran internal.")
+        if FeedbackHotsReasoningPolicy.has_uncalibrated_feedback_claim(combined_text):
+            categories.add("uncalibrated_feedback_claim")
+            findings.append("Narasi menyatakan akar masalah terlalu pasti tanpa bukti, countercheck, atau batasan.")
         for section in report_sections or []:
             title = section.get("title") or section.get("id") or "section"
             content = section.get("content", "")

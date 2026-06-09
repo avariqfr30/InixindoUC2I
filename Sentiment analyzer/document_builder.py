@@ -108,7 +108,7 @@ class ChartEngine:
         for pair in raw_data.split(";"):
             if "," not in pair: continue
             label, value = pair.split(",", maxsplit=1)
-            cleaned_value = re.sub(r"[^\d.]", "", value)
+            cleaned_value = re.sub(r"[^\d.\-]", "", value)
             if cleaned_value:
                 labels.append(label.strip())
                 values.append(float(cleaned_value))
@@ -136,6 +136,35 @@ class ChartEngine:
             return image_stream
         except Exception as exc:
             logger.warning("Gagal membuat bar chart: %s", exc)
+            return None
+
+    @staticmethod
+    def create_line_chart(data_str, theme_color):
+        try:
+            parts = data_str.split("|")
+            title_str, ylabel_str, raw_data = [p.strip() for p in parts] if len(parts) == 3 else ("Tren", "Skor", data_str)
+            labels, values = ChartEngine._parse_chart_points(raw_data)
+            if not labels: return None
+
+            color = ChartEngine._get_plt_color(theme_color)
+            fig, axis = plt.subplots(figsize=(7, 4.2))
+            axis.plot(labels, values, color=color, linewidth=2.4, marker="o", markersize=6)
+            axis.fill_between(labels, values, min(values), color=color, alpha=0.12)
+            axis.set_title(title_str, fontsize=12, fontweight="bold", pad=18)
+            axis.set_ylabel(ylabel_str, fontsize=10)
+            axis.grid(axis="y", alpha=0.25)
+            axis.spines["top"].set_visible(False)
+            axis.spines["right"].set_visible(False)
+            for index, value in enumerate(values):
+                axis.annotate(f"{value:g}", (index, value), textcoords="offset points", xytext=(0, 8), ha="center", fontsize=8)
+
+            image_stream = io.BytesIO()
+            plt.savefig(image_stream, format="png", bbox_inches="tight", dpi=150)
+            plt.close(fig)
+            image_stream.seek(0)
+            return image_stream
+        except Exception as exc:
+            logger.warning("Gagal membuat line chart: %s", exc)
             return None
 
     @staticmethod
@@ -521,27 +550,44 @@ class DocumentBuilder:
     def process_content(doc, raw_text, theme_color=DEFAULT_COLOR):
         raw_text = DocumentBuilder.reader_facing_text(raw_text)
         clean_lines = []
+
+        def flush_markdown():
+            if not any(line.strip() for line in clean_lines):
+                clean_lines.clear()
+                return
+            html = markdown.markdown("\n".join(clean_lines), extensions=["tables"])
+            DocumentBuilder.parse_html_to_docx(doc, html)
+            clean_lines.clear()
+
         for line in raw_text.split("\n"):
             stripped_line = line.strip()
             if stripped_line.startswith("[[CHART:") and stripped_line.endswith("]]"):
+                flush_markdown()
                 image = ChartEngine.create_bar_chart(stripped_line.replace("[[CHART:", "").replace("]]", "").strip(), theme_color)
                 if image:
                     DocumentBuilder._add_picture(doc, image, width=Inches(5.5))
                 continue
+            if stripped_line.startswith("[[LINE:") and stripped_line.endswith("]]"):
+                flush_markdown()
+                image = ChartEngine.create_line_chart(stripped_line.replace("[[LINE:", "").replace("]]", "").strip(), theme_color)
+                if image:
+                    DocumentBuilder._add_picture(doc, image, width=Inches(5.5))
+                continue
             if stripped_line.startswith("[[PIE:") and stripped_line.endswith("]]"):
+                flush_markdown()
                 image = ChartEngine.create_pie_chart(stripped_line.replace("[[PIE:", "").replace("]]", "").strip(), theme_color)
                 if image:
                     DocumentBuilder._add_picture(doc, image, width=Inches(5.4))
                 continue
             if stripped_line.startswith("[[FLOW:") and stripped_line.endswith("]]"):
+                flush_markdown()
                 image = ChartEngine.create_flowchart(stripped_line.replace("[[FLOW:", "").replace("]]", "").strip(), theme_color)
                 if image:
                     DocumentBuilder._add_picture(doc, image, width=Inches(6.5))
                 continue
             clean_lines.append(line)
 
-        html = markdown.markdown("\n".join(clean_lines), extensions=["tables"])
-        DocumentBuilder.parse_html_to_docx(doc, html)
+        flush_markdown()
 
     @staticmethod
     def add_table_of_contents(doc, items=None):

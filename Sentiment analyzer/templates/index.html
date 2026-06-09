@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token }}">
     <title>Inixindo Feedback Intelligence</title>
     <link href="https://cdn.jsdelivr.net/npm/quill@2.0.3/dist/quill.snow.css" rel="stylesheet">
     <style>
@@ -111,12 +112,17 @@
     <div class="card">
         <div class="topbar">
             <div class="topbar-user">
-                Masuk sebagai <strong>{{ current_user or "Pengguna" }}</strong>
+                Masuk sebagai <strong>{{ current_user_fullname or current_user or "Pengguna" }}</strong>
+                {% if current_user_fullname and current_user_fullname != current_user %}
+                <div class="session-meta">{{ current_user }}</div>
+                {% endif %}
                 <div id="session-meta" class="session-meta"></div>
             </div>
             <div class="topbar-actions">
                 <button type="button" id="btn-settings" class="logout-button">Pengaturan</button>
                 <form class="logout-form" method="post" action="/logout">
+                    <!-- CSRF protection for logout form -->
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <button type="submit" class="logout-button">Keluar</button>
                 </form>
             </div>
@@ -268,6 +274,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/quill@2.0.3/dist/quill.js"></script>
     <script>
+        const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
         const ui = {
             loader: document.getElementById('loader'),
             loaderText: document.getElementById('loader-text'),
@@ -701,7 +708,10 @@
 
             fetch('/api/internal-api/settings', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken
+                },
                 body: JSON.stringify({
                     enabled: true,
                     url,
@@ -734,7 +744,12 @@
             ui.btnRefreshInternalApi.textContent = 'Me-refresh...';
             showSettingsStatus('Mengambil ulang dataset dari Internal API...');
 
-            fetch('/api/internal-api/refresh', {method: 'POST'})
+            fetch('/api/internal-api/refresh', {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': csrfToken
+                }
+            })
                 .then(response => unwrapJsonResponse(response, 'Dataset Internal API belum berhasil di-refresh.'))
                 .then(data => {
                     renderInternalApiSettings(data);
@@ -931,7 +946,10 @@
         function warmReportContext(payload) {
             fetch('/api/report-prefetch', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken
+                },
                 body: JSON.stringify(payload)
             }).catch(err => {
                 console.warn('Prefetch laporan tidak berhasil:', err);
@@ -988,7 +1006,14 @@
                 notes_html: notesPayload.html
             };
 
-            fetch('/generate-job', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) })
+            fetch('/generate-job', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken
+                },
+                body: JSON.stringify(payload)
+            })
             .then(response => unwrapJsonResponse(response, 'Gagal mengirim job laporan.'))
             .then(job => {
                 appState.currentJobId = job.job_id;
@@ -1002,7 +1027,12 @@
         };
         
         ui.btnRefresh.onclick = () => {
-            fetch('/refresh-knowledge', {method: 'POST'})
+            fetch('/refresh-knowledge', {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': csrfToken
+                }
+            })
                 .then(response => unwrapJsonResponse(response, 'Sinkronisasi data gagal.'))
                 .then(() => {
                     location.reload();

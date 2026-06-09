@@ -106,13 +106,11 @@ class DocumentRenderStage:
         DocumentBuilder.create_cover(document, context.timeframe_label, DEFAULT_COLOR)
         document.add_heading("Ringkasan Eksekutif", level=1)
         DocumentBuilder.process_content(document, executive_snapshot, DEFAULT_COLOR)
-        document.add_page_break()
 
-        for index, section in enumerate(report_sections):
+        for section in report_sections:
+            document.add_page_break()
             document.add_heading(section["title"], level=1)
             DocumentBuilder.process_content(document, section["content"], DEFAULT_COLOR)
-            if index < len(report_sections) - 1:
-                document.add_page_break()
         return document
 
 

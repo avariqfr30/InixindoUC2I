@@ -1,5 +1,7 @@
 import json
+import logging
 import os
+import sys
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -23,6 +25,35 @@ DEMO_MODE = APP_MODE == "demo"
 INTERNAL_DATA_MODE = "csv" if DEMO_MODE else "api"
 EXTERNAL_DATA_MODE = "osint"
 
+
+def _int_env(name: str, default: int) -> int:
+    raw = os.getenv(name, str(default))
+    try:
+        return int(raw.strip())
+    except ValueError:
+        logging.warning("Invalid integer for %s=%r, using default %d", name, raw, default)
+        return default
+
+
+def _float_env(name: str, default: float) -> float:
+    raw = os.getenv(name, str(default))
+    try:
+        return float(raw.strip())
+    except ValueError:
+        logging.warning("Invalid float for %s=%r, using default %f", name, raw, default)
+        return default
+
+
+def _load_csv_list(env_name, fallback):
+    raw_value = os.getenv(env_name, "").strip()
+    values = raw_value.split(",") if raw_value else fallback
+    return [str(value).strip().lower() for value in values if str(value).strip()]
+
+
+def _load_csv_set(env_name):
+    return {value for value in _load_csv_list(env_name, []) if value}
+
+
 SERPER_API_KEY = os.getenv("SERPER_API_KEY", "YOUR_SERPER_API_KEY")
 OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", "")
 OLLAMA_WEB_SEARCH_URL = os.getenv("OLLAMA_WEB_SEARCH_URL", "https://ollama.com/api/web_search")
@@ -31,26 +62,81 @@ EMBED_MODEL = os.getenv("EMBED_MODEL", "bge-m3:latest")
 DB_URI = os.getenv("DB_URI", f"sqlite:///{os.path.join(DATA_DIR, 'cx_feedback.db')}")
 CSV_PATH = os.getenv("CSV_PATH", os.path.join(DATA_DIR, "db.csv"))
 AUTH_DB_PATH = os.getenv("AUTH_DB_PATH", os.path.join(DATA_DIR, "auth.db"))
-APP_SECRET_KEY = os.getenv("APP_SECRET_KEY", "change-this-secret-before-deployment")
-ALLOW_SIGNUP = os.getenv("ALLOW_SIGNUP", "1").strip().lower() in {"1", "true", "yes"}
-SIGNUP_REQUIRES_APPROVAL = os.getenv("SIGNUP_REQUIRES_APPROVAL", "0").strip().lower() in {
+
+_DEFAULT_SECRET = "change-this-secret-before-deployment"
+APP_SECRET_KEY = os.getenv("APP_SECRET_KEY", _DEFAULT_SECRET)
+
+def _validate_secret_key():
+    if APP_PROFILE != "demo" and APP_SECRET_KEY == _DEFAULT_SECRET:
+        sys.exit(
+            "\n[FATAL] APP_SECRET_KEY is not set.\n"
+            "Set APP_SECRET_KEY in your profiles/*.env file or environment.\n"
+            "Generate one with: python3 -c \"import secrets; print(secrets.token_urlsafe(48))\"\n"
+        )
+
+_validate_secret_key()
+
+_signup_default = "1" if APP_PROFILE == "demo" else "0"
+ALLOW_SIGNUP = os.getenv("ALLOW_SIGNUP", _signup_default).strip().lower() in {"1", "true", "yes"}
+
+_approval_default = "0" if APP_PROFILE == "demo" else "1"
+SIGNUP_REQUIRES_APPROVAL = os.getenv("SIGNUP_REQUIRES_APPROVAL", _approval_default).strip().lower() in {
     "1",
     "true",
     "yes",
 }
+
 SIGNUP_ALLOWED_EMAIL_DOMAIN = os.getenv(
     "SIGNUP_ALLOWED_EMAIL_DOMAIN",
     "@company.example",
 ).strip().lower()
-SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "0").strip().lower() in {
+
+REFERENCE_INTERNAL_ACCOUNT_LOOKUP_MODE = os.getenv(
+    "REFERENCE_INTERNAL_ACCOUNT_LOOKUP_MODE",
+    "test_double" if APP_PROFILE == "demo" else "api",
+).strip().lower()
+REFERENCE_INTERNAL_ACCOUNT_TEST_EMAILS = _load_csv_set("REFERENCE_INTERNAL_ACCOUNT_TEST_EMAILS")
+REFERENCE_INTERNAL_ACCOUNT_LOOKUP_URL = os.getenv(
+    "REFERENCE_INTERNAL_ACCOUNT_LOOKUP_URL",
+    "https://inworx.inixindojogja.co.id/api/Resource/dataset",
+).strip()
+REFERENCE_INTERNAL_ACCOUNT_LOOKUP_USERNAME = os.getenv(
+    "REFERENCE_INTERNAL_ACCOUNT_LOOKUP_USERNAME",
+    os.getenv("INTERNAL_API_USERNAME", ""),
+).strip()
+REFERENCE_INTERNAL_ACCOUNT_LOOKUP_PASSWORD = os.getenv(
+    "REFERENCE_INTERNAL_ACCOUNT_LOOKUP_PASSWORD",
+    os.getenv("INTERNAL_API_PASSWORD", ""),
+)
+REFERENCE_INTERNAL_ACCOUNT_LOOKUP_TIMEOUT_SECONDS = _int_env(
+    "REFERENCE_INTERNAL_ACCOUNT_LOOKUP_TIMEOUT_SECONDS",
+    10,
+)
+
+AUTH_SIGNUP_VERIFICATION_DELIVERY_MODE = os.getenv(
+    "AUTH_SIGNUP_VERIFICATION_DELIVERY_MODE",
+    "capture" if APP_PROFILE == "demo" else "webhook",
+).strip().lower()
+AUTH_SIGNUP_VERIFICATION_WEBHOOK_URL = os.getenv(
+    "AUTH_SIGNUP_VERIFICATION_WEBHOOK_URL",
+    "",
+).strip()
+AUTH_SIGNUP_VERIFICATION_TIMEOUT_SECONDS = _int_env(
+    "AUTH_SIGNUP_VERIFICATION_TIMEOUT_SECONDS",
+    10,
+)
+
+_secure_default = "1" if APP_PROFILE != "demo" else "0"
+SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", _secure_default).strip().lower() in {
     "1",
     "true",
     "yes",
 }
-SESSION_IDLE_TIMEOUT_SECONDS = int(os.getenv("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
-SESSION_ACTIVITY_TOUCH_SECONDS = int(os.getenv("SESSION_ACTIVITY_TOUCH_SECONDS", "60"))
-SESSION_MAX_ACTIVE_PER_USER = int(os.getenv("SESSION_MAX_ACTIVE_PER_USER", "1"))
-SESSION_MAX_ACTIVE_TOTAL = int(os.getenv("SESSION_MAX_ACTIVE_TOTAL", "24"))
+
+SESSION_IDLE_TIMEOUT_SECONDS = _int_env("SESSION_IDLE_TIMEOUT_SECONDS", 1800)
+SESSION_ACTIVITY_TOUCH_SECONDS = _int_env("SESSION_ACTIVITY_TOUCH_SECONDS", 60)
+SESSION_MAX_ACTIVE_PER_USER = _int_env("SESSION_MAX_ACTIVE_PER_USER", 1)
+SESSION_MAX_ACTIVE_TOTAL = _int_env("SESSION_MAX_ACTIVE_TOTAL", 24)
 REPORT_ARTIFACT_DIR = os.getenv(
     "REPORT_ARTIFACT_DIR",
     os.path.join(DATA_DIR, "generated_reports"),
@@ -59,11 +145,11 @@ JOB_STATE_PATH = os.getenv(
     "JOB_STATE_PATH",
     os.path.join(DATA_DIR, "report_jobs.json"),
 )
-REPORT_JOB_WORKERS = int(os.getenv("REPORT_JOB_WORKERS", "3"))
-REPORT_MAX_PENDING_JOBS = int(os.getenv("REPORT_MAX_PENDING_JOBS", "24"))
-REPORT_JOB_RETENTION_SECONDS = int(
-    os.getenv("REPORT_JOB_RETENTION_SECONDS", "86400")
-)
+REPORT_JOB_WORKERS = _int_env("REPORT_JOB_WORKERS", 3)
+REPORT_MAX_PENDING_JOBS = _int_env("REPORT_MAX_PENDING_JOBS", 24)
+REPORT_JOB_RETENTION_SECONDS = _int_env("REPORT_JOB_RETENTION_SECONDS", 86400)
+
+CORS_ALLOWED_ORIGINS = os.getenv("CORS_ALLOWED_ORIGINS", "")
 
 INTERNAL_API_BASE_URL = os.getenv("INTERNAL_API_BASE_URL", "").rstrip("/")
 INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "")
@@ -71,7 +157,7 @@ INTERNAL_API_FEEDBACK_ENDPOINT = os.getenv(
     "INTERNAL_API_FEEDBACK_ENDPOINT",
     "/feedback",
 )
-INTERNAL_API_TIMEOUT_SECONDS = int(os.getenv("INTERNAL_API_TIMEOUT_SECONDS", "20"))
+INTERNAL_API_TIMEOUT_SECONDS = _int_env("INTERNAL_API_TIMEOUT_SECONDS", 20)
 INTERNAL_API_AUTH_MODE = os.getenv("INTERNAL_API_AUTH_MODE", "api_key").strip().lower()
 INTERNAL_API_AUTH_HEADER = os.getenv("INTERNAL_API_AUTH_HEADER", "Authorization").strip() or "Authorization"
 INTERNAL_API_AUTH_PREFIX = os.getenv("INTERNAL_API_AUTH_PREFIX", "Bearer").strip()
@@ -90,6 +176,16 @@ ENABLE_VECTOR_INDEX = os.getenv("ENABLE_VECTOR_INDEX", "0").strip().lower() in {
     "yes",
 }
 
+# ── Score Engine Formula Parameters ──
+# Safely parse float environmental variables to prevent crashes at import time
+SCORE_BASE_WEIGHT = _float_env("SCORE_BASE_WEIGHT", 0.72)
+SCORE_BALANCE_WEIGHT = _float_env("SCORE_BALANCE_WEIGHT", 0.28)
+SCORE_POS_FACTOR = _float_env("SCORE_POS_FACTOR", 6.0)
+SCORE_NEG_FACTOR = _float_env("SCORE_NEG_FACTOR", 11.0)
+SCORE_RISK_PENALTY_SCALE = _float_env("SCORE_RISK_PENALTY_SCALE", 4.0)
+SCORE_RISK_PENALTY_MAX = _float_env("SCORE_RISK_PENALTY_MAX", 3.0)
+SCORE_DIRECTION_THRESHOLD = _float_env("SCORE_DIRECTION_THRESHOLD", 0.6)
+
 
 def _load_json_object(env_name, fallback):
     raw_value = os.getenv(env_name, "").strip()
@@ -100,12 +196,6 @@ def _load_json_object(env_name, fallback):
     except json.JSONDecodeError:
         return fallback
     return parsed if isinstance(parsed, dict) else fallback
-
-
-def _load_csv_list(env_name, fallback):
-    raw_value = os.getenv(env_name, "").strip()
-    values = raw_value.split(",") if raw_value else fallback
-    return [str(value).strip().lower() for value in values if str(value).strip()]
 
 
 def _load_internal_api_endpoints():

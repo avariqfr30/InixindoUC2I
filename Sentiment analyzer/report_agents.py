@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import pandas as pd
 
 from config import OLLAMA_HOST
+from reasoning_policy import FeedbackHotsReasoningPolicy
 
 
 class FeedbackSpecialistAgent:
@@ -62,6 +63,7 @@ class AgentPassContract:
                 f"Role: {self.role}",
                 f"Objective: {self.objective}",
                 "Use only the supplied context packet.",
+                FeedbackHotsReasoningPolicy.prompt_block(),
                 "Do not reveal role names, agent status, source endpoints, or internal ledger labels in reader-facing prose.",
                 "Return JSON with keys: " + ", ".join(self.output_fields) + ".",
                 "Context packet:",

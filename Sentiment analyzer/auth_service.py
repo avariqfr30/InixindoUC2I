@@ -3,14 +3,25 @@ import logging
 import os
 import secrets
 import sqlite3
+import threading
+import time
 from datetime import datetime, timezone, timedelta
 
 from flask import g, request, session
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from config import (
+    AUTH_SIGNUP_VERIFICATION_DELIVERY_MODE,
+    AUTH_SIGNUP_VERIFICATION_TIMEOUT_SECONDS,
+    AUTH_SIGNUP_VERIFICATION_WEBHOOK_URL,
     APP_SECRET_KEY,
     AUTH_DB_PATH,
+    REFERENCE_INTERNAL_ACCOUNT_LOOKUP_MODE,
+    REFERENCE_INTERNAL_ACCOUNT_LOOKUP_PASSWORD,
+    REFERENCE_INTERNAL_ACCOUNT_LOOKUP_TIMEOUT_SECONDS,
+    REFERENCE_INTERNAL_ACCOUNT_LOOKUP_URL,
+    REFERENCE_INTERNAL_ACCOUNT_LOOKUP_USERNAME,
+    REFERENCE_INTERNAL_ACCOUNT_TEST_EMAILS,
     SESSION_ACTIVITY_TOUCH_SECONDS,
     SESSION_IDLE_TIMEOUT_SECONDS,
     SESSION_MAX_ACTIVE_PER_USER,
@@ -20,6 +31,38 @@ from config import (
 logger = logging.getLogger(__name__)
 PASSWORD_HASH_METHOD = "pbkdf2:sha256"
 SESSION_ID_BYTES = 32
+
+# ── Login lockout ──
+_failed_attempts: dict[str, list[float]] = {}
+_failed_lock = threading.Lock()
+_MAX_FAILED_ATTEMPTS = 5
+_LOCKOUT_WINDOW_SECONDS = 300  # 5 minutes
+
+
+def check_lockout(username: str) -> None:
+    """Raise ValueError if the account is temporarily locked."""
+    normalized = username.strip().lower()
+    with _failed_lock:
+        attempts = _failed_attempts.get(normalized, [])
+        cutoff = time.time() - _LOCKOUT_WINDOW_SECONDS
+        attempts = [t for t in attempts if t > cutoff]
+        _failed_attempts[normalized] = attempts
+        if len(attempts) >= _MAX_FAILED_ATTEMPTS:
+            raise ValueError(
+                "Terlalu banyak percobaan login. Coba lagi dalam beberapa menit."
+            )
+
+
+def record_failed_attempt(username: str) -> None:
+    normalized = username.strip().lower()
+    with _failed_lock:
+        _failed_attempts.setdefault(normalized, []).append(time.time())
+
+
+def clear_failed_attempts(username: str) -> None:
+    normalized = username.strip().lower()
+    with _failed_lock:
+        _failed_attempts.pop(normalized, None)
 
 
 class ActiveSessionCapacityError(RuntimeError):
@@ -307,6 +350,8 @@ def _init_auth_db():
             connection.execute("ALTER TABLE users ADD COLUMN approved_at TIMESTAMP")
         if "approved_by" not in existing_user_columns:
             connection.execute("ALTER TABLE users ADD COLUMN approved_by TEXT")
+        if "display_name" not in existing_user_columns:
+            connection.execute("ALTER TABLE users ADD COLUMN display_name TEXT")
         if should_backfill_existing_users:
             connection.execute(
                 """
@@ -344,6 +389,15 @@ def _init_auth_db():
         )
         connection.execute(
             """
+            CREATE TABLE IF NOT EXISTS registration_otps (
+                username TEXT PRIMARY KEY,
+                otp_code TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        connection.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_user_sessions_active_lookup
             ON user_sessions (username, session_id, expires_at, revoked_at)
             """
@@ -365,23 +419,29 @@ def _get_user_by_username(username):
 
     with _auth_connection() as connection:
         return connection.execute(
-            "SELECT id, username, password_hash, approved_at, approved_by FROM users WHERE username = ?",
+            """
+            SELECT id, username, password_hash, display_name, approved_at, approved_by
+            FROM users
+            WHERE username = ?
+            """,
             (clean_username,),
         ).fetchone()
 
 
-def _create_user(username, password, approved=False, approved_by=None):
+def _create_user(username, password, approved=False, approved_by=None, display_name=""):
     clean_username = username.strip()
+    clean_display_name = str(display_name or "").strip()
     approved_at = _utc_now() if approved else None
     with _auth_connection() as connection:
         connection.execute(
             """
-            INSERT INTO users (username, password_hash, approved_at, approved_by)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO users (username, password_hash, display_name, approved_at, approved_by)
+            VALUES (?, ?, ?, ?, ?)
             """,
             (
                 clean_username,
                 generate_password_hash(password, method=PASSWORD_HASH_METHOD),
+                clean_display_name,
                 approved_at,
                 str(approved_by or "signup_policy") if approved else None,
             ),
@@ -419,6 +479,20 @@ def _approve_user(username, approved_by="admin"):
     return _get_user_by_username(clean_username)
 
 
+def _delete_user(username):
+    clean_username = str(username or "").strip()
+    if not clean_username:
+        return None
+
+    with _auth_connection() as connection:
+        connection.execute(
+            "DELETE FROM users WHERE username = ?",
+            (clean_username,),
+        )
+        connection.commit()
+    return None
+
+
 def _user_count():
     with _auth_connection() as connection:
         row = connection.execute("SELECT COUNT(*) AS total FROM users").fetchone()
@@ -443,13 +517,15 @@ def _current_user():
 
     username = session.get("username")
     session_id = session.get("sid")
-    if isinstance(username, str) and username.strip() and isinstance(session_id, str):
-        active_username = _touch_session(username, session_id)
-        if active_username:
-            g._current_user_cached = active_username
-            return active_username
+    if username or session_id:
+        if isinstance(username, str) and username.strip() and isinstance(session_id, str):
+            active_username = _touch_session(username, session_id)
+            if active_username:
+                g._current_user_cached = active_username
+                return active_username
+        session.pop("username", None)
+        session.pop("sid", None)
 
-    session.clear()
     g._current_user_cached = None
     return None
 
@@ -457,6 +533,161 @@ def _current_user():
 def logout_current_session(reason="manual_logout"):
     _revoke_session(session.get("sid"), reason=reason)
     session.clear()
+
+
+def set_registration_otp(username, otp_code):
+    with _auth_connection() as connection:
+        connection.execute(
+            "INSERT OR REPLACE INTO registration_otps (username, otp_code) VALUES (?, ?)",
+            (username.strip().lower(), otp_code)
+        )
+        connection.commit()
+
+def set_registration_verification_token(username, token):
+    clean_username = str(username or "").strip().lower()
+    clean_token = str(token or "").strip()
+    if not clean_username or not clean_token:
+        return
+    with _auth_connection() as connection:
+        connection.execute(
+            "INSERT OR REPLACE INTO registration_otps (username, otp_code) VALUES (?, ?)",
+            (clean_username, clean_token),
+        )
+        connection.commit()
+
+def verify_registration_otp(username, otp_code):
+    with _auth_connection() as connection:
+        row = connection.execute(
+            "SELECT otp_code FROM registration_otps WHERE username = ?",
+            (username.strip().lower(),)
+        )
+        res = row.fetchone()
+        if res and res["otp_code"].strip() == otp_code.strip():
+            return True
+        return False
+
+def clear_registration_otp(username):
+    with _auth_connection() as connection:
+        connection.execute("DELETE FROM registration_otps WHERE username = ?", (username.strip().lower(),))
+        connection.commit()
+
+def clear_registration_verification_token(username):
+    clean_username = str(username or "").strip().lower()
+    if not clean_username:
+        return
+    with _auth_connection() as connection:
+        connection.execute("DELETE FROM registration_otps WHERE username = ?", (clean_username,))
+        connection.commit()
+
+def send_signup_verification_email(email, verification_token, initial_password, user_fullname=""):
+    clean_email = str(email or "").strip().lower()
+    clean_token = str(verification_token or "").strip()
+    clean_password = str(initial_password or "").strip()
+    clean_fullname = str(user_fullname or "").strip()
+    if not clean_email or not clean_token or not clean_password:
+        return False
+
+    if AUTH_SIGNUP_VERIFICATION_DELIVERY_MODE == "capture":
+        return {
+            "email": clean_email,
+            "user_email": clean_email,
+            "user_fullname": clean_fullname,
+            "verification_token": clean_token,
+            "initial_password": clean_password,
+        }
+
+    if AUTH_SIGNUP_VERIFICATION_DELIVERY_MODE == "webhook":
+        if not AUTH_SIGNUP_VERIFICATION_WEBHOOK_URL:
+            logger.warning("Signup verification webhook is not configured.")
+            return False
+        try:
+            import requests
+
+            response = requests.post(
+                AUTH_SIGNUP_VERIFICATION_WEBHOOK_URL,
+                json={
+                    "email": clean_email,
+                    "user_email": clean_email,
+                    "user_fullname": clean_fullname,
+                    "verification_token": clean_token,
+                    "initial_password": clean_password,
+                },
+                timeout=AUTH_SIGNUP_VERIFICATION_TIMEOUT_SECONDS,
+            )
+            return 200 <= response.status_code < 300
+        except Exception as exc:
+            logger.warning("Signup verification delivery failed closed for %s: %s", clean_email, exc)
+            return False
+
+    if AUTH_SIGNUP_VERIFICATION_DELIVERY_MODE == "log":
+        logger.info("Queued signup verification for %s", clean_email)
+        return True
+
+    return False
+
+
+def find_reference_internal_account(email):
+    email_clean = str(email or "").strip().lower()
+    if not email_clean:
+        return None
+
+    if REFERENCE_INTERNAL_ACCOUNT_LOOKUP_MODE == "test_double":
+        if email_clean in REFERENCE_INTERNAL_ACCOUNT_TEST_EMAILS:
+            return {"user_email": email_clean, "user_fullname": ""}
+        return None
+
+    if REFERENCE_INTERNAL_ACCOUNT_LOOKUP_MODE != "api":
+        return None
+
+    try:
+        import requests
+
+        auth = None
+        if REFERENCE_INTERNAL_ACCOUNT_LOOKUP_USERNAME or REFERENCE_INTERNAL_ACCOUNT_LOOKUP_PASSWORD:
+            auth = (
+                REFERENCE_INTERNAL_ACCOUNT_LOOKUP_USERNAME,
+                REFERENCE_INTERNAL_ACCOUNT_LOOKUP_PASSWORD,
+            )
+
+        response = requests.post(
+            REFERENCE_INTERNAL_ACCOUNT_LOOKUP_URL,
+            auth=auth,
+            data={"dataset": "ReferenceInternalAccount"},
+            headers={
+                "User-Agent": "Feedback Intelligence Auth",
+                "Accept": "*/*",
+            },
+            timeout=REFERENCE_INTERNAL_ACCOUNT_LOOKUP_TIMEOUT_SECONDS,
+        )
+        if response.status_code != 200:
+            return None
+
+        res_data = response.json()
+        records = []
+        if isinstance(res_data, dict):
+            data_block = res_data.get("data")
+            if isinstance(data_block, dict):
+                dataset_result = data_block.get("dataset_result")
+                if isinstance(dataset_result, list):
+                    records = dataset_result
+
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            record_email = str(record.get("user_email") or "").strip().lower()
+            if record_email == email_clean:
+                return {
+                    "user_email": record_email,
+                    "user_fullname": str(record.get("user_fullname") or "").strip(),
+                }
+    except Exception as exc:
+        logger.warning("ReferenceInternalAccount lookup failed closed for %s: %s", email_clean, exc)
+
+    return None
+
+
+def verify_email_in_reference_internal_account(email):
+    return find_reference_internal_account(email) is not None
 
 
 init_auth_db = _init_auth_db
@@ -467,7 +698,19 @@ user_count = _user_count
 verify_password = _verify_password
 is_user_approved = _is_user_approved
 approve_user = _approve_user
+delete_user = _delete_user
 start_authenticated_session = _start_authenticated_session
 revoke_session = _revoke_session
 session_capacity_snapshot = _session_capacity_snapshot
 session_stats_for_username = _session_stats_for_username
+check_lockout = check_lockout
+record_failed_attempt = record_failed_attempt
+clear_failed_attempts = clear_failed_attempts
+set_registration_otp = set_registration_otp
+verify_registration_otp = verify_registration_otp
+clear_registration_otp = clear_registration_otp
+find_reference_internal_account = find_reference_internal_account
+verify_email_in_reference_internal_account = verify_email_in_reference_internal_account
+set_registration_verification_token = set_registration_verification_token
+clear_registration_verification_token = clear_registration_verification_token
+send_signup_verification_email = send_signup_verification_email

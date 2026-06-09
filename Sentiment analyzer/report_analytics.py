@@ -11,9 +11,22 @@ from config import (
     SCORE_ENGINE_PROFILES,
     SENTIMENT_OPTIONS,
 )
+import config
 from data_contract import CANONICAL_INTERNAL_COLUMNS
 from report_narratives import ReportNarrativeBuilderMixin
 from timeframe_filters import filter_by_timeframe, readable_timeframe_label
+
+
+def _confidence_tier(n: int) -> str:
+    """Return confidence label based on sample size."""
+    if n >= 100:
+        return "tinggi"
+    if n >= 30:
+        return "sedang"
+    if n >= 10:
+        return "rendah"
+    return "sangat rendah"
+
 
 class FeedbackAnalyticsEngine(ReportNarrativeBuilderMixin):
     PLACEHOLDER_DIMENSION_PATTERNS = (
@@ -365,6 +378,167 @@ class FeedbackAnalyticsEngine(ReportNarrativeBuilderMixin):
             pairs.append(f"{label},{value}")
         return "; ".join(pairs)
 
+    @staticmethod
+    def _format_score(value):
+        return round(float(value or 0.0), 1)
+
+    @staticmethod
+    def _date_series(dataframe):
+        if dataframe is None or dataframe.empty or "Tanggal Feedback" not in dataframe.columns:
+            return pd.Series(dtype="datetime64[ns]")
+        return pd.to_datetime(dataframe["Tanggal Feedback"], errors="coerce", dayfirst=False)
+
+    def _weekly_forecast_source(self, timeframe_df, sentiment, segment):
+        dates = self._date_series(timeframe_df)
+        if dates.notna().sum() >= 8 and dates.dt.normalize().nunique() >= 2:
+            return timeframe_df.copy(), "filtered"
+
+        source = self.full_df.copy()
+        if "Reportable Analysis Row" in source.columns:
+            source = source[source["Reportable Analysis Row"]].copy()
+        if sentiment != "all":
+            source = source[source["Sentiment Label"] == sentiment].copy()
+        if segment != "all":
+            source = source[source["Tipe Stakeholder"].astype(str).str.strip() == segment].copy()
+        return source, "full_history"
+
+    def _score_timeseries_for_weeks(self, source_df, score_engine):
+        if source_df.empty:
+            return []
+
+        dated = source_df.copy()
+        dated["_feedback_date"] = self._date_series(dated)
+        dated = dated[dated["_feedback_date"].notna()].copy()
+        if dated.empty:
+            return []
+
+        anchor_date = dated["_feedback_date"].max().normalize()
+        rows = []
+        for index in range(4, 0, -1):
+            end_date = anchor_date - timedelta(days=(index - 1) * 7)
+            start_date = end_date - timedelta(days=6)
+            bucket = dated[
+                (dated["_feedback_date"] >= start_date)
+                & (dated["_feedback_date"] <= end_date + timedelta(days=1))
+            ].drop(columns=["_feedback_date"])
+            if bucket.empty:
+                continue
+            metrics = self._score_engine_metrics(bucket, score_engine)
+            rows.append(
+                {
+                    "label": f"H-{index}",
+                    "start": start_date.date().isoformat(),
+                    "end": end_date.date().isoformat(),
+                    "score": self._format_score(metrics.get("current_score")),
+                    "volume": len(bucket),
+                }
+            )
+        return rows
+
+    @staticmethod
+    def _weekly_pattern_label(delta):
+        if delta >= 1.0:
+            return "menguat"
+        if delta <= -1.0:
+            return "melemah"
+        return "stabil"
+
+    def _build_30d_forecast(self, timeframe_df, score_engine, score_metrics, sentiment, segment):
+        source_df, source_scope = self._weekly_forecast_source(timeframe_df, sentiment, segment)
+        historical_rows = self._score_timeseries_for_weeks(source_df, score_engine)
+        current_score = self._format_score(score_metrics.get("current_score"))
+        projected_score = self._format_score(score_metrics.get("projected_score"))
+        model_weekly_delta = (projected_score - current_score) / 4.0
+
+        historical_delta = None
+        if len(historical_rows) >= 2:
+            step_deltas = [
+                historical_rows[index]["score"] - historical_rows[index - 1]["score"]
+                for index in range(1, len(historical_rows))
+            ]
+            historical_delta = sum(step_deltas) / len(step_deltas)
+            weekly_delta = (historical_delta * 0.6) + (model_weekly_delta * 0.4)
+            method = "rolling_7_day_history"
+            confidence = _confidence_tier(sum(row["volume"] for row in historical_rows))
+        else:
+            weekly_delta = model_weekly_delta
+            method = "deterministic_fallback"
+            confidence = "rendah" if len(timeframe_df) >= 10 else "sangat rendah"
+
+        if (projected_score - current_score) * weekly_delta < 0:
+            weekly_delta = model_weekly_delta
+
+        weekly_rows = []
+        running_score = current_score
+        for week_number in range(1, 5):
+            target_score = self._clamp(running_score + weekly_delta)
+            if week_number == 4:
+                target_score = projected_score
+            delta = self._format_score(target_score - running_score)
+            weekly_rows.append(
+                {
+                    "week": f"Minggu {week_number}",
+                    "score": self._format_score(target_score),
+                    "delta": delta,
+                    "pattern": self._weekly_pattern_label(delta),
+                    "reading": (
+                        "momentum pengalaman menguat"
+                        if delta > 0
+                        else "perlu mitigasi agar pengalaman tidak melemah"
+                        if delta < 0
+                        else "pola pengalaman relatif stabil"
+                    ),
+                }
+            )
+            running_score = target_score
+
+        component_rows = []
+        for component in score_metrics.get("component_breakdown", []):
+            current = self._format_score(component.get("current_score"))
+            projected = self._format_score(component.get("projected_score"))
+            component_rows.append(
+                {
+                    "component_id": component.get("component_id"),
+                    "label": component.get("label"),
+                    "weight_pct": self._format_score(float(component.get("weight", 0.0)) * 100),
+                    "current_score": current,
+                    "projected_score": projected,
+                    "delta": self._format_score(projected - current),
+                }
+            )
+
+        if score_engine == "experience_index":
+            component_rows.append(
+                {
+                    "component_id": "experience_index",
+                    "label": score_metrics.get("label", "Experience Index"),
+                    "weight_pct": 100.0,
+                    "current_score": current_score,
+                    "projected_score": projected_score,
+                    "delta": self._format_score(projected_score - current_score),
+                }
+            )
+
+        return {
+            "method": method,
+            "confidence": confidence,
+            "source_scope": source_scope,
+            "historical_rows": historical_rows,
+            "weekly_rows": weekly_rows,
+            "component_rows": component_rows,
+            "score_chart": "; ".join(
+                f"{row['label']},{row['current_score']}" for row in component_rows
+            ),
+            "weekly_chart": "; ".join(
+                f"{row['week']},{row['score']}" for row in weekly_rows
+            ),
+            "source_note": (
+                "Pola mingguan memakai histori rolling 7 hari pada data bertanggal."
+                if method == "rolling_7_day_history"
+                else "Data bertanggal belum cukup rapat; pola mingguan memakai fallback deterministik dari proyeksi early-warning."
+            ),
+        }
+
     def _filter_timeframe(self, timeframe):
         return self._filter_view(timeframe)
 
@@ -455,6 +629,8 @@ class FeedbackAnalyticsEngine(ReportNarrativeBuilderMixin):
                 "delta": 0.0,
                 "direction": "stabil",
                 "theme_rows": [],
+                "confidence": "sangat rendah",
+                "sample_caveat": "Berdasarkan 0 respons (sampel kecil — interpretasi harus hati-hati)",
             }
 
         avg_rating = dataframe["Rating Numeric"].mean()
@@ -488,10 +664,10 @@ class FeedbackAnalyticsEngine(ReportNarrativeBuilderMixin):
         if total_weight > 0:
             weighted_balance /= total_weight; weighted_positive_ratio /= total_weight; weighted_negative_ratio /= total_weight
 
-        current_score = self._clamp((base_score * 0.72) + ((50 + (weighted_balance * 50)) * 0.28))
+        current_score = self._clamp((base_score * config.SCORE_BASE_WEIGHT) + ((50 + (weighted_balance * 50)) * config.SCORE_BALANCE_WEIGHT))
         top_weighted_risk = max(((row["negative_hits"] / max(row["total_hits"], 1)) * row["weight"] for row in theme_rows), default=0.0)
-        delta = round((((positive_share - negative_share) / 100) * 6) - (weighted_negative_ratio * 11) + (weighted_positive_ratio * 4) - (top_weighted_risk * 3), 1)
-        if abs(delta) < 0.6: delta = 0.0
+        delta = round((((positive_share - negative_share) / 100) * config.SCORE_POS_FACTOR) - (weighted_negative_ratio * config.SCORE_NEG_FACTOR) + (weighted_positive_ratio * config.SCORE_RISK_PENALTY_SCALE) - (top_weighted_risk * config.SCORE_RISK_PENALTY_MAX), 1)
+        if abs(delta) < config.SCORE_DIRECTION_THRESHOLD: delta = 0.0
         projected_score = self._clamp(current_score + delta)
         direction = "naik" if delta > 0 else "turun" if delta < 0 else "stabil"
 
@@ -503,6 +679,10 @@ class FeedbackAnalyticsEngine(ReportNarrativeBuilderMixin):
             "delta": round(float(delta), 1),
             "direction": direction,
             "theme_rows": theme_rows,
+            "confidence": _confidence_tier(total_rows),
+            "sample_caveat": f"Berdasarkan {total_rows} respons" + (
+                " (sampel kecil — interpretasi harus hati-hati)" if total_rows < 30 else ""
+            ),
         }
 
     def _score_engine_metrics_experience_index(self, dataframe):
@@ -548,7 +728,7 @@ class FeedbackAnalyticsEngine(ReportNarrativeBuilderMixin):
         ) / total_component_weight
 
         delta = round(projected_score - current_score, 1)
-        if abs(delta) < 0.6:
+        if abs(delta) < config.SCORE_DIRECTION_THRESHOLD:
             delta = 0.0
         projected_score = self._clamp(current_score + delta)
         direction = "naik" if delta > 0 else "turun" if delta < 0 else "stabil"
@@ -682,6 +862,13 @@ class FeedbackAnalyticsEngine(ReportNarrativeBuilderMixin):
         score_profile = self._score_engine_profile(normalized_score_engine)
         journey_rows = self._customer_journey_rows(timeframe_df)
         score_metrics = self._score_engine_metrics(timeframe_df, normalized_score_engine)
+        forecast_30d = self._build_30d_forecast(
+            timeframe_df,
+            normalized_score_engine,
+            score_metrics,
+            normalized_sentiment,
+            normalized_segment,
+        )
         dominant_journey = journey_rows[0] if journey_rows else None
         dominant_theme = score_metrics["theme_rows"][0] if score_metrics["theme_rows"] else None
         location_counts = self._series_counts_for_column(timeframe_df, "Lokasi", limit=5)
@@ -696,6 +883,7 @@ class FeedbackAnalyticsEngine(ReportNarrativeBuilderMixin):
             "location_counts": location_counts, "instructor_type_counts": instructor_type_counts,
             "scope_text": self._analysis_scope_text(timeframe, normalized_sentiment, normalized_segment, normalized_score_engine),
             "horizon_text": self._forecast_horizon(timeframe),
+            "forecast_30d": forecast_30d,
         }
 
     def _theme_hits(self, dataframe):
@@ -738,7 +926,14 @@ class FeedbackAnalyticsEngine(ReportNarrativeBuilderMixin):
             volume = len(group)
             safe_avg_rating = round(rating_avg, 2) if pd.notna(rating_avg) else 0.0
             risk_score = round((negative_ratio * 70) + ((5 - safe_avg_rating) * 6) + min(volume, 10), 1)
-            rows.append({"label": clean_label, "volume": volume, "average_rating": safe_avg_rating, "negative_ratio": round(negative_ratio * 100, 1), "risk_score": risk_score})
+            rows.append({
+                "label": clean_label,
+                "volume": volume,
+                "average_rating": safe_avg_rating,
+                "negative_ratio": round(negative_ratio * 100, 1),
+                "risk_score": risk_score,
+                "confidence": _confidence_tier(volume),
+            })
         rows.sort(key=lambda item: item["risk_score"], reverse=True)
         return rows[:limit]
 
