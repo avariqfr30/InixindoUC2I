@@ -3,6 +3,7 @@ import pandas as pd
 
 from config import ADOPTION_READINESS_PILLARS, CX_SENTIMENT_STRUCTURE, DEFAULT_SCORE_ENGINE
 from document_builder import DocumentBuilder
+from editorial_intelligence import compact_feedback_table_rows
 from management_interpretation import FeedbackManagementInterpreter
 from report_trust_sections import build_specialist_review_markdown
 
@@ -18,7 +19,8 @@ class BaseNarrativeMixin:
             return ""
         header_line = "| " + " | ".join(cls._escape_table_cell(item) for item in headers) + " |"
         separator_line = "| " + " | ".join("---" for _ in headers) + " |"
-        row_lines = ["| " + " | ".join(cls._escape_table_cell(cell) for cell in row) + " |" for row in rows]
+        safe_rows = compact_feedback_table_rows(rows)
+        row_lines = ["| " + " | ".join(cls._escape_table_cell(cell) for cell in row) + " |" for row in safe_rows]
         return "\n".join([header_line, separator_line, *row_lines])
 
     def _distribution_rows(self, series_counts, total_rows, limit=5):

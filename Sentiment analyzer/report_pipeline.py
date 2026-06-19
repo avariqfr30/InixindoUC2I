@@ -10,7 +10,10 @@ from osint_research import Researcher
 from report_agents import FeedbackProposalTeam
 from report_analytics import FeedbackAnalyticsEngine
 from report_evidence import ContextIntelligenceDesk
+from report_planning import FeedbackSectionPlanner
 from report_quality import ReportQualityValidator
+from editorial_intelligence import repair_feedback_document_spine
+from feedback_deliberation import FeedbackDeliberationBuilder
 from timeframe_filters import readable_timeframe_label
 
 logger = logging.getLogger(__name__)
@@ -60,7 +63,21 @@ class ReportAnalysisStage:
 
 
 class ReportNarrativeStage:
+    def __init__(self, planner=None):
+        self.planner = planner or FeedbackSectionPlanner()
+
     def run(self, analytics, context, macro_trends):
+        osint_dossier = Researcher.build_osint_dossier(
+            macro_trends,
+            {
+                "timeframe_label": context.timeframe_label,
+                "timeframe": context.timeframe,
+                "sentiment": context.sentiment,
+                "segment": context.segment,
+                "score_engine": context.score_engine,
+                "score_engine_label": context.score_profile["label"],
+            },
+        )
         section_context = ContextIntelligenceDesk.build(
             dataframe=getattr(analytics, "full_df", None),
             notes=context.notes,
@@ -79,6 +96,38 @@ class ReportNarrativeStage:
             score_engine=context.score_engine,
             section_context=section_context,
         )
+        deliberation_builder = FeedbackDeliberationBuilder()
+        document_contract = deliberation_builder.build(
+            report_sections or [],
+            {
+                **section_context,
+                "timeframe_label": context.timeframe_label,
+                "timeframe": context.timeframe,
+                "sentiment": context.sentiment,
+                "segment": context.segment,
+            },
+            data_version=str(section_context.get("data_version") or ""),
+        )
+        planning_block = self.planner.build_prompt_block(
+            sections=["Ringkasan Eksekutif", *[section.get("title", "") for section in report_sections or []]],
+            context={
+                "timeframe_label": context.timeframe_label,
+                "timeframe": context.timeframe,
+                "sentiment": context.sentiment,
+                "segment": context.segment,
+                "osint_dossier": osint_dossier,
+                "row_count": section_context.get("row_count"),
+                "text_response_count": section_context.get("text_response_count"),
+                "external_context_ready": section_context.get("external_context_ready"),
+                "insight_cards": section_context.get("insight_cards"),
+                "document_contract": document_contract,
+            },
+        )
+        for section in report_sections or []:
+            section["_writing_plan"] = "\n".join(
+                [planning_block, deliberation_builder.for_section(document_contract, section.get("id") or "")]
+            )
+            section["_document_contract"] = document_contract
         executive_snapshot = analytics.build_executive_snapshot(
             context.timeframe,
             section_context["focus_note"],
@@ -89,12 +138,44 @@ class ReportNarrativeStage:
             report_sections=report_sections,
             section_context=section_context,
         )
-        return executive_snapshot, report_sections
+        return executive_snapshot, report_sections, planning_block
+
+
+class ReportWritingQualityStage:
+    def __init__(self, editor=None):
+        if editor is None:
+            from writing_quality import ProtectedIndonesianEditor
+            editor = ProtectedIndonesianEditor()
+        self.editor = editor
+
+    def run(self, executive_snapshot, report_sections, planning_block=""):
+        polished_snapshot = self.editor.polish(executive_snapshot, guidance=planning_block)
+        polished_sections = []
+        for section in report_sections or []:
+            item = dict(section)
+            item["content"] = self.editor.polish(
+                item.get("content", ""),
+                guidance=item.get("_writing_plan") or planning_block,
+            )
+            item.pop("_writing_plan", None)
+            polished_sections.append(item)
+        polished_snapshot, polished_sections = repair_feedback_document_spine(polished_snapshot, polished_sections)
+        return polished_snapshot, polished_sections
 
 
 class ReportPreflightQualityStage:
     def run(self, executive_snapshot, report_sections):
-        result = ReportQualityValidator.evaluate_narrative(executive_snapshot, report_sections)
+        contract = next(
+            (section.get("_document_contract") for section in report_sections or [] if section.get("_document_contract")),
+            None,
+        )
+        appendix = FeedbackDeliberationBuilder.build_appendix_markdown(contract) if contract else ""
+        result = ReportQualityValidator.evaluate_narrative(
+            executive_snapshot,
+            report_sections,
+            deliberation_contract=contract,
+            appendix_content=appendix,
+        )
         if not result["passes"]:
             raise ValueError("Report narrative preflight failed: " + "; ".join(result["findings"]))
         return result
@@ -111,6 +192,14 @@ class DocumentRenderStage:
             document.add_page_break()
             document.add_heading(section["title"], level=1)
             DocumentBuilder.process_content(document, section["content"], DEFAULT_COLOR)
+        contract = next(
+            (section.get("_document_contract") for section in report_sections or [] if section.get("_document_contract")),
+            None,
+        )
+        if contract:
+            document.add_page_break()
+            appendix = FeedbackDeliberationBuilder.build_appendix_markdown(contract)
+            DocumentBuilder.process_content(document, appendix, DEFAULT_COLOR)
         return document
 
 
@@ -149,6 +238,16 @@ class ReportQualityStage:
         quality["trend_review"] = briefing.get("trend_review", {})
         quality["prediction_review"] = briefing.get("prediction_review", {})
         quality["agent_desk"] = briefing.get("agent_desk", {})
+        contract = next(
+            (section.get("_document_contract") for section in report_sections or [] if section.get("_document_contract")),
+            {},
+        )
+        quality["document_deliberation"] = {
+            "cache_key": contract.get("cache_key"),
+            "accepted_claim_count": len(contract.get("claim_ledger") or []),
+            "data_gap_count": len(contract.get("data_gap_register") or []),
+            "appendix_sections": list((contract.get("appendix_manifest") or {}).keys()),
+        }
         if not quality["verified_complete"]:
             logger.warning(
                 "Generated report is below completeness target: %s",
@@ -167,6 +266,7 @@ class ReportPipeline:
         document_stage=None,
         quality_stage=None,
         preflight_stage=None,
+        writing_stage=None,
     ):
         self.kb = kb_instance
         self.research_stage = research_stage or ReportResearchStage()
@@ -174,6 +274,7 @@ class ReportPipeline:
         self.narrative_stage = narrative_stage or ReportNarrativeStage()
         self.document_stage = document_stage or DocumentRenderStage()
         self.preflight_stage = preflight_stage or ReportPreflightQualityStage()
+        self.writing_stage = writing_stage or ReportWritingQualityStage()
         self.quality_stage = quality_stage or ReportQualityStage()
 
     def run(
@@ -187,11 +288,12 @@ class ReportPipeline:
         context = ReportRequestContext(timeframe, notes, sentiment, segment, score_engine)
         macro_trends = self.research_stage.run(context)
         analytics = self.analysis_stage.run(self.kb.df)
-        executive_snapshot, report_sections = self.narrative_stage.run(
+        executive_snapshot, report_sections, planning_block = self.narrative_stage.run(
             analytics,
             context,
             macro_trends,
         )
+        executive_snapshot, report_sections = self.writing_stage.run(executive_snapshot, report_sections, planning_block)
         preflight_quality = self.preflight_stage.run(executive_snapshot, report_sections)
         document = self.document_stage.run(context, executive_snapshot, report_sections)
         quality = self.quality_stage.run(

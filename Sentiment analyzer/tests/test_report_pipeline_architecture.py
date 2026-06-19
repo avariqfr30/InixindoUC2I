@@ -97,7 +97,7 @@ class ReportPipelineArchitectureTests(unittest.TestCase):
                 assert not report_sections[0]["content"].startswith("### Bukti yang Dipakai")
                 assert "Keluhan onboarding" in report_sections[0]["content"]
 
-        snapshot, sections = ReportNarrativeStage().run(
+        snapshot, sections, planning_block = ReportNarrativeStage().run(
             FakeAnalytics(),
             ReportRequestContext("Seluruh Periode"),
             "Tren eksternal ringkas.",
@@ -105,6 +105,7 @@ class ReportPipelineArchitectureTests(unittest.TestCase):
 
         self.assertIn("Keluhan onboarding", snapshot)
         self.assertEqual(sections[0]["title"], "Analisis Pengalaman Pelanggan")
+        self.assertIn("SECTION_PLANNER", planning_block)
 
     def test_narrative_stage_passes_synthesized_context_to_sections_and_snapshot(self):
         from report_pipeline import ReportNarrativeStage, ReportRequestContext

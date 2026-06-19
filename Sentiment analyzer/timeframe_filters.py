@@ -10,6 +10,7 @@ ROLLING_TIMEFRAME_OPTIONS = (
     ("12 Bulan Terakhir / 1 Tahun", 12),
 )
 UNKNOWN_APIDOG_TIMEFRAME = "Semua Data APIDog (tanggal tidak tersedia)"
+FULL_CACHED_TIMEFRAME = "Semua Data Tersedia"
 CUSTOM_TIMEFRAME_PREFIX = "custom_range:"
 
 
@@ -38,8 +39,8 @@ def parse_custom_timeframe(timeframe):
     if ".." not in value:
         return None
     start_raw, end_raw = value.split("..", maxsplit=1)
-    start = pd.to_datetime(start_raw, errors="coerce")
-    end = pd.to_datetime(end_raw, errors="coerce")
+    start = pd.to_datetime(start_raw, format="%Y-%m-%d", errors="coerce")
+    end = pd.to_datetime(end_raw, format="%Y-%m-%d", errors="coerce")
     if pd.isna(start) or pd.isna(end):
         return None
     if end < start:
@@ -59,8 +60,8 @@ def _feedback_dates(dataframe):
     if dataframe is None or dataframe.empty or "Tanggal Feedback" not in dataframe.columns:
         return pd.Series(dtype="datetime64[ns]")
     raw_dates = dataframe["Tanggal Feedback"].fillna("").astype(str).str.strip()
-    parseable = raw_dates.where(raw_dates.str.match(r"^\d{4}-\d{2}-\d{2}"))
-    return pd.to_datetime(parseable, errors="coerce")
+    parseable = raw_dates.str.extract(r"^(\d{4}-\d{2}-\d{2})", expand=False)
+    return pd.to_datetime(parseable, format="%Y-%m-%d", errors="coerce")
 
 
 def has_feedback_dates(dataframe):
@@ -70,6 +71,10 @@ def has_feedback_dates(dataframe):
 def filter_by_timeframe(dataframe, timeframe):
     if dataframe is None or dataframe.empty:
         return dataframe.copy() if dataframe is not None else pd.DataFrame()
+
+    if str(timeframe or "").strip() == FULL_CACHED_TIMEFRAME:
+        dates = _feedback_dates(dataframe)
+        return dataframe[dates.notna()].copy() if dates.notna().any() else dataframe.copy()
 
     custom_range = parse_custom_timeframe(timeframe)
     if custom_range is not None:
@@ -110,7 +115,7 @@ def build_timeframe_options(dataframe):
             seen.add(value)
             exact_values.append(value)
 
-    rolling = [label for label, _ in ROLLING_TIMEFRAME_OPTIONS] if has_dates else []
+    rolling = [FULL_CACHED_TIMEFRAME, *[label for label, _ in ROLLING_TIMEFRAME_OPTIONS]] if has_dates else []
     return rolling if has_dates else sorted(exact_values)
 
 

@@ -350,6 +350,7 @@ class InternalApiSettingsTests(unittest.TestCase):
                     "url": "https://internal.example/api/Resource/dataset",
                     "auth_mode": "none",
                     "body_mode": "form",
+                    "request_data": '{"dataset_cache": "enabled"}',
                 }
             )
         )
@@ -366,7 +367,7 @@ class InternalApiSettingsTests(unittest.TestCase):
         self.assertNotIn("reference_class_report", set(dataframe["Sumber Feedback"]))
 
         reference_specs = [spec for spec in provider.client.seen_specs if spec.name == "reference_class_report"]
-        self.assertEqual(reference_specs[0].query_params["dataset_cache"], "disabled")
+        self.assertEqual(reference_specs[0].query_params["dataset_cache"], "enabled")
 
     def test_reference_class_report_detection_allows_response_answer_column_when_endpoint_is_reference(self):
         reference_df = __import__("pandas").DataFrame(

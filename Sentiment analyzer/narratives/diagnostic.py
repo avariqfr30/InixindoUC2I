@@ -24,7 +24,11 @@ class DiagnosticNarrativeMixin(BaseNarrativeMixin):
             for theme in negative_themes:
                 impacted_services = self._series_counts(theme["matched_df"]["Layanan"], limit=2)
                 impacted_segments = self._series_counts(theme["matched_df"]["Tipe Stakeholder"], limit=2)
-                negative_lines.append(f"- {theme['label']}: {theme['negative_hits']} sinyal negatif. Layanan terdampak: {', '.join(impacted_services.index.tolist()) or 'belum terpetakan'}. Segmen terdampak: {', '.join(impacted_segments.index.tolist()) or 'belum terpetakan'}.")
+                services_text = ", ".join(impacted_services.index.tolist()) or "layanan belum terpetakan"
+                segments_text = ", ".join(impacted_segments.index.tolist()) or "segmen belum terpetakan"
+                negative_lines.append(
+                    f"- {theme['label']}: {theme['negative_hits']} sinyal negatif, terutama muncul pada {services_text}; pembacaan segmennya paling dekat dengan {segments_text}."
+                )
 
         positive_lines = []
         for theme in positive_themes:

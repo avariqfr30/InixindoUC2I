@@ -1,7 +1,6 @@
 import logging
 import os
 import re
-from dataclasses import replace
 
 import pandas as pd
 
@@ -15,6 +14,9 @@ logger = logging.getLogger(__name__)
 
 class InternalDataProvider:
     source_name = "internal"
+
+    def __init__(self):
+        self.last_ingestion_metadata = {"connector": "", "datasets": []}
 
     @staticmethod
     def _normalize_token(value):
@@ -126,16 +128,32 @@ class InternalDataProvider:
 class DemoCsvProvider(InternalDataProvider):
     source_name = "demo_csv"
 
+    def __init__(self):
+        super().__init__()
+
     def load_feedback_data(self):
         if not os.path.exists(CSV_PATH):
             raise FileNotFoundError(f"CSV file not found: {CSV_PATH}")
         raw_df = pd.read_csv(CSV_PATH)
+        self.last_ingestion_metadata = {
+            "connector": "demo_csv",
+            "datasets": [
+                {
+                    "endpoint_name": "demo_csv",
+                    "dataset": "db.csv",
+                    "dataset_cache": "local_file",
+                    "role": "feedback_source",
+                    "row_count": int(len(raw_df)),
+                }
+            ],
+        }
         return self.normalize_dataframe(raw_df)
 
 class InternalApiProvider(InternalDataProvider):
     source_name = "company_api"
 
     def __init__(self):
+        super().__init__()
         self.client = InternalApiClient()
         self.dataset_name = "feedback"
         self.connector = load_internal_connector()
@@ -160,13 +178,7 @@ class InternalApiProvider(InternalDataProvider):
 
     @classmethod
     def _endpoint_spec_for_fetch(cls, endpoint):
-        endpoint_spec = endpoint.to_endpoint_spec()
-        dataset_code = cls._endpoint_dataset_code(endpoint)
-        if dataset_code.lower() != "referenceclassreport":
-            return endpoint_spec
-        query_params = dict(endpoint_spec.query_params or {})
-        query_params["dataset_cache"] = "disabled"
-        return replace(endpoint_spec, query_params=query_params)
+        return endpoint.to_endpoint_spec()
 
     def _load_via_connector(self):
         if not self.connector or not self.connector.enabled:
@@ -175,25 +187,42 @@ class InternalApiProvider(InternalDataProvider):
         self._apply_connector_auth_mode()
         endpoint_payloads = []
         reference_lookup = {}
+        dataset_metadata = []
         for endpoint in self.connector.active_endpoints():
             endpoint_spec = self._endpoint_spec_for_fetch(endpoint)
             interpreted = self.client.interpret_payload(endpoint_spec)
             raw_df = pd.DataFrame(interpreted["records"])
+            dataset_code = self._endpoint_dataset_code(endpoint)
+            dataset_event = {
+                "endpoint_name": endpoint.endpoint_name,
+                "dataset": dataset_code,
+                "dataset_cache": str(
+                    (endpoint_spec.query_params or {}).get("dataset_cache") or ""
+                ),
+                "raw_record_count": int(len(raw_df)),
+            }
             if raw_df.empty:
+                dataset_event["role"] = "empty"
+                dataset_event["row_count"] = 0
+                dataset_metadata.append(dataset_event)
                 logger.warning(
                     "Internal connector endpoint '%s' returned no records.",
                     endpoint.endpoint_name,
                 )
                 continue
 
-            dataset_code = self._endpoint_dataset_code(endpoint)
             if ClassReportAdapter.looks_like_reference_class_report(
                 raw_df,
                 endpoint_name=endpoint.endpoint_name,
                 dataset_code=dataset_code,
             ):
                 reference_lookup.update(ClassReportAdapter.question_lookup(raw_df))
+                dataset_event["role"] = "reference_lookup"
+                dataset_event["row_count"] = 0
+                dataset_metadata.append(dataset_event)
                 continue
+            dataset_event["role"] = "feedback_source"
+            dataset_metadata.append(dataset_event)
             endpoint_payloads.append((endpoint, raw_df))
 
         normalized_frames = []
@@ -211,6 +240,10 @@ class InternalApiProvider(InternalDataProvider):
                 empty_source = normalized_df["Sumber Feedback"].astype(str).str.strip() == ""
                 normalized_df.loc[empty_source, "Sumber Feedback"] = endpoint.endpoint_name
             normalized_frames.append(normalized_df)
+            for dataset_event in dataset_metadata:
+                if dataset_event["endpoint_name"] == endpoint.endpoint_name:
+                    dataset_event["row_count"] = int(len(normalized_df))
+                    break
 
         if not normalized_frames:
             raise ValueError(
@@ -220,6 +253,10 @@ class InternalApiProvider(InternalDataProvider):
         combined_df = pd.concat(normalized_frames, ignore_index=True)
         if "Record ID" in combined_df.columns:
             combined_df = combined_df.drop_duplicates(subset=["Record ID"], keep="last")
+        self.last_ingestion_metadata = {
+            "connector": self.connector.name,
+            "datasets": dataset_metadata,
+        }
         return combined_df.reset_index(drop=True)
 
     def load_dataset(self, dataset_name, extra_params=None):
@@ -230,7 +267,21 @@ class InternalApiProvider(InternalDataProvider):
             raise ValueError(
                 f"Internal API returned no records for endpoint '{dataset_name}'."
             )
-        return self.normalize_dataframe(raw_df)
+        normalized_df = self.normalize_dataframe(raw_df)
+        self.last_ingestion_metadata = {
+            "connector": "legacy_internal_api",
+            "datasets": [
+                {
+                    "endpoint_name": dataset_name,
+                    "dataset": dataset_name,
+                    "dataset_cache": "",
+                    "role": "feedback_source",
+                    "raw_record_count": int(len(raw_df)),
+                    "row_count": int(len(normalized_df)),
+                }
+            ],
+        }
+        return normalized_df
 
     def load_feedback_data(self):
         self._reload_connector()

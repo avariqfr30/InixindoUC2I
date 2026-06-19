@@ -5,6 +5,15 @@
   "expected": {
     "required_section_prefix": "### Bukti yang Dipakai",
     "forbidden_reader_terms": ["APIDog", "Internal API", "endpoint", "source=", "Evidence Ledger"],
-    "required_summary_sections": ["### Inti Keputusan", "### Sintesis Lintas Bab", "### Rekomendasi"]
+    "required_summary_sections": ["### Inti Keputusan", "### Sintesis Lintas Bab", "### Rekomendasi"],
+    "max_repeated_nontrivial_cell_count": 2,
+    "max_table_cell_words": 18,
+    "human_rubric_minimums": {
+      "naturalness": 4,
+      "clarity": 4,
+      "usefulness": 4,
+      "factual_confidence": 4,
+      "feedback_voice": 4
+    }
   }
 }

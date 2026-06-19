@@ -183,8 +183,6 @@ def _simple_endpoints_from_payload(data):
     for endpoint_name, dataset_code in _dataset_codes_from_payload(data):
         dataset_request_data = dict(request_data)
         dataset_request_data.setdefault("dataset", dataset_code)
-        if str(dataset_code).strip().lower() == "referenceclassreport":
-            dataset_request_data["dataset_cache"] = "disabled"
         endpoints.append(
             {
                 "endpoint_name": endpoint_name,

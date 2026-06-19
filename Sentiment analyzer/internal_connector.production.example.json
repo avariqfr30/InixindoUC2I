@@ -59,7 +59,7 @@
       "body_mode": "form",
       "request_data": {
         "dataset": "ReferenceClassReport",
-        "dataset_cache": "disabled"
+        "dataset_cache": "enabled"
       },
       "headers": {},
       "record_path": "data.dataset_result",

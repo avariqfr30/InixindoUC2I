@@ -15,7 +15,22 @@ class PredictiveNarrativeMixin(BaseNarrativeMixin):
         journey_rows = context["journey_rows"]
         score_metrics = context["score_metrics"]
 
-        risk_lines = [f"- {item['label']} diperkirakan tetap menjadi area {self._risk_severity(item['risk_score'])} karena proporsi sinyal negatif {item['negative_ratio']}% dengan rata-rata rating {item['average_rating']}. Jika tidak ada intervensi, skor pengalaman untuk layanan ini cenderung berada di bawah rata-rata periode berjalan." for item in service_risks] or ["- Tidak ada risiko layanan yang cukup kuat untuk diproyeksikan pada periode ini."]
+        risk_templates = [
+            "{label} masih perlu dibaca sebagai area {severity}: sinyal negatifnya {negative}% dengan rata-rata rating {rating}. Tanpa penajaman tindak lanjut, pengalaman pada layanan tersebut berpotensi tertahan di bawah rata-rata periode berjalan.",
+            "Untuk {label}, kombinasi rating {rating} dan sinyal negatif {negative}% menunjukkan risiko {severity}. Perbaikan perlu diarahkan sebelum pola keluhan menjadi ekspektasi baru peserta.",
+            "{label} menunjukkan tekanan pengalaman yang {severity}; angka negatif {negative}% memberi alasan untuk memeriksa ulang materi, delivery, dan tindak lanjut kelas.",
+            "Area {label} belum cukup stabil karena rating rata-rata {rating} masih bertemu dengan sinyal negatif {negative}%. Prioritasnya adalah mengurangi sumber gesekan paling berulang.",
+            "Pada {label}, level risiko {severity} lebih tepat dibaca sebagai peringatan dini. Manajemen perlu memastikan tindakan korektif tidak menunggu siklus evaluasi berikutnya.",
+        ]
+        risk_lines = [
+            "- " + risk_templates[index % len(risk_templates)].format(
+                label=item["label"],
+                severity=self._risk_severity(item["risk_score"]),
+                negative=item["negative_ratio"],
+                rating=item["average_rating"],
+            )
+            for index, item in enumerate(service_risks)
+        ] or ["- Tidak ada risiko layanan yang cukup kuat untuk diproyeksikan pada periode ini."]
         segment_lines = [f"- Segmen {item['label']} perlu dipantau karena volume {item['volume']} feedback dengan proporsi negatif {item['negative_ratio']}%. Tanpa penanganan, persepsi mereka berpotensi lebih rendah pada periode evaluasi berikutnya." for item in stakeholder_risks] or ["- Tidak ada segmen pelanggan yang cukup dominan untuk diproyeksikan."]
         operational_lines = [f"- Lokasi {item['label']} perlu dipantau karena proporsi sinyal negatifnya {item['negative_ratio']}% dengan rating rata-rata {item['average_rating']}." for item in location_risks] + [f"- Komposisi instruktur {item['label']} juga perlu dibaca karena saat ini mencatat proporsi sinyal negatif {item['negative_ratio']}%." for item in instructor_risks] or ["- Belum ada sinyal lokasi atau tipe instruktur yang cukup kuat untuk diproyeksikan."]
 

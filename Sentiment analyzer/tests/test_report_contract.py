@@ -205,6 +205,7 @@ class ReportAnalyticsContractTests(unittest.TestCase):
         available_dates = build_available_date_options(dataframe)
 
         self.assertEqual(options, [
+            "Semua Data Tersedia",
             "1 Bulan Terakhir",
             "3 Bulan Terakhir",
             "6 Bulan Terakhir",
@@ -388,7 +389,7 @@ class ReportAnalyticsContractTests(unittest.TestCase):
             score_engine="experience_index",
         )
         combined_sections = "\n".join(section["content"] for section in sections)
-        self.assertIn("Penjelasan Perhitungan Experience Index", combined_sections)
+        self.assertIn("Makna Analitis Experience Index", combined_sections)
         self.assertIn("titik sentuh", combined_sections.lower())
         self.assertIn("dirasakan", combined_sections.lower())
         self.assertIn("agenda", combined_sections.lower())

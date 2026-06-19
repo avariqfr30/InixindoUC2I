@@ -16,6 +16,7 @@ import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 
 from config import DEFAULT_COLOR, WRITER_FIRM_NAME
+from editorial_intelligence import compact_sentence
 
 matplotlib.use("Agg")
 
@@ -368,6 +369,7 @@ class DocumentBuilder:
     def _format_table(table):
         table.alignment = WD_TABLE_ALIGNMENT.CENTER
         table.autofit = True
+        column_count = len(table.columns)
         for row_index, row in enumerate(table.rows):
             for cell in row.cells:
                 cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
@@ -375,12 +377,12 @@ class DocumentBuilder:
                     DocumentBuilder._format_paragraph(
                         paragraph,
                         alignment=WD_ALIGN_PARAGRAPH.LEFT,
-                        after=2,
-                        line_spacing=1.0,
+                        after=4,
+                        line_spacing=1.08,
                     )
                     for run in paragraph.runs:
                         run.font.name = "Calibri"
-                        run.font.size = Pt(9)
+                        run.font.size = Pt(8.8 if column_count >= 5 else 9.2)
                 if row_index == 0:
                     DocumentBuilder._set_cell_shading(cell, "F3F4F6")
                     for paragraph in cell.paragraphs:
@@ -518,7 +520,10 @@ class DocumentBuilder:
             table_row = table.add_row().cells
             for col_index in range(column_count):
                 if col_index < len(cells):
-                    table_row[col_index].text = cells[col_index].get_text(" ", strip=True)
+                    table_row[col_index].text = compact_sentence(
+                        cells[col_index].get_text(" ", strip=True),
+                        max_words=22 if column_count >= 4 else 30,
+                    )
                 if row_index == 0 and col_index < len(cells) and cells[col_index].name == "th":
                     for run in table_row[col_index].paragraphs[0].runs:
                         run.bold = True

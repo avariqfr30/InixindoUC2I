@@ -1,5 +1,6 @@
 import re
 from reasoning_policy import FeedbackHotsReasoningPolicy
+from editorial_intelligence import evaluate_feedback_document_spine
 
 class ReportQualityValidator:
     REQUIRED_CHAPTER_IDS = {"cx_chap_1": "Descriptive chapter tersedia", "cx_chap_2": "Diagnostic chapter tersedia", "cx_chap_3": "Predictive chapter tersedia", "cx_chap_4": "Prescriptive chapter tersedia", "cx_chap_5": "Implementation readiness chapter tersedia"}
@@ -30,7 +31,31 @@ class ReportQualityValidator:
         )
 
     @classmethod
-    def evaluate_narrative(cls, executive_snapshot, report_sections):
+    def _missing_action_contract_fields(cls, report_sections):
+        section_map = cls._section_map(report_sections or [])
+        prescriptive = cls._plain_text(section_map.get("cx_chap_4", "")).lower()
+        required = {
+            "fokus masalah": (r"\bfokus\b", r"\bisu\b"),
+            "tindakan": (r"\btindakan\b", r"\baksi\b", r"\bintervensi\b"),
+            "penanggung jawab": (r"\bowner\b", r"penanggung jawab"),
+            "batas waktu": (r"batas waktu", r"\b\d+\s*hari\b", r"\bminggu\s+\d+"),
+            "indikator keberhasilan": (r"indikator keberhasilan", r"kriteria penerimaan", r"\btarget\b"),
+            "dampak yang diharapkan": (r"dampak yang diharapkan", r"hasil yang diharapkan"),
+        }
+        return [
+            label
+            for label, patterns in required.items()
+            if not any(re.search(pattern, prescriptive, flags=re.IGNORECASE) for pattern in patterns)
+        ]
+
+    @classmethod
+    def evaluate_narrative(
+        cls,
+        executive_snapshot,
+        report_sections,
+        deliberation_contract=None,
+        appendix_content="",
+    ):
         categories = set()
         findings = []
         if len(cls._plain_text(executive_snapshot)) < 80:
@@ -43,6 +68,16 @@ class ReportQualityValidator:
         if FeedbackHotsReasoningPolicy.has_uncalibrated_feedback_claim(combined_text):
             categories.add("uncalibrated_feedback_claim")
             findings.append("Narasi menyatakan akar masalah terlalu pasti tanpa bukti, countercheck, atau batasan.")
+        spine_result = evaluate_feedback_document_spine(executive_snapshot, report_sections)
+        if not spine_result["passes"]:
+            categories.update(spine_result["categories"])
+            findings.extend(spine_result["findings"])
+        missing_action_fields = cls._missing_action_contract_fields(report_sections)
+        if missing_action_fields:
+            categories.add("missing_action_contract")
+            findings.append(
+                "Rekomendasi belum lengkap dari sisi " + ", ".join(missing_action_fields) + "."
+            )
         for section in report_sections or []:
             title = section.get("title") or section.get("id") or "section"
             content = section.get("content", "")
@@ -52,6 +87,26 @@ class ReportQualityValidator:
             if cls._has_raw_source_label(content):
                 categories.add("raw_source_label")
                 findings.append(f"{title} masih memuat label sumber mentah.")
+        contract = deliberation_contract or {}
+        if deliberation_contract is not None:
+            required = {
+                "evidence_dossier", "research_plan", "document_thesis", "chapter_contracts",
+                "claim_ledger", "data_gap_register", "editorial_contract", "appendix_manifest",
+            }
+            if not required.issubset(contract):
+                categories.add("missing_deliberation_contract")
+                findings.append("Kontrak deliberasi laporan feedback belum lengkap.")
+            appendix = str(appendix_content or "")
+            if (
+                "## A. Cakupan dan Metodologi" not in appendix
+                or "## B. Matriks Temuan dan Pengukuran" not in appendix
+                or "## C. Kesenjangan Data" not in appendix
+            ):
+                categories.add("missing_tiered_appendix")
+                findings.append("Lampiran metodologi, pengukuran, dan kesenjangan data belum lengkap.")
+            if re.search(r"\b(?:ClassReport|ReferenceClassReport|SECTION_PLAN_JSON|DOCUMENT_DELIBERATION)\b", appendix):
+                categories.add("raw_source_label")
+                findings.append("Lampiran masih memuat label sumber atau perencanaan internal.")
         return {"passes": not categories, "categories": sorted(categories), "findings": findings}
 
     @classmethod

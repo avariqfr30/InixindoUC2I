@@ -540,10 +540,14 @@ class FeedbackProposalTeam:
     def _contradiction_review(cls, dataframe):
         rating_count, average_rating, negative_share = cls._safe_rating_stats(dataframe)
         comments = dataframe.get("Komentar", pd.Series(dtype="object")).fillna("").astype(str).str.lower()
-        negative_terms = ("lambat", "kurang", "tidak", "belum", "sulit", "padat", "delay", "keluhan", "masalah")
-        positive_terms = ("baik", "puas", "membantu", "jelas", "relevan", "cepat", "bagus")
-        negative_text_hits = int(comments.apply(lambda text: any(term in text for term in negative_terms)).sum())
-        positive_text_hits = int(comments.apply(lambda text: any(term in text for term in positive_terms)).sum())
+        negative_terms = tuple(term for term in ("lambat", "kurang", "tidak", "belum", "sulit", "padat", "delay", "keluhan", "masalah") if term)
+        positive_terms = tuple(term for term in ("baik", "puas", "membantu", "jelas", "relevan", "cepat", "bagus") if term)
+
+        def count_text_hits(terms):
+            return sum(1 for text in comments if any(bool(term) and term in text for term in terms))
+
+        negative_text_hits = int(count_text_hits(negative_terms))
+        positive_text_hits = int(count_text_hits(positive_terms))
         severity = "Rendah"
         alignment = "rating dan komentar relatif sejalan"
         if average_rating >= 4 and negative_text_hits >= max(3, int(rating_count * 0.2)):

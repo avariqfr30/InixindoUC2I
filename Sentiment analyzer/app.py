@@ -227,7 +227,7 @@ def login():
                     )
                 else:
                     error = "Username atau password tidak valid."
-            elif SIGNUP_REQUIRES_APPROVAL and not is_user_approved(user):
+            elif not is_user_approved(user):
                 error = "Akun ini masih menunggu konfirmasi sebelum bisa masuk."
             else:
                 try:

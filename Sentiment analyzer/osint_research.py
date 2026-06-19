@@ -387,6 +387,99 @@ class Researcher:
                 lines.append(f"{index}. {summary} (Sumber: {source}{date_part})")
         return "\n".join(lines)
 
+    @classmethod
+    def _extract_brief_cards(cls, macro_trends, context=None, max_cards=8):
+        cards = []
+        context = context or {}
+        core_terms = {
+            "peserta", "pelatihan", "training", "kelas", "instruktur", "materi",
+            "layanan", "pelanggan", "kepuasan", "pengalaman", "feedback", "evaluasi",
+            "kompetensi", "konsultasi", "consulting", "tindak", "retensi", "keluhan",
+        }
+        for value in context.values():
+            core_terms.update(
+                token for token in re.findall(r"[a-z0-9]+", str(value or "").lower())
+                if len(token) >= 4 and token not in {"semua", "terakhir", "bulan", "tahun", "index"}
+            )
+        for raw_line in re.split(r"\n+", str(macro_trends or "")):
+            line = raw_line.strip(" -")
+            if not line or "tidak tersedia" in line.lower() or "tidak ada sinyal" in line.lower():
+                continue
+            if line.endswith(":") or line.startswith("**Insight Mendalam"):
+                continue
+            source_match = re.search(r"\(Sumber:\s*([^,)]+)(?:,\s*([^)]+))?\)", line, flags=re.IGNORECASE)
+            source = source_match.group(1).strip() if source_match else "sumber daring"
+            year = source_match.group(2).strip() if source_match and source_match.group(2) else "n.d."
+            claim = re.sub(r"^\d+\.\s*", "", line)
+            claim = re.sub(r"\(Sumber:\s*[^)]+\)", "", claim, flags=re.IGNORECASE).strip(" -.;")
+            claim = cls._summarize_signal({"snippet": claim, "title": ""}, max_words=30)
+            if not claim:
+                continue
+            claim_terms = set(re.findall(r"[a-z0-9]+", claim.lower()))
+            relevance_score = len(claim_terms & core_terms)
+            if relevance_score < 1:
+                continue
+            matched = "; ".join(
+                f"{key}={value}"
+                for key, value in [
+                    ("timeframe", context.get("timeframe") or context.get("timeframe_label")),
+                    ("segment", context.get("segment")),
+                    ("sentiment", context.get("sentiment")),
+                    ("score_engine", context.get("score_engine") or context.get("score_engine_label")),
+                ]
+                if str(value or "").strip()
+            )
+            cards.append({
+                "claim": claim,
+                "why_it_matters": "Membantu membedakan temuan feedback internal dari tekanan pasar dan ekspektasi layanan yang lebih luas.",
+                "source_title": source,
+                "source_domain": source,
+                "source_year": year,
+                "confidence": "medium" if source != "sumber daring" else "low",
+                "allowed_use": "context_only",
+                "matched_internal_fact": matched or "feedback filter context",
+                "lane": "benchmark",
+                "relevance_score": relevance_score,
+            })
+            if len(cards) >= max_cards:
+                break
+        return cards
+
+    @classmethod
+    def build_osint_dossier(cls, macro_trends, context=None):
+        context = context or {}
+        cards = cls._extract_brief_cards(macro_trends, context=context)
+        lanes = {
+            "benchmark": cards,
+            "service_expectation": [
+                card for card in cards
+                if re.search(r"layanan|pelanggan|peserta|kepuasan|tindak lanjut|kompetensi", card.get("claim", ""), re.IGNORECASE)
+            ],
+            "risk_context": [
+                card for card in cards
+                if re.search(r"risiko|keluhan|tantangan|ekspektasi|retensi", card.get("claim", ""), re.IGNORECASE)
+            ],
+        }
+        return {
+            "use_case": "feedback",
+            "internal_anchor": {
+                key: value for key, value in {
+                    "timeframe": context.get("timeframe") or context.get("timeframe_label"),
+                    "segment": context.get("segment"),
+                    "sentiment": context.get("sentiment"),
+                    "score_engine": context.get("score_engine") or context.get("score_engine_label"),
+                }.items()
+                if str(value or "").strip()
+            },
+            "lanes": lanes,
+            "evidence_cards": cards,
+            "quality": {
+                "card_count": len(cards),
+                "citeable_count": sum(1 for card in cards if card.get("allowed_use") == "citeable"),
+                "lane_count": sum(1 for values in lanes.values() if values),
+            },
+        }
+
     @staticmethod
     def _run_query_batch(queries, max_signals=OSINT_MAX_SIGNALS):
         normalized_queries = []

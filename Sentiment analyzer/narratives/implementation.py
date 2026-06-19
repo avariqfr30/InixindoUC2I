@@ -1,6 +1,7 @@
 import pandas as pd
 
 from config import ADOPTION_READINESS_PILLARS
+from editorial_intelligence import compact_sentence
 from .base import BaseNarrativeMixin
 
 
@@ -79,11 +80,44 @@ class ImplementationNarrativeMixin(BaseNarrativeMixin):
         }
 
         summary_rows, pillar_sections = [], []
-        for pillar in ADOPTION_READINESS_PILLARS:
+        role_phrases = [
+            ("Kesiapan yang terbaca", "Makna untuk forum manajemen", "Langkah awal yang disarankan"),
+            ("Sinyal operasional", "Keputusan yang perlu dipertegas", "Gerakan prioritas"),
+            ("Pembacaan saat ini", "Konsekuensi bagi eksekusi", "Tindak lanjut praktis"),
+            ("Modal yang tersedia", "Batas yang perlu dijaga", "Agenda kerja terdekat"),
+            ("Kondisi awal", "Pertimbangan keputusan", "Aksi yang paling masuk akal"),
+        ]
+        status_phrases = [
+            "Status kesiapan area ini dibaca sebagai **{status}**.",
+            "Untuk kebutuhan eksekusi, posisinya saat ini berada pada tingkat **{status}**.",
+            "Skor kesiapan menunjukkan kategori **{status}**, sehingga tindak lanjut perlu dibuat bertahap.",
+            "Pilar ini berada pada level **{status}** dan perlu dijaga agar tidak berhenti sebagai insight.",
+            "Dari sudut pandang implementasi, kesiapan pilar ini masuk kategori **{status}**.",
+        ]
+        for index, pillar in enumerate(ADOPTION_READINESS_PILLARS):
             pillar_data = pillar_map[pillar["id"]]
             status = self._readiness_label(pillar_data["score"])
-            summary_rows.append([" ".join(pillar["title"].split(" ")[1:]), status, pillar_data["reading"], pillar["guiding_question"]])
-            pillar_sections.extend([f"## {pillar['title']}", pillar_data["reading"], "", f"Status kesiapan saat ini: **{status}**.", "", f"Pertanyaan pemandu: {pillar['guiding_question']}", "", "### Implikasi untuk Pengambilan Keputusan", pillar_data["implication"], "", "### Aksi Prioritas", *[f"- {action}" for action in pillar_data["actions"]], ""])
+            summary_rows.append([
+                " ".join(pillar["title"].split(" ")[1:]),
+                status,
+                compact_sentence(pillar_data["reading"], max_words=18),
+                compact_sentence(pillar["guiding_question"], max_words=16),
+            ])
+            reading_label, implication_label, action_label = role_phrases[index % len(role_phrases)]
+            status_sentence = status_phrases[index % len(status_phrases)].format(status=status)
+            pillar_sections.extend([
+                f"## {pillar['title']}",
+                f"**{reading_label}.** {pillar_data['reading']} {status_sentence}",
+                "",
+                f"Pertanyaan diskusi: {pillar['guiding_question']}",
+                "",
+                f"### {implication_label}",
+                pillar_data["implication"],
+                "",
+                f"### {action_label}",
+                *[f"- {action}" for action in pillar_data["actions"]],
+                "",
+            ])
 
         if deep_insight and osint_signals:
             osint_note = f"Ringkasan tren eksternal: pasar menuntut bukti dampak pelatihan, tindak lanjut yang lebih jelas, dan materi yang mengikuti kebutuhan kompetensi terbaru."
