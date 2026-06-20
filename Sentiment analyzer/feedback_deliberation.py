@@ -7,6 +7,11 @@ import json
 import re
 from typing import Any
 
+from feedback_exemplar_profile import (
+    UC2_FEEDBACK_EXEMPLAR_PROFILE_VERSION,
+    build_uc2_feedback_exemplar_profile,
+)
+
 
 def _clean(value: Any, max_words: int = 34) -> str:
     text = re.sub(r"\s+", " ", str(value or "")).strip(" -;,.:")
@@ -55,8 +60,10 @@ class FeedbackDeliberationBuilder:
             for item in sections or []
         ]
         insight_cards = [dict(item) for item in context.get("insight_cards", []) if _clean(item.get("observation"))]
+        exemplar_profile = build_uc2_feedback_exemplar_profile()
         cache_key = _digest({
             "version": cls.CACHE_VERSION,
+            "exemplar_profile_version": UC2_FEEDBACK_EXEMPLAR_PROFILE_VERSION,
             "sections": section_inputs,
             "context": context,
             "data_version": data_version,
@@ -142,9 +149,11 @@ class FeedbackDeliberationBuilder:
                     "Bedakan temuan, bukti, tafsir, countercheck, dan tindakan tanpa label template berulang.",
                     "Gunakan komentar sebagai contoh pola, bukan bukti tunggal sebab-akibat.",
                     "Hubungkan setiap bagian dengan kesimpulan bagian sebelumnya.",
+                    "Gunakan profil contoh UC2 hanya sebagai kalibrasi gaya dan struktur analisis; jangan menyalin frasa atau menjadikannya bukti fakta.",
                 ],
                 "meaning_lock": ["rating", "jumlah respons", "periode", "segmen", "tema", "kutipan"],
                 "forbidden": ["label agen", "nama dataset", "prompt", "chain-of-thought", "klaim sebab tanpa bukti"],
+                "exemplar_profile": exemplar_profile,
             },
             "appendix_manifest": {
                 "coverage": {

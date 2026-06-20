@@ -54,6 +54,22 @@ class FeedbackDeliberationTests(unittest.TestCase):
         self.assertEqual(contract, builder.build(self.sections, self.context, data_version="feedback-v1"))
         self.assertEqual(1, builder.cache_stats()["hits"])
 
+    def test_embeds_distilled_uc2_exemplar_profile_without_source_identity_leakage(self):
+        builder = FeedbackDeliberationBuilder()
+        contract = builder.build(self.sections, self.context, data_version="feedback-v1")
+        profile = contract["editorial_contract"]["exemplar_profile"]
+
+        self.assertEqual("uc2-feedback-exemplar-profile-v1", profile["version"])
+        self.assertEqual("use_existing_report_structure_only", profile["hardcoded_structure_policy"])
+        self.assertIn("theme_bank", profile["analysis_moves"])
+        self.assertIn("sentiment_volume_movement", profile["analysis_moves"])
+        self.assertIn("tercatat", " ".join(profile["indonesian_language_rules"]).lower())
+        self.assertTrue(any("bukan bukti" in rule.lower() for rule in profile["factual_boundaries"]))
+
+        serialized = repr(profile).lower()
+        for leaked_name in ["redquadrant", "wordnerds", "bury", "exeter", "ecc", "sk-februari", "c.1.1"]:
+            self.assertNotIn(leaked_name, serialized)
+
     def test_builds_methodology_measurement_and_gap_appendices(self):
         builder = FeedbackDeliberationBuilder()
         contract = builder.build(self.sections, self.context, data_version="feedback-v1")
