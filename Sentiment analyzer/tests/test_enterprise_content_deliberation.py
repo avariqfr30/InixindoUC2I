@@ -33,6 +33,24 @@ class FeedbackDeliberationTests(unittest.TestCase):
                     "confidence": "medium",
                 },
             ],
+            "trust_packet": {
+                "version": "feedback-fact-registry-v1",
+                "snapshot_fingerprint": "sha256:0123456789abcdef",
+                "confidence_basis": {
+                    "level": "Tinggi",
+                    "response_count": 939,
+                    "rating_coverage_pct": 98.0,
+                    "comment_coverage_pct": 27.6,
+                    "field_completeness_pct": 96.5,
+                    "limitations": ["Pembanding eksternal belum cukup kuat."],
+                },
+                "contradiction_review": {
+                    "severity": "Rendah",
+                    "rating_text_alignment": "rating dan komentar relatif sejalan",
+                },
+                "theme_evidence_ids": {"material": "F-TEMA-MATERI"},
+                "facts": [],
+            },
         }
 
     def test_builds_feedback_research_chapter_and_editorial_contracts(self):
@@ -43,7 +61,7 @@ class FeedbackDeliberationTests(unittest.TestCase):
             {
                 "cache_key", "data_version", "evidence_dossier", "research_plan",
                 "document_thesis", "chapter_contracts", "claim_ledger",
-                "data_gap_register", "editorial_contract", "appendix_manifest",
+                "data_gap_register", "editorial_contract", "appendix_manifest", "trust_packet",
             },
             set(contract),
         )
@@ -51,6 +69,8 @@ class FeedbackDeliberationTests(unittest.TestCase):
         self.assertTrue(any("segmen" in item["question"].lower() for item in contract["research_plan"]["questions"]))
         self.assertTrue(any("eksternal" in item["gap"].lower() for item in contract["data_gap_register"]))
         self.assertIn("meaning_lock", contract["editorial_contract"])
+        self.assertEqual("sha256:0123456789abcdef", contract["trust_packet"]["snapshot_fingerprint"])
+        self.assertEqual("Rendah", contract["trust_packet"]["contradiction_review"]["severity"])
         self.assertEqual(contract, builder.build(self.sections, self.context, data_version="feedback-v1"))
         self.assertEqual(1, builder.cache_stats()["hits"])
 
@@ -79,6 +99,9 @@ class FeedbackDeliberationTests(unittest.TestCase):
         self.assertIn("## A. Cakupan dan Metodologi", appendix)
         self.assertIn("## B. Matriks Temuan dan Pengukuran", appendix)
         self.assertIn("## C. Kesenjangan Data", appendix)
+        self.assertIn("sha256:0123456789abcdef", appendix)
+        self.assertIn("Basis keyakinan", appendix)
+        self.assertIn("98.0%", appendix)
         self.assertNotIn("ClassReport", appendix)
         self.assertNotIn("SECTION_PLAN_JSON", appendix)
 

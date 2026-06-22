@@ -67,6 +67,29 @@ class FeedbackEditorialQualityTests(unittest.TestCase):
 
         self.assertIn("metric_led_repetition", issues)
 
+    def test_protected_editor_rejects_polish_that_changes_numeric_facts(self):
+        from writing_quality import ProtectedIndonesianEditor
+
+        class FakeModelClient:
+            def chat(self, **kwargs):
+                return {"message": {"content": "Rating tercatat 4,8/5 dari 20 respons."}}
+
+        calls = {"count": 0}
+
+        def quality_check(_text, _protected):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                return {"issues": ["long_sentence"], "protected_missing": []}
+            return {"issues": [], "protected_missing": []}
+
+        editor = ProtectedIndonesianEditor(
+            model_client=FakeModelClient(),
+            quality_fn=quality_check,
+        )
+        original = "Rating tercatat 4,5/5 dari 20 respons."
+
+        self.assertEqual(original, editor.polish(original))
+
     def test_full_cached_range_and_strict_iso_dates(self):
         from timeframe_filters import FULL_CACHED_TIMEFRAME, filter_by_timeframe, parse_custom_timeframe
 

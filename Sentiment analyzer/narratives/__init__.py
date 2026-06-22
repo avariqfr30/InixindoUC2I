@@ -24,14 +24,25 @@ class ReportNarrativeBuilderMixin(
     FeedbackAnalyticsEngine; it owns wording, tables, and report section assembly.
     """
 
-    def build_report_sections(self, timeframe, notes, macro_trends, sentiment="all", segment="all", score_engine=DEFAULT_SCORE_ENGINE, section_context=None):
-        timeframe_df = self._filter_view(timeframe, sentiment=sentiment, segment=segment)
-        context = self._build_analysis_context(timeframe_df, timeframe, sentiment, segment, score_engine)
+    def build_report_sections(self, timeframe, notes, macro_trends, sentiment="all", segment="all", score_engine=DEFAULT_SCORE_ENGINE, section_context=None, prepared_analysis=None):
+        prepared = self.resolve_prepared_report_analysis(
+            prepared_analysis,
+            timeframe,
+            sentiment=sentiment,
+            segment=segment,
+            score_engine=score_engine,
+        )
+        if prepared is None:
+            timeframe_df = self._filter_view(timeframe, sentiment=sentiment, segment=segment)
+            context = self._build_analysis_context(timeframe_df, timeframe, sentiment, segment, score_engine)
+        else:
+            timeframe_df = prepared.scoped_dataframe
+            context = prepared.analysis_context
         section_map = {
             "cx_chap_1": self._descriptive_markdown(timeframe_df, timeframe, notes, context, section_context=section_context),
             "cx_chap_2": self._diagnostic_markdown(timeframe_df, context),
             "cx_chap_3": self._predictive_markdown(timeframe_df, macro_trends, context, section_context=section_context),
-            "cx_chap_4": self._prescriptive_markdown(timeframe_df, context),
+            "cx_chap_4": self._prescriptive_markdown(timeframe_df, context, section_context=section_context),
             "cx_chap_5": self._implementation_readiness_markdown(timeframe_df, timeframe, notes, macro_trends, context, section_context=section_context),
         }
         return [

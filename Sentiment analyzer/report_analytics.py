@@ -1,4 +1,5 @@
 import re
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 import pandas as pd
@@ -26,6 +27,18 @@ def _confidence_tier(n: int) -> str:
     if n >= 10:
         return "rendah"
     return "sangat rendah"
+
+
+@dataclass(frozen=True)
+class PreparedReportAnalysis:
+    request_key: tuple
+    scoped_dataframe: pd.DataFrame
+    analysis_context: dict
+    governance_summary: dict
+    contradiction_review: dict
+    top_service: pd.Series
+    top_risk: list
+    top_issue: dict | None
 
 
 class FeedbackAnalyticsEngine(ReportNarrativeBuilderMixin):
@@ -101,6 +114,9 @@ class FeedbackAnalyticsEngine(ReportNarrativeBuilderMixin):
     )
 
     def __init__(self, dataframe):
+        self._prepared_report_analysis = None
+        self._prepared_analysis_dataframe = None
+        self._prepared_helper_cache = {}
         self.full_df = dataframe.copy() if dataframe is not None else pd.DataFrame()
         for column_name in CANONICAL_INTERNAL_COLUMNS:
             if column_name not in self.full_df.columns:
@@ -542,6 +558,101 @@ class FeedbackAnalyticsEngine(ReportNarrativeBuilderMixin):
     def _filter_timeframe(self, timeframe):
         return self._filter_view(timeframe)
 
+    def _prepared_analysis_key(self, timeframe, sentiment, segment, score_engine):
+        return (
+            str(timeframe or ""),
+            self._normalize_sentiment_filter(sentiment),
+            self._normalize_segment_filter(segment),
+            self._normalize_score_engine(score_engine),
+        )
+
+    def get_prepared_report_analysis(
+        self,
+        timeframe,
+        sentiment="all",
+        segment="all",
+        score_engine=DEFAULT_SCORE_ENGINE,
+    ):
+        expected_key = self._prepared_analysis_key(timeframe, sentiment, segment, score_engine)
+        prepared = self._prepared_report_analysis
+        return (
+            prepared
+            if prepared is not None and prepared.request_key == expected_key
+            else None
+        )
+
+    def resolve_prepared_report_analysis(
+        self,
+        prepared_analysis,
+        timeframe,
+        sentiment="all",
+        segment="all",
+        score_engine=DEFAULT_SCORE_ENGINE,
+    ):
+        expected_key = self._prepared_analysis_key(timeframe, sentiment, segment, score_engine)
+        registered = self._prepared_report_analysis
+        return (
+            registered
+            if prepared_analysis is registered
+            and registered is not None
+            and registered.request_key == expected_key
+            else None
+        )
+
+    def prepare_report_analysis(
+        self,
+        timeframe,
+        sentiment="all",
+        segment="all",
+        score_engine=DEFAULT_SCORE_ENGINE,
+    ):
+        existing = self.get_prepared_report_analysis(
+            timeframe,
+            sentiment=sentiment,
+            segment=segment,
+            score_engine=score_engine,
+        )
+        if existing is not None:
+            return existing
+
+        key = self._prepared_analysis_key(timeframe, sentiment, segment, score_engine)
+        scoped_dataframe = self._filter_view(
+            timeframe,
+            sentiment=sentiment,
+            segment=segment,
+        )
+        self._prepared_analysis_dataframe = scoped_dataframe
+        self._prepared_helper_cache = {}
+        analysis_context = self._build_analysis_context(
+            scoped_dataframe,
+            timeframe,
+            sentiment,
+            segment,
+            score_engine,
+        )
+        governance_summary = self._governance_summary(scoped_dataframe)
+        theme_hits = self._theme_hits(scoped_dataframe)
+        top_service = self._series_counts(scoped_dataframe["Layanan"], limit=1)
+        top_risk = self._group_risk(scoped_dataframe, "Layanan", limit=1)
+        top_issue = next(
+            (theme for theme in theme_hits if theme["negative_hits"] > 0),
+            None,
+        )
+        from report_agents import FeedbackProposalTeam
+
+        prepared = PreparedReportAnalysis(
+            request_key=key,
+            scoped_dataframe=scoped_dataframe,
+            analysis_context=analysis_context,
+            governance_summary=governance_summary,
+            contradiction_review=FeedbackProposalTeam._contradiction_review(scoped_dataframe),
+            top_service=top_service,
+            top_risk=top_risk,
+            top_issue=top_issue,
+        )
+        self._prepared_report_analysis = prepared
+        return prepared
+
     def _filter_view(self, timeframe, sentiment="all", segment="all"):
         if self.full_df.empty: return self.full_df.copy()
         filtered = filter_by_timeframe(self.full_df, timeframe)
@@ -887,6 +998,16 @@ class FeedbackAnalyticsEngine(ReportNarrativeBuilderMixin):
         }
 
     def _theme_hits(self, dataframe):
+        cache_key = "theme_hits"
+        use_prepared_cache = dataframe is self._prepared_analysis_dataframe
+        if use_prepared_cache and cache_key in self._prepared_helper_cache:
+            return self._prepared_helper_cache[cache_key]
+        theme_stats = self._compute_theme_hits(dataframe)
+        if use_prepared_cache:
+            self._prepared_helper_cache[cache_key] = theme_stats
+        return theme_stats
+
+    def _compute_theme_hits(self, dataframe):
         theme_stats = []
         if dataframe.empty: return theme_stats
         comment_series = dataframe["Komentar Lower"].astype(str)
@@ -915,6 +1036,18 @@ class FeedbackAnalyticsEngine(ReportNarrativeBuilderMixin):
         return lines or ["- Tidak ada kutipan yang cukup untuk periode ini."]
 
     def _group_risk(self, dataframe, column_name, limit=3):
+        cache_key = ("group_risk", column_name)
+        use_prepared_cache = dataframe is self._prepared_analysis_dataframe
+        if use_prepared_cache:
+            rows = self._prepared_helper_cache.get(cache_key)
+            if rows is None:
+                rows = self._compute_group_risk(dataframe, column_name)
+                self._prepared_helper_cache[cache_key] = rows
+        else:
+            rows = self._compute_group_risk(dataframe, column_name)
+        return rows[:limit]
+
+    def _compute_group_risk(self, dataframe, column_name):
         if dataframe.empty or column_name not in dataframe.columns: return []
         rows = []
         grouped = dataframe.groupby(column_name, dropna=False)
@@ -935,9 +1068,19 @@ class FeedbackAnalyticsEngine(ReportNarrativeBuilderMixin):
                 "confidence": _confidence_tier(volume),
             })
         rows.sort(key=lambda item: item["risk_score"], reverse=True)
-        return rows[:limit]
+        return rows
 
     def _governance_summary(self, timeframe_df):
+        cache_key = "governance_summary"
+        use_prepared_cache = timeframe_df is self._prepared_analysis_dataframe
+        if use_prepared_cache and cache_key in self._prepared_helper_cache:
+            return self._prepared_helper_cache[cache_key]
+        summary = self._compute_governance_summary(timeframe_df)
+        if use_prepared_cache:
+            self._prepared_helper_cache[cache_key] = summary
+        return summary
+
+    def _compute_governance_summary(self, timeframe_df):
         total_rows = self._raw_response_count(timeframe_df)
         if total_rows == 0: return {"total_rows": 0, "completeness_pct": 0.0, "source_count": 0, "channel_count": 0}
         completeness_scores = [(timeframe_df[field].astype(str).str.strip() != "").mean() for field in ["Tipe Stakeholder", "Layanan", "Rentang Waktu", "Komentar"]]

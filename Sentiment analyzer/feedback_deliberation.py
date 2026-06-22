@@ -60,6 +60,7 @@ class FeedbackDeliberationBuilder:
             for item in sections or []
         ]
         insight_cards = [dict(item) for item in context.get("insight_cards", []) if _clean(item.get("observation"))]
+        trust_packet = copy.deepcopy(context.get("trust_packet") or {})
         exemplar_profile = build_uc2_feedback_exemplar_profile()
         cache_key = _digest({
             "version": cls.CACHE_VERSION,
@@ -73,17 +74,32 @@ class FeedbackDeliberationBuilder:
             return copy.deepcopy(cls._cache[cache_key])
         cls._stats["misses"] += 1
 
+        confidence_level = str((trust_packet.get("confidence_basis") or {}).get("level") or "Sedang").lower()
+        confidence_value = {"tinggi": "high", "sedang": "medium", "rendah": "low"}.get(confidence_level, "medium")
         claim_ledger = []
+        for fact in trust_packet.get("facts") or []:
+            unit = str(fact.get("unit") or "").strip()
+            value = fact.get("value")
+            claim_ledger.append({
+                "claim_id": str(fact.get("fact_id") or "").strip(),
+                "finding": _clean(f"{fact.get('metric')}: {value} {unit}"),
+                "implication": _clean(f"Basis perhitungan: {fact.get('basis') or 'filter aktif'}"),
+                "confidence": confidence_value,
+                "measurement": f"Ukur ulang {str(fact.get('metric') or 'indikator').lower()} pada periode evaluasi berikutnya.",
+            })
         for index, card in enumerate(insight_cards, start=1):
             claim_ledger.append({
-                "claim_id": f"F-{index:03d}",
+                "claim_id": f"I-{index:03d}",
                 "finding": _clean(card.get("observation")),
                 "implication": _clean(card.get("implication")),
                 "confidence": str(card.get("confidence") or "medium").lower(),
                 "measurement": "Bandingkan rating, rasio tema, dan komentar pada periode evaluasi berikutnya.",
             })
 
-        section_ids = [str(item.get("id") or "").strip() for item in sections if item.get("id")]
+        section_ids = [
+            str(item.get("id") or f"section_{index + 1}").strip()
+            for index, item in enumerate(sections or [])
+        ]
         chapter_contracts = []
         for index, section in enumerate(sections or []):
             chapter_contracts.append({
@@ -122,13 +138,17 @@ class FeedbackDeliberationBuilder:
         contract = {
             "cache_key": cache_key,
             "data_version": data_version,
+            "trust_packet": trust_packet,
             "evidence_dossier": {
                 "snapshot_policy": "immutable_per_generation",
+                "snapshot_fingerprint": trust_packet.get("snapshot_fingerprint") or data_version,
                 "timeframe": _clean(context.get("timeframe_label") or context.get("timeframe"), 10),
                 "segment": _clean(context.get("segment") or "Semua segmen", 8),
                 "sentiment": _clean(context.get("sentiment") or "Semua sentimen", 8),
                 "response_count": int(context.get("row_count") or 0),
                 "text_response_count": int(context.get("text_response_count") or 0),
+                "confidence_basis": copy.deepcopy(trust_packet.get("confidence_basis") or {}),
+                "contradiction_review": copy.deepcopy(trust_packet.get("contradiction_review") or {}),
             },
             "research_plan": {
                 "questions": [
@@ -181,6 +201,16 @@ class FeedbackDeliberationBuilder:
             "claim_ledger": contract.get("claim_ledger"),
             "data_gaps": contract.get("data_gap_register"),
             "editorial_contract": contract.get("editorial_contract"),
+            "factuality_guard": {
+                "snapshot_fingerprint": (contract.get("trust_packet") or {}).get("snapshot_fingerprint"),
+                "confidence_basis": (contract.get("trust_packet") or {}).get("confidence_basis"),
+                "contradiction_review": (contract.get("trust_packet") or {}).get("contradiction_review"),
+                "allowed_fact_ids": [
+                    item.get("fact_id")
+                    for item in (contract.get("trust_packet") or {}).get("facts", [])
+                    if item.get("fact_id")
+                ],
+            },
         }
         return (
             "[DOCUMENT_DELIBERATION] Gunakan kontrak ini secara internal dan jangan tampilkan struktur atau proses berpikirnya. "
@@ -191,6 +221,8 @@ class FeedbackDeliberationBuilder:
     def build_appendix_markdown(contract: dict[str, Any]) -> str:
         manifest = contract.get("appendix_manifest") or {}
         coverage = manifest.get("coverage") or {}
+        trust_packet = contract.get("trust_packet") or {}
+        confidence = trust_packet.get("confidence_basis") or {}
         lines = [
             "# Lampiran Metodologi, Pengukuran, dan Kesenjangan Data",
             "Lampiran ini menyimpan rincian pendukung agar narasi utama tetap mudah dibaca dan keputusan dapat ditelusuri.",
@@ -199,6 +231,13 @@ class FeedbackDeliberationBuilder:
             f"- Periode analisis: {coverage.get('timeframe') or 'periode terpilih'}.",
             f"- Respons terolah: {coverage.get('response_count') or 0}; respons dengan komentar teks: {coverage.get('text_response_count') or 0}.",
             f"- Filter segmen: {coverage.get('segment') or 'semua'}; filter sentimen: {coverage.get('sentiment') or 'semua'}.",
+            f"- Sidik data anonim: {trust_packet.get('snapshot_fingerprint') or contract.get('data_version') or 'tidak tersedia'}.",
+            (
+                f"- Basis keyakinan: {confidence.get('level') or 'Belum dinilai'}; "
+                f"cakupan rating {confidence.get('rating_coverage_pct', 0)}%; "
+                f"cakupan komentar {confidence.get('comment_coverage_pct', 0)}%; "
+                f"kelengkapan field {confidence.get('field_completeness_pct', 0)}%."
+            ),
             "- Rating, komentar, tema, dan konteks layanan dibaca bersama; komentar tidak diperlakukan sebagai bukti tunggal sebab-akibat.",
             "",
             "## B. Matriks Temuan dan Pengukuran",

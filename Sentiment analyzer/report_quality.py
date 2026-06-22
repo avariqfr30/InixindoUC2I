@@ -49,6 +49,42 @@ class ReportQualityValidator:
         ]
 
     @classmethod
+    def _action_traceability_gaps(cls, report_sections):
+        prescriptive = str(cls._section_map(report_sections or []).get("cx_chap_4", "") or "")
+        table_lines = [line.strip() for line in prescriptive.splitlines() if line.strip().startswith("|")]
+        header_index = next(
+            (index for index, line in enumerate(table_lines) if "ID Bukti" in line and "Indikator Keberhasilan" in line),
+            None,
+        )
+        if header_index is None:
+            return [] if "| Prioritas |" not in prescriptive else ["header traceability"]
+        headers = [cell.strip() for cell in table_lines[header_index].strip("|").split("|")]
+        required = {
+            "ID Bukti",
+            "Tindakan",
+            "Penanggung Jawab Utama",
+            "Jendela Tinjauan",
+            "Indikator Keberhasilan",
+            "Hasil yang Diharapkan",
+        }
+        if not required.issubset(headers):
+            return sorted(required - set(headers))
+        indexes = {header: headers.index(header) for header in required}
+        gaps = []
+        for row_number, line in enumerate(table_lines[header_index + 2:], start=1):
+            cells = [cell.strip() for cell in line.strip("|").split("|")]
+            if len(cells) != len(headers):
+                continue
+            if not re.fullmatch(r"F-(?:TEMA-[A-Z0-9-]+|MONITORING)", cells[indexes["ID Bukti"]]):
+                gaps.append(f"baris {row_number}: ID bukti")
+            for header in required - {"ID Bukti"}:
+                if not cells[indexes[header]]:
+                    gaps.append(f"baris {row_number}: {header}")
+            if "30 hari" not in cells[indexes["Jendela Tinjauan"]].lower():
+                gaps.append(f"baris {row_number}: jendela tinjauan")
+        return gaps
+
+    @classmethod
     def evaluate_narrative(
         cls,
         executive_snapshot,
@@ -78,6 +114,14 @@ class ReportQualityValidator:
             findings.append(
                 "Rekomendasi belum lengkap dari sisi " + ", ".join(missing_action_fields) + "."
             )
+        action_traceability_gaps = cls._action_traceability_gaps(report_sections)
+        if action_traceability_gaps:
+            categories.add("missing_action_traceability")
+            findings.append(
+                "Matriks tindakan belum dapat ditelusuri per rekomendasi: "
+                + ", ".join(action_traceability_gaps)
+                + "."
+            )
         for section in report_sections or []:
             title = section.get("title") or section.get("id") or "section"
             content = section.get("content", "")
@@ -91,7 +135,7 @@ class ReportQualityValidator:
         if deliberation_contract is not None:
             required = {
                 "evidence_dossier", "research_plan", "document_thesis", "chapter_contracts",
-                "claim_ledger", "data_gap_register", "editorial_contract", "appendix_manifest",
+                "claim_ledger", "data_gap_register", "editorial_contract", "appendix_manifest", "trust_packet",
             }
             if not required.issubset(contract):
                 categories.add("missing_deliberation_contract")

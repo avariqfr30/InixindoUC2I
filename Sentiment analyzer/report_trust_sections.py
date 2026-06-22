@@ -1,7 +1,7 @@
 from report_agents import FeedbackProposalTeam
 
 
-def build_specialist_review_markdown(engine, markdown_table, timeframe, macro_trends, sentiment, segment, score_engine):
+def build_specialist_review_markdown(engine, markdown_table, timeframe, macro_trends, sentiment, segment, score_engine, prepared_analysis=None):
     briefing = FeedbackProposalTeam().run(
         engine,
         engine.full_df,
@@ -10,6 +10,7 @@ def build_specialist_review_markdown(engine, markdown_table, timeframe, macro_tr
         sentiment=sentiment,
         segment=segment,
         score_engine=score_engine,
+        prepared_analysis=prepared_analysis,
     )
     rows = [
         [

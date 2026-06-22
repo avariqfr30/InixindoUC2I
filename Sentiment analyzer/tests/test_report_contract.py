@@ -15,6 +15,7 @@ from document_builder import DocumentBuilder
 from report_evidence import ContextIntelligenceDesk, ReportEvidenceBuilder
 from report_analytics import FeedbackAnalyticsEngine
 from report_agents import FeedbackProposalTeam, HiddenAgentDesk
+from report_pipeline import ReportNarrativeStage, ReportRequestContext
 from report_quality import ReportQualityValidator
 
 
@@ -56,6 +57,81 @@ class ReportAnalyticsContractTests(unittest.TestCase):
         ]
         for marker in required_markers:
             self.assertIn(marker, combined)
+
+    def test_narrative_stage_builds_filter_scoped_trust_contract_before_writing(self):
+        context = ReportRequestContext(
+            self.timeframe,
+            self.notes,
+            score_engine="experience_index",
+        )
+
+        _snapshot, sections, _planning = ReportNarrativeStage().run(
+            self.engine,
+            context,
+            self.macro_trends,
+        )
+
+        contract = sections[0]["_document_contract"]
+        trust = contract["trust_packet"]
+        self.assertEqual(trust["snapshot_fingerprint"], contract["data_version"])
+        self.assertRegex(contract["data_version"], r"^sha256:[0-9a-f]{16}$")
+        self.assertGreater(trust["confidence_basis"]["response_count"], 0)
+        self.assertIn("rating_text_alignment", trust["contradiction_review"])
+        self.assertEqual(
+            trust["confidence_basis"]["response_count"],
+            contract["evidence_dossier"]["response_count"],
+        )
+        facts = {item["fact_id"]: item for item in trust["facts"]}
+        self.assertEqual(
+            facts["F-COMMENTS"]["value"],
+            contract["evidence_dossier"]["text_response_count"],
+        )
+        claim_ids = {item["claim_id"] for item in contract["claim_ledger"]}
+        self.assertIn("F-RESPONSES", claim_ids)
+        self.assertIn("F-SCORE-CURRENT", claim_ids)
+
+    def test_prescriptive_action_rows_are_individually_traceable(self):
+        sections = self.engine.build_report_sections(
+            self.timeframe,
+            self.notes,
+            self.macro_trends,
+            score_engine="experience_index",
+        )
+        prescriptive = next(section["content"] for section in sections if section["id"] == "cx_chap_4")
+
+        self.assertIn("ID Bukti", prescriptive)
+        self.assertIn("Jendela Tinjauan", prescriptive)
+        self.assertIn("Indikator Keberhasilan", prescriptive)
+        action_rows = [
+            line for line in prescriptive.splitlines()
+            if line.startswith("|") and ("F-TEMA-" in line or "F-MONITORING" in line)
+        ]
+        self.assertTrue(action_rows)
+        self.assertTrue(all("30 hari" in line for line in action_rows))
+
+    def test_narrative_preflight_rejects_action_row_with_unregistered_evidence(self):
+        sections = self.engine.build_report_sections(
+            self.timeframe,
+            self.notes,
+            self.macro_trends,
+            score_engine="experience_index",
+        )
+        malformed = []
+        for section in sections:
+            item = dict(section)
+            if item["id"] == "cx_chap_4":
+                item["content"] = item["content"].replace("F-TEMA-", "UNREGISTERED-")
+            malformed.append(item)
+        snapshot = self.engine.build_executive_snapshot(
+            self.timeframe,
+            self.notes,
+            score_engine="experience_index",
+            report_sections=malformed,
+        )
+
+        result = ReportQualityValidator.evaluate_narrative(snapshot, malformed)
+
+        self.assertIn("missing_action_traceability", result["categories"])
 
     def test_placeholder_brand_reason_dimension_is_not_promoted_to_report_priority(self):
         dataframe = pd.DataFrame(

@@ -7,6 +7,7 @@ from typing import Callable, Optional
 
 from evidence_quality import quality_check
 from editorial_intelligence import assess_feedback_style
+from report_factuality import NarrativeFactValidator
 
 FACT_PATTERNS = (
     r"(?i)\b(?:Rp\s*)?\d[\d.,]*(?:\s*(?:juta|miliar|triliun|%|hari|bulan|tahun))?",
@@ -115,6 +116,8 @@ class ProtectedIndonesianEditor:
         except Exception:
             return original
         if not improved:
+            return original
+        if not NarrativeFactValidator.preserves_numeric_facts(original, improved):
             return original
         final = self.quality_fn(improved, protected)
         final["issues"] = sorted(set(list(final.get("issues", [])) + self.local_template_issues(improved)))

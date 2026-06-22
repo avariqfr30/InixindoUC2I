@@ -61,7 +61,7 @@ class ExecutiveNarrativeMixin(BaseNarrativeMixin):
             ["3", journey_label, "Perbaiki satu titik gesekan utama sebelum memperluas program perbaikan.", "Perubahan terasa di pengalaman pelanggan, bukan hanya di laporan."],
         ]
 
-    def _specialist_review_markdown(self, timeframe, macro_trends, sentiment, segment, score_engine):
+    def _specialist_review_markdown(self, timeframe, macro_trends, sentiment, segment, score_engine, prepared_analysis=None):
         return build_specialist_review_markdown(
             self,
             self._markdown_table,
@@ -70,6 +70,7 @@ class ExecutiveNarrativeMixin(BaseNarrativeMixin):
             sentiment,
             segment,
             score_engine,
+            prepared_analysis=prepared_analysis,
         )
 
     @classmethod
@@ -87,13 +88,32 @@ class ExecutiveNarrativeMixin(BaseNarrativeMixin):
             return ""
         return "\n".join(rows)
 
-    def build_executive_snapshot(self, timeframe, notes="", sentiment="all", segment="all", score_engine=DEFAULT_SCORE_ENGINE, macro_trends="", report_sections=None, section_context=None):
-        timeframe_df = self._filter_view(timeframe, sentiment=sentiment, segment=segment)
+    def build_executive_snapshot(self, timeframe, notes="", sentiment="all", segment="all", score_engine=DEFAULT_SCORE_ENGINE, macro_trends="", report_sections=None, section_context=None, prepared_analysis=None):
+        prepared = self.resolve_prepared_report_analysis(
+            prepared_analysis,
+            timeframe,
+            sentiment=sentiment,
+            segment=segment,
+            score_engine=score_engine,
+        )
+        timeframe_df = (
+            prepared.scoped_dataframe
+            if prepared is not None
+            else self._filter_view(timeframe, sentiment=sentiment, segment=segment)
+        )
         if timeframe_df.empty:
             return "- Belum ada bukti evaluasi yang cukup untuk menyusun ringkasan eksekutif pada kombinasi filter yang dipilih.\n"
 
-        context = self._build_analysis_context(timeframe_df, timeframe, sentiment, segment, score_engine)
-        governance = self._governance_summary(timeframe_df)
+        context = (
+            prepared.analysis_context
+            if prepared is not None
+            else self._build_analysis_context(timeframe_df, timeframe, sentiment, segment, score_engine)
+        )
+        governance = (
+            prepared.governance_summary
+            if prepared is not None
+            else self._governance_summary(timeframe_df)
+        )
         total_rows = governance["total_rows"]
         dimension_count = governance.get("dimension_count", len(timeframe_df))
         rating_response_count = governance.get("rating_response_count", 0)
@@ -101,10 +121,22 @@ class ExecutiveNarrativeMixin(BaseNarrativeMixin):
         avg_rating = timeframe_df["Rating Numeric"].mean()
         sentiment_summary = self._sentiment_summary(timeframe_df)
         negative_share = round((sentiment_summary["issue_weight"] / max(dimension_count, 1)) * 100, 1)
-        top_service = self._series_counts(timeframe_df["Layanan"], limit=1)
+        top_service = (
+            prepared.top_service
+            if prepared is not None
+            else self._series_counts(timeframe_df["Layanan"], limit=1)
+        )
         top_stakeholder = self._series_counts(timeframe_df["Tipe Stakeholder"], limit=1)
-        top_risk = self._group_risk(timeframe_df, "Layanan", limit=1)
-        top_issue = next((theme for theme in self._theme_hits(timeframe_df) if theme["negative_hits"] > 0), None)
+        top_risk = (
+            prepared.top_risk
+            if prepared is not None
+            else self._group_risk(timeframe_df, "Layanan", limit=1)
+        )
+        top_issue = (
+            prepared.top_issue
+            if prepared is not None
+            else next((theme for theme in self._theme_hits(timeframe_df) if theme["negative_hits"] > 0), None)
+        )
         section_context = section_context or {}
         focus_text = str(section_context.get("focus_note") or notes or "").strip() or "Tidak ada fokus tambahan dari pengguna."
         dominant_journey, score_metrics = context["dominant_journey"], context["score_metrics"]

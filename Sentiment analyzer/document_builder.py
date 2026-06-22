@@ -2,6 +2,8 @@ import io
 import logging
 import re
 import textwrap
+import threading
+from collections import OrderedDict
 from datetime import datetime
 
 from bs4 import BeautifulSoup, NavigableString, Tag
@@ -100,6 +102,42 @@ class StyleEngine:
                 StyleEngine._configure_paragraph_format(list_style.paragraph_format, after=3, line_spacing=1.0)
 
 class ChartEngine:
+    _RENDER_VERSION = "chart-png-v1"
+    _CACHE_MAX_ENTRIES = 64
+    _chart_cache = OrderedDict()
+    _render_lock = threading.Lock()
+
+    @classmethod
+    def _clear_cache(cls):
+        with cls._render_lock:
+            cls._chart_cache.clear()
+
+    @staticmethod
+    def _normalize_theme_color(theme_color):
+        return tuple(theme_color)
+
+    @classmethod
+    def _cached_render(cls, kind, data_str, theme_color, renderer):
+        normalized_color = cls._normalize_theme_color(theme_color)
+        cache_key = (cls._RENDER_VERSION, kind, data_str, normalized_color)
+        with cls._render_lock:
+            cached_png = cls._chart_cache.get(cache_key)
+            if cached_png is not None:
+                cls._chart_cache.move_to_end(cache_key)
+                return io.BytesIO(cached_png)
+
+            rendered_png = renderer(data_str, normalized_color)
+            if rendered_png is None:
+                return None
+            if not isinstance(rendered_png, bytes):
+                raise TypeError("Chart renderer must return PNG bytes")
+
+            cls._chart_cache[cache_key] = rendered_png
+            cls._chart_cache.move_to_end(cache_key)
+            while len(cls._chart_cache) > cls._CACHE_MAX_ENTRIES:
+                cls._chart_cache.popitem(last=False)
+            return io.BytesIO(rendered_png)
+
     @staticmethod
     def _get_plt_color(theme_color): return tuple(channel / 255 for channel in theme_color)
 
@@ -118,12 +156,20 @@ class ChartEngine:
     @staticmethod
     def create_bar_chart(data_str, theme_color):
         try:
-            parts = data_str.split("|")
-            title_str, ylabel_str, raw_data = [p.strip() for p in parts] if len(parts) == 3 else ("Sentimen Makro", "Persentase", data_str)
-            labels, values = ChartEngine._parse_chart_points(raw_data)
-            if not labels: return None
+            return ChartEngine._cached_render("bar", data_str, theme_color, ChartEngine._render_bar_chart)
+        except Exception as exc:
+            logger.warning("Gagal membuat bar chart: %s", exc)
+            return None
 
-            fig, axis = plt.subplots(figsize=(7, 4.5))
+    @staticmethod
+    def _render_bar_chart(data_str, theme_color):
+        parts = data_str.split("|")
+        title_str, ylabel_str, raw_data = [p.strip() for p in parts] if len(parts) == 3 else ("Sentimen Makro", "Persentase", data_str)
+        labels, values = ChartEngine._parse_chart_points(raw_data)
+        if not labels: return None
+
+        fig, axis = plt.subplots(figsize=(7, 4.5))
+        try:
             axis.bar(labels, values, color=ChartEngine._get_plt_color(theme_color), alpha=0.9, width=0.5)
             axis.set_title(title_str, fontsize=12, fontweight="bold", pad=20)
             axis.set_ylabel(ylabel_str, fontsize=10)
@@ -132,23 +178,28 @@ class ChartEngine:
 
             image_stream = io.BytesIO()
             plt.savefig(image_stream, format="png", bbox_inches="tight", dpi=150)
+            return image_stream.getvalue()
+        finally:
             plt.close(fig)
-            image_stream.seek(0)
-            return image_stream
-        except Exception as exc:
-            logger.warning("Gagal membuat bar chart: %s", exc)
-            return None
 
     @staticmethod
     def create_line_chart(data_str, theme_color):
         try:
-            parts = data_str.split("|")
-            title_str, ylabel_str, raw_data = [p.strip() for p in parts] if len(parts) == 3 else ("Tren", "Skor", data_str)
-            labels, values = ChartEngine._parse_chart_points(raw_data)
-            if not labels: return None
+            return ChartEngine._cached_render("line", data_str, theme_color, ChartEngine._render_line_chart)
+        except Exception as exc:
+            logger.warning("Gagal membuat line chart: %s", exc)
+            return None
 
-            color = ChartEngine._get_plt_color(theme_color)
-            fig, axis = plt.subplots(figsize=(7, 4.2))
+    @staticmethod
+    def _render_line_chart(data_str, theme_color):
+        parts = data_str.split("|")
+        title_str, ylabel_str, raw_data = [p.strip() for p in parts] if len(parts) == 3 else ("Tren", "Skor", data_str)
+        labels, values = ChartEngine._parse_chart_points(raw_data)
+        if not labels: return None
+
+        color = ChartEngine._get_plt_color(theme_color)
+        fig, axis = plt.subplots(figsize=(7, 4.2))
+        try:
             axis.plot(labels, values, color=color, linewidth=2.4, marker="o", markersize=6)
             axis.fill_between(labels, values, min(values), color=color, alpha=0.12)
             axis.set_title(title_str, fontsize=12, fontweight="bold", pad=18)
@@ -161,43 +212,53 @@ class ChartEngine:
 
             image_stream = io.BytesIO()
             plt.savefig(image_stream, format="png", bbox_inches="tight", dpi=150)
+            return image_stream.getvalue()
+        finally:
             plt.close(fig)
-            image_stream.seek(0)
-            return image_stream
-        except Exception as exc:
-            logger.warning("Gagal membuat line chart: %s", exc)
-            return None
 
     @staticmethod
     def create_pie_chart(data_str, theme_color):
         try:
-            parts = data_str.split("|")
-            title_str, raw_data = [p.strip() for p in parts] if len(parts) == 2 else ("Distribusi", data_str)
-            labels, values = ChartEngine._parse_chart_points(raw_data)
-            if not labels: return None
+            return ChartEngine._cached_render("pie", data_str, theme_color, ChartEngine._render_pie_chart)
+        except Exception as exc:
+            logger.warning("Gagal membuat pie chart: %s", exc)
+            return None
 
-            palette = [ChartEngine._get_plt_color(theme_color), (0.85, 0.35, 0.25), (0.20, 0.45, 0.70), (0.35, 0.65, 0.45), (0.75, 0.60, 0.25)]
-            fig, axis = plt.subplots(figsize=(6.2, 4.8))
+    @staticmethod
+    def _render_pie_chart(data_str, theme_color):
+        parts = data_str.split("|")
+        title_str, raw_data = [p.strip() for p in parts] if len(parts) == 2 else ("Distribusi", data_str)
+        labels, values = ChartEngine._parse_chart_points(raw_data)
+        if not labels: return None
+
+        palette = [ChartEngine._get_plt_color(theme_color), (0.85, 0.35, 0.25), (0.20, 0.45, 0.70), (0.35, 0.65, 0.45), (0.75, 0.60, 0.25)]
+        fig, axis = plt.subplots(figsize=(6.2, 4.8))
+        try:
             axis.pie(values, labels=labels, autopct="%1.1f%%", startangle=90, colors=palette[: len(labels)], textprops={"fontsize": 9})
             axis.set_title(title_str, fontsize=12, fontweight="bold", pad=16)
             axis.axis("equal")
 
             image_stream = io.BytesIO()
             plt.savefig(image_stream, format="png", bbox_inches="tight", dpi=150)
+            return image_stream.getvalue()
+        finally:
             plt.close(fig)
-            image_stream.seek(0)
-            return image_stream
-        except Exception as exc:
-            logger.warning("Gagal membuat pie chart: %s", exc)
-            return None
 
     @staticmethod
     def create_flowchart(data_str, theme_color):
         try:
-            steps = ["\n".join(textwrap.wrap(step.strip(), width=18)) for step in data_str.split("->") if step.strip()]
-            if len(steps) < 2: return None
+            return ChartEngine._cached_render("flowchart", data_str, theme_color, ChartEngine._render_flowchart)
+        except Exception as exc:
+            logger.warning("Gagal membuat flowchart: %s", exc)
+            return None
 
-            fig, axis = plt.subplots(figsize=(8, 3))
+    @staticmethod
+    def _render_flowchart(data_str, theme_color):
+        steps = ["\n".join(textwrap.wrap(step.strip(), width=18)) for step in data_str.split("->") if step.strip()]
+        if len(steps) < 2: return None
+
+        fig, axis = plt.subplots(figsize=(8, 3))
+        try:
             axis.axis("off")
             x_positions = [index * 2.5 for index in range(len(steps))]
 
@@ -214,12 +275,9 @@ class ChartEngine:
 
             image_stream = io.BytesIO()
             plt.savefig(image_stream, format="png", bbox_inches="tight", dpi=200, transparent=True)
+            return image_stream.getvalue()
+        finally:
             plt.close(fig)
-            image_stream.seek(0)
-            return image_stream
-        except Exception as exc:
-            logger.warning("Gagal membuat flowchart: %s", exc)
-            return None
 
 class DocumentBuilder:
     LIST_STYLES = {"ul": ["List Bullet", "List Bullet 2", "List Bullet 3"], "ol": ["List Number", "List Number 2", "List Number 3"]}

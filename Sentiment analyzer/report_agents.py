@@ -635,15 +635,36 @@ class FeedbackProposalTeam:
             ],
         }
 
-    def run(self, engine, dataframe, timeframe, macro_trends="", sentiment="all", segment="all", score_engine="experience_index"):
-        scoped_df = engine._filter_view(timeframe, sentiment=sentiment, segment=segment)
-        analysis_context = engine._build_analysis_context(scoped_df, timeframe, sentiment, segment, score_engine)
+    def run(self, engine, dataframe, timeframe, macro_trends="", sentiment="all", segment="all", score_engine="experience_index", prepared_analysis=None):
+        prepared = engine.resolve_prepared_report_analysis(
+            prepared_analysis,
+            timeframe,
+            sentiment=sentiment,
+            segment=segment,
+            score_engine=score_engine,
+        )
+        if prepared is None:
+            scoped_df = engine._filter_view(timeframe, sentiment=sentiment, segment=segment)
+            analysis_context = engine._build_analysis_context(scoped_df, timeframe, sentiment, segment, score_engine)
+            governance = engine._governance_summary(scoped_df)
+            top_service = engine._series_counts(scoped_df["Layanan"], limit=1)
+            top_risk = engine._group_risk(scoped_df, "Layanan", limit=1)
+            top_issue = next((theme for theme in engine._theme_hits(scoped_df) if theme["negative_hits"] > 0), None)
+            contradiction_review = self._contradiction_review(scoped_df)
+        else:
+            scoped_df = prepared.scoped_dataframe
+            analysis_context = prepared.analysis_context
+            governance = prepared.governance_summary
+            top_service = prepared.top_service
+            top_risk = prepared.top_risk
+            top_issue = prepared.top_issue
+            contradiction_review = prepared.contradiction_review
         context = {
             **analysis_context,
-            "governance": engine._governance_summary(scoped_df),
-            "top_service": engine._series_counts(scoped_df["Layanan"], limit=1),
-            "top_risk": engine._group_risk(scoped_df, "Layanan", limit=1),
-            "top_issue": next((theme for theme in engine._theme_hits(scoped_df) if theme["negative_hits"] > 0), None),
+            "governance": governance,
+            "top_service": top_service,
+            "top_risk": top_risk,
+            "top_issue": top_issue,
             "macro_trends": macro_trends,
             "has_osint_signal": bool(ExternalContextAgent._first_osint_signal(macro_trends)),
         }
@@ -664,7 +685,7 @@ class FeedbackProposalTeam:
             "sources_used": self._sources_used(specialist_outputs),
             "confidence": overall_confidence,
             "audit_trail": audit_trail,
-            "contradiction_review": self._contradiction_review(scoped_df),
+            "contradiction_review": contradiction_review,
             "trend_review": self._trend_review(engine, scoped_df, timeframe),
             "prediction_review": self._prediction_review(context),
             "evidence_ledger": evidence_ledger,
