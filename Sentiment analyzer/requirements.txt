@@ -15,3 +15,4 @@ pydantic
 diskcache
 flask-wtf
 flask-limiter
+rapidfuzz==3.14.5

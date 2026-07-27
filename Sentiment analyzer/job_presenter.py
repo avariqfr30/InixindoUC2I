@@ -37,6 +37,29 @@ def _elapsed_from(job, now=None):
     return max(0, int(round((_now(now) - created_at).total_seconds())))
 
 
+
+def _quality_summary(value):
+    if not isinstance(value, dict):
+        return None
+    preflight = value.get("preflight") if isinstance(value.get("preflight"), dict) else {}
+    summary = {
+        "verification_status": value.get("verification_status"),
+        "verified_complete": bool(value.get("verified_complete")),
+        "completeness_score": value.get("completeness_score"),
+        "passed_checks": value.get("passed_checks"),
+        "total_checks": value.get("total_checks"),
+        "missing_checks": value.get("missing_checks") or [],
+        "preflight_passes": bool(preflight.get("passes")),
+    }
+    return {key: item for key, item in summary.items() if item is not None}
+
+
+def _public_error(status):
+    if str(status or "").lower() != "failed":
+        return None
+    return "Laporan belum berhasil dibuat. Silakan coba lagi atau hubungi admin jika berulang."
+
+
 def _running_detail(job, now=None):
     started_at = _parse_timestamp(job.get("started_at"))
     processed_seconds = None
@@ -52,7 +75,12 @@ def _running_detail(job, now=None):
 
 def present_job(job, stats=None, now=None, status_url=None, download_url=None):
     response = dict(job or {})
+    internal_quality = response.pop("quality", None)
     status = str(response.get("status") or "unknown").lower()
+    if status == "failed":
+        response["error"] = _public_error(status)
+    elif "error" in response and not response.get("error"):
+        response.pop("error", None)
     queue_position = int(response.get("queue_position") or 0)
     elapsed_seconds = _elapsed_from(response, now=now)
 
@@ -87,6 +115,9 @@ def present_job(job, stats=None, now=None, status_url=None, download_url=None):
             "elapsed_seconds": elapsed_seconds,
         }
     )
+    public_quality = _quality_summary(internal_quality)
+    if public_quality and status == "completed":
+        response["quality_summary"] = public_quality
     if status_url:
         response["status_url"] = status_url
     if download_url and response["can_download"]:

@@ -120,6 +120,19 @@ class BaseNarrativeMixin:
         return outcome_map.get(theme_id, "Persepsi kualitas layanan membaik secara terukur.")
 
     @staticmethod
+    def _theme_acceptance(theme_id):
+        acceptance_map = {
+            "responsiveness": "SLA respons dan penutupan isu tercapai selama dua siklus review.",
+            "schedule": "Perubahan jadwal dan beban sesi tercatat tanpa keluhan berulang selama dua siklus.",
+            "facility": "Gangguan fasilitas prioritas ditutup dan tidak berulang pada dua sesi berikutnya.",
+            "instructor": "Hasil observasi fasilitator memenuhi standar layanan pada dua evaluasi berturut-turut.",
+            "material": "Materi revisi disetujui owner dan relevansinya terkonfirmasi pada evaluasi berikutnya.",
+            "communication": "Informasi pra-layanan dan tindak lanjut terkirim sesuai SLA pada dua siklus.",
+            "outcome": "Bukti manfaat layanan tercatat dan dikonfirmasi pada evaluasi stakeholder berikutnya.",
+        }
+        return acceptance_map.get(theme_id, "Target perbaikan disepakati owner dan hasilnya terukur pada review 30 hari.")
+
+    @staticmethod
     def _readiness_label(score):
         return "Kuat" if score >= 80 else "Cukup Siap" if score >= 60 else "Perlu Diperkuat" if score >= 40 else "Prioritas Tinggi"
 

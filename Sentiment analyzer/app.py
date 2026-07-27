@@ -67,6 +67,8 @@ from knowledge_base import KnowledgeBase
 from osint_research import Researcher
 from report_engine import ReportGenerator
 from runtime import QueueCapacityError, ReportJobManager
+from adaptive_feedback import FeedbackNotFoundError, FeedbackValidationError
+from learning_feedback import UC2_FEEDBACK_POLICY, create_feedback_store
 from timeframe_filters import build_available_date_options, build_timeframe_options
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
@@ -98,6 +100,7 @@ app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(seconds=SESSION_IDLE_TIMEOU
 kb = KnowledgeBase(DB_URI)
 generator = ReportGenerator(kb)
 job_manager = ReportJobManager(generator)
+learning_feedback_store = create_feedback_store()
 prefetch_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="report-prefetch")
 logger.info("Application started in %s mode.", APP_MODE)
 
@@ -535,11 +538,31 @@ def generate_report_job():
     data = request.get_json(silent=True) or {}
     try:
         payload = ReportRequest.from_mapping(data).validate().to_job_payload()
+        guidance = learning_feedback_store.guidance_for(current_user(), "report")
+        feedback_id = str(data.get("feedback_id") or "").strip()
+        feedback_run_id = str(data.get("feedback_run_id") or "").strip()
+        if bool(feedback_id) != bool(feedback_run_id):
+            raise ValueError("feedback_id dan feedback_run_id wajib dikirim bersama.")
+        if feedback_id:
+            source = job_manager.get(feedback_run_id, owner_key=current_user())
+            if not source or source.get("status") != "completed":
+                raise ValueError("Laporan sumber feedback tidak tersedia atau bukan milik Anda.")
+            immediate = learning_feedback_store.regeneration_guidance(
+                feedback_id, owner_key=current_user(), run_id=feedback_run_id
+            )
+            guidance.append(immediate["guidance"])
+            if immediate.get("note"):
+                guidance.append("Catatan untuk pembuatan ulang ini: " + immediate["note"])
+        payload["improvement_guidance"] = "\n".join(f"- {item}" for item in guidance)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 
     try:
-        job = job_manager.submit(payload)
+        job = job_manager.submit(payload, owner_key=current_user())
+        if feedback_id:
+            learning_feedback_store.link_regeneration(
+                feedback_id, owner_key=current_user(), child_run_id=job["job_id"]
+            )
     except QueueCapacityError as exc:
         return jsonify({"error": str(exc)}), 429
 
@@ -568,7 +591,7 @@ def generate_report_job():
 @app.route("/jobs/<job_id>")
 @login_required
 def get_report_job(job_id):
-    job = job_manager.get(job_id)
+    job = job_manager.get(job_id, owner_key=current_user())
     if not job:
         return jsonify({"error": "Job tidak ditemukan."}), 404
 
@@ -585,7 +608,7 @@ def get_report_job(job_id):
 @app.route("/download/<job_id>")
 @login_required
 def download_report(job_id):
-    artifact = job_manager.artifact_for(job_id)
+    artifact = job_manager.artifact_for(job_id, owner_key=current_user())
     if not artifact:
         return jsonify({"error": "Berkas laporan belum tersedia."}), 404
 
@@ -595,6 +618,31 @@ def download_report(job_id):
         download_name=artifact["filename"],
         mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     )
+
+
+@app.route("/api/learning-feedback/options")
+@login_required
+def learning_feedback_options():
+    return jsonify(UC2_FEEDBACK_POLICY.public_options())
+
+
+@app.route("/api/learning-feedback", methods=["POST"])
+@login_required
+def submit_learning_feedback():
+    data = request.get_json(silent=True) or {}
+    run_id = str(data.get("run_id") or "").strip()
+    job = job_manager.get(run_id, owner_key=current_user())
+    if not job or job.get("status") != "completed":
+        return jsonify({"error": "Laporan tidak ditemukan atau bukan milik Anda."}), 404
+    try:
+        result = learning_feedback_store.record(
+            owner_key=current_user(), context_key="report", run_id=run_id,
+            rating=data.get("rating"), reason_code=data.get("reason_code"),
+            note=data.get("note"), remember=data.get("remember", False),
+        )
+    except (FeedbackValidationError, FeedbackNotFoundError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(result), 201
 
 
 @app.route("/refresh-knowledge", methods=["POST"])

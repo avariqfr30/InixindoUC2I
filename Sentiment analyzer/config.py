@@ -58,10 +58,18 @@ SERPER_API_KEY = os.getenv("SERPER_API_KEY", "YOUR_SERPER_API_KEY")
 OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", "")
 OLLAMA_WEB_SEARCH_URL = os.getenv("OLLAMA_WEB_SEARCH_URL", "https://ollama.com/api/web_search")
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
-EMBED_MODEL = os.getenv("EMBED_MODEL", "bge-m3:latest")
+EMBED_MODEL = os.getenv("EMBED_MODEL", "qwen3-embedding:0.6b")
+EMBEDDING_BATCH_SIZE = max(1, _int_env("EMBEDDING_BATCH_SIZE", 16))
+VECTOR_INDEX_DIR = os.getenv(
+    "VECTOR_INDEX_DIR",
+    os.path.join(DATA_DIR, "vector_index"),
+)
 DB_URI = os.getenv("DB_URI", f"sqlite:///{os.path.join(DATA_DIR, 'cx_feedback.db')}")
 CSV_PATH = os.getenv("CSV_PATH", os.path.join(DATA_DIR, "db.csv"))
 AUTH_DB_PATH = os.getenv("AUTH_DB_PATH", os.path.join(DATA_DIR, "auth.db"))
+LEARNING_FEEDBACK_DB_PATH = os.getenv(
+    "LEARNING_FEEDBACK_DB_PATH", os.path.join(DATA_DIR, "learning_feedback.db")
+)
 
 _DEFAULT_SECRET = "change-this-secret-before-deployment"
 APP_SECRET_KEY = os.getenv("APP_SECRET_KEY", _DEFAULT_SECRET)

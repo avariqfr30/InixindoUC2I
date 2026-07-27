@@ -49,6 +49,12 @@ if [[ "$APP_MODE" == "demo" && "$RESEED_DEMO_DATA" == "1" ]]; then
   python3 seed_demo_data.py
 fi
 
+command -v hunspell >/dev/null || { echo "Missing prerequisite: hunspell" >&2; exit 1; }
+[[ -r /usr/share/hunspell/id_ID.dic ]] || {
+  echo "Missing prerequisite: Indonesian Hunspell dictionary" >&2
+  exit 1
+}
+
 exec python3 -m waitress \
   --host="$HOST" \
   --port="$PORT" \

@@ -258,7 +258,18 @@ class ClassReportAdapter:
     @classmethod
     def build_row(cls, endpoint_name, row_index, question, rating_value, explanation_texts, date_context=None):
         service_label, journey_hint = cls.semantics(question)
-        average_text = f"Rata-rata rating {question}: {round(float(rating_value), 2)} dari 5" if pd.notna(rating_value) else question
+        if pd.notna(rating_value):
+            rating_prefixes = (
+                "Skor ringkas",
+                "Bacaan nilai",
+                "Sinyal rating",
+                "Ukuran pengalaman",
+                "Catatan skor",
+            )
+            prefix = rating_prefixes[row_index % len(rating_prefixes)]
+            average_text = f"{prefix} untuk {question}: {round(float(rating_value), 2)} dari 5"
+        else:
+            average_text = question
         explanations = cls.dedupe_texts(explanation_texts, limit=5)
         why_text = f"Mengapa: {'; '.join(explanations)}" if explanations else "Mengapa: belum ada komentar teks yang terhubung ke rating ini."
         feedback_date, timeframe = date_context or (APIDOG_UNKNOWN_DATE, APIDOG_TIMELESS_TIMEFRAME)

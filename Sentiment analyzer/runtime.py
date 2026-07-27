@@ -122,7 +122,7 @@ class ReportJobManager:
             return 0
         return queued_job_ids.index(job_id) + 1
 
-    def _build_job_record(self, payload):
+    def _build_job_record(self, payload, owner_key=""):
         job_id = uuid.uuid4().hex
         created_at = self._utc_now()
         return {
@@ -141,6 +141,7 @@ class ReportJobManager:
             "artifact_path": None,
             "artifact_size_bytes": None,
             "quality": None,
+            "_owner_key": str(owner_key or ""),
             "_submitted_monotonic": time.perf_counter(),
             "input": {
                 "timeframe": payload["timeframe"],
@@ -150,7 +151,7 @@ class ReportJobManager:
             },
         }
 
-    def submit(self, payload):
+    def submit(self, payload, owner_key=""):
         self._cleanup_expired()
 
         with self.lock:
@@ -159,7 +160,7 @@ class ReportJobManager:
                     "Antrian laporan sedang penuh. Silakan coba lagi beberapa saat lagi."
                 )
 
-            job = self._build_job_record(payload)
+            job = self._build_job_record(payload, owner_key)
             self.jobs[job["job_id"]] = job
             self._persist_state()
             self.futures[job["job_id"]] = self.executor.submit(
@@ -183,12 +184,15 @@ class ReportJobManager:
             self._persist_state()
 
         try:
+            generation_kwargs = {
+                "sentiment": payload.get("sentiment", "all"),
+                "segment": payload.get("segment", "all"),
+                "score_engine": payload.get("score_engine"),
+            }
+            if payload.get("improvement_guidance"):
+                generation_kwargs["improvement_guidance"] = payload["improvement_guidance"]
             document, filename, quality = self.generator.run(
-                payload["timeframe"],
-                payload.get("notes", ""),
-                sentiment=payload.get("sentiment", "all"),
-                segment=payload.get("segment", "all"),
-                score_engine=payload.get("score_engine"),
+                payload["timeframe"], payload.get("notes", ""), **generation_kwargs
             )
             artifact_path = os.path.join(self.artifact_dir, f"{job_id}.docx")
             document.save(artifact_path)
@@ -248,15 +252,20 @@ class ReportJobManager:
         job_copy["queue_position"] = self._queue_position(job_id)
         return job_copy
 
-    def get(self, job_id):
+    def get(self, job_id, owner_key=""):
         self._cleanup_expired()
         with self.lock:
+            job = self.jobs.get(job_id)
+            if not job or (job.get("_owner_key") and job.get("_owner_key") != str(owner_key or "")):
+                return None
             return self._public_job(job_id)
 
-    def artifact_for(self, job_id):
+    def artifact_for(self, job_id, owner_key=""):
         with self.lock:
             job = self.jobs.get(job_id)
-            if not job or job.get("status") != "completed":
+            if not job or job.get("status") != "completed" or (
+                job.get("_owner_key") and job.get("_owner_key") != str(owner_key or "")
+            ):
                 return None
             artifact_path = job.get("artifact_path")
             if not artifact_path or not os.path.exists(artifact_path):

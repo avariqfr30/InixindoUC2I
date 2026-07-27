@@ -72,6 +72,7 @@ class ReportRequestContext:
     sentiment: str = "all"
     segment: str = "all"
     score_engine: str = DEFAULT_SCORE_ENGINE
+    improvement_guidance: str = ""
 
     @property
     def score_profile(self):
@@ -277,6 +278,12 @@ class ReportNarrativeStage:
                 "document_contract": document_contract,
             },
         )
+        if context.improvement_guidance:
+            planning_block += (
+                "\n\nPREFERENSI PERBAIKAN DARI FEEDBACK:\n"
+                + context.improvement_guidance[:1600]
+                + "\nPanduan ini hanya untuk fokus dan penulisan. Jangan mengubah data, angka, bukti, hasil analisis, atau aturan validasi."
+            )
         for section in report_sections or []:
             section["_writing_plan"] = "\n".join(
                 [planning_block, deliberation_builder.for_section(document_contract, section.get("id") or "")]
@@ -345,6 +352,12 @@ class ReportWritingQualityStage:
 
 
 class ReportPreflightQualityStage:
+    def __init__(self, indonesian_quality_gate=None):
+        if indonesian_quality_gate is None:
+            from indonesian_quality import IndonesianQualityGate
+            indonesian_quality_gate = IndonesianQualityGate()
+        self.indonesian_quality_gate = indonesian_quality_gate
+
     def run(self, executive_snapshot, report_sections):
         contract = next(
             (section.get("_document_contract") for section in report_sections or [] if section.get("_document_contract")),
@@ -357,6 +370,28 @@ class ReportPreflightQualityStage:
             deliberation_contract=contract,
             appendix_content=appendix,
         )
+        complete_text = "\n\n--- BAGIAN ---\n\n".join([
+            str(executive_snapshot or ""),
+            *[
+                f"# {section.get('title', '')}\n\n{section.get('content', '')}"
+                for section in report_sections or []
+            ],
+        ])
+        language_result = self.indonesian_quality_gate.evaluate(complete_text)
+        result.setdefault("findings", [])
+        result.setdefault("categories", [])
+        result["warnings"] = sorted(set(language_result.warnings) | set(language_result.issues))
+        result["language_metrics"] = dict(language_result.metrics)
+        if language_result.warnings:
+            logger.warning("Indonesian quality checks degraded: %s", list(language_result.warnings))
+        if language_result.issues:
+            result["categories"] = sorted(set(
+                list(result.get("categories", [])) + list(language_result.issues)
+            ))
+            result["findings"].extend(
+                f"Pemeriksaan Bahasa Indonesia: {issue}."
+                for issue in language_result.issues
+            )
         if not result["passes"]:
             raise ValueError("Report narrative preflight failed: " + "; ".join(result["findings"]))
         return result
@@ -472,8 +507,9 @@ class ReportPipeline:
         sentiment="all",
         segment="all",
         score_engine=DEFAULT_SCORE_ENGINE,
+        improvement_guidance="",
     ):
-        context = ReportRequestContext(timeframe, notes, sentiment, segment, score_engine)
+        context = ReportRequestContext(timeframe, notes, sentiment, segment, score_engine, improvement_guidance)
         timings = _PipelineStageTimings()
         if self._uses_default_research_stage:
             research_started_at = time.perf_counter()

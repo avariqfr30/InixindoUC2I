@@ -224,6 +224,16 @@
             <h2>Selesai!</h2>
             <p class="sub">Laporan intelijen umpan balik telah diunduh.</p>
             <p id="success-meta" class="helper" style="margin: 0 0 20px 0;"></p>
+            <div id="feedback-panel" style="text-align:left; border-top:1px solid #e2e8f0; padding-top:18px; margin-top:18px;">
+                <label for="feedback-rating">Bagaimana hasil laporan ini?</label>
+                <select id="feedback-rating"><option value="helpful">Hasil ini membantu</option><option value="needs_improvement">Perlu diperbaiki</option></select>
+                <label for="feedback-reason">Alasan</label><select id="feedback-reason"></select>
+                <label for="feedback-note">Catatan tambahan (opsional)</label><textarea id="feedback-note" maxlength="500"></textarea>
+                <label><input id="feedback-remember" type="checkbox"> Ingat preferensi ini untuk laporan saya berikutnya</label>
+                <button id="feedback-submit" type="button">Kirim Masukan</button>
+                <p id="feedback-status" class="helper"></p>
+                <button id="feedback-regenerate" type="button" class="secondary hidden">Buat ulang dengan masukan</button>
+            </div>
             <button type="button" onclick="location.reload()" class="secondary">Buat Laporan Baru</button>
         </div>
     </div>
@@ -325,6 +335,9 @@
             currentJobId: null,
             pollTimer: null,
             notesQuill: null
+            ,lastPayload: null
+            ,feedbackOptions: null
+            ,submittedFeedback: null
         };
 
         function populateSelect(selectElement, items, placeholder) {
@@ -792,6 +805,35 @@
             startDownload(job.download_url, job.filename);
             ui.reviewStep.classList.add('hidden');
             ui.successStep.classList.remove('hidden');
+            loadFeedbackOptions();
+        }
+
+        function renderFeedbackReasons() {
+            if (!appState.feedbackOptions) return;
+            const rating = document.getElementById('feedback-rating').value;
+            const select = document.getElementById('feedback-reason');
+            select.replaceChildren();
+            (appState.feedbackOptions[rating] || []).forEach(item => select.add(new Option(item.label, item.reason_code)));
+            document.getElementById('feedback-remember').closest('label').classList.toggle('hidden', rating === 'helpful');
+        }
+
+        function loadFeedbackOptions() {
+            fetch('/api/learning-feedback/options').then(response => response.json()).then(options => {
+                appState.feedbackOptions = options; renderFeedbackReasons();
+            });
+        }
+
+        function submitLearningFeedback() {
+            fetch('/api/learning-feedback', {method:'POST', headers:{'Content-Type':'application/json','X-CSRFToken':csrfToken}, body:JSON.stringify({
+                run_id: appState.currentJobId, rating: document.getElementById('feedback-rating').value,
+                reason_code: document.getElementById('feedback-reason').value,
+                note: document.getElementById('feedback-note').value,
+                remember: document.getElementById('feedback-remember').checked
+            })}).then(response => unwrapJsonResponse(response, 'Masukan gagal disimpan.')).then(result => {
+                appState.submittedFeedback = result;
+                document.getElementById('feedback-status').textContent = `Masukan dipahami: ${result.understood_guidance}`;
+                document.getElementById('feedback-regenerate').classList.toggle('hidden', !result.can_regenerate);
+            }).catch(error => alert(error.message));
         }
 
         function failJob(message) {
@@ -1005,6 +1047,7 @@
                 notes: notesPayload.text,
                 notes_html: notesPayload.html
             };
+            appState.lastPayload = payload;
 
             fetch('/generate-job', {
                 method: 'POST',
@@ -1025,6 +1068,15 @@
                 failJob(err.message);
             });
         };
+        document.getElementById('feedback-rating').addEventListener('change', renderFeedbackReasons);
+        document.getElementById('feedback-submit').addEventListener('click', submitLearningFeedback);
+        document.getElementById('feedback-regenerate').addEventListener('click', () => {
+            if (!appState.lastPayload || !appState.submittedFeedback) return;
+            const sourceRunId = appState.currentJobId;
+            ui.successStep.classList.add('hidden'); ui.reviewStep.classList.remove('hidden');
+            fetch('/generate-job', {method:'POST', headers:{'Content-Type':'application/json','X-CSRFToken':csrfToken}, body:JSON.stringify({...appState.lastPayload, feedback_id:appState.submittedFeedback.feedback_id, feedback_run_id:sourceRunId})})
+                .then(response => unwrapJsonResponse(response, 'Pembuatan ulang gagal dimulai.')).then(job => { appState.currentJobId=job.job_id; pollJob(job.job_id); }).catch(error => failJob(error.message));
+        });
         
         ui.btnRefresh.onclick = () => {
             fetch('/refresh-knowledge', {
